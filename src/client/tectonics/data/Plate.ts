@@ -15,19 +15,19 @@ let _idBoundaryCount = 0;
 
 export class Tile {
   id: number = _idTileCount++;
-  egde: Halfedge;
+  edge: Halfedge;
   plate: Plate;
   centroid: THREE.Vector3;
   motionSpeed: THREE.Vector3 = new THREE.Vector3();
 
   *loop(): IterableIterator<Halfedge> {
-    for (const he of this.egde.nextLoop()) {
+    for (const he of this.edge.nextLoop()) {
       yield he;
     }
   }
 
   constructor(halfedge: Halfedge, plate: Plate) {
-    this.egde = halfedge;
+    this.edge = halfedge;
     this.plate = plate;
 
     // Compute centroid

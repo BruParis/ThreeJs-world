@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import { Vertex } from '@core/Vertex';
 import { Halfedge } from '@core/Halfedge';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
-import { Tile, Plate, BoundaryEdge, TectonicSystem, makePlateBoundary } from './Plate';
+import { Tile, Plate, BoundaryEdge, TectonicSystem, makePlateBoundary } from '../data/Plate';
 import {
   floodFill,
   plateAbsorbedByPlate,
   transferTileToPlate,
   splitPlateFromTile,
-  caracterizeBoundaryEdge,
-} from './PlateUtils';
+} from '../data/PlateOperations';
+import { computeTectonicDynamics, caracterizeBoundaryEdge } from '../dynamics/dynamics';
 
 function _splitPlateAtBridgeTiles(tectonicSystem: TectonicSystem): void {
 
@@ -153,7 +153,7 @@ function _absorbEnclavedPlates(tectonicSystem: TectonicSystem): void {
   }
 }
 
-function _absordSmallPlates(tectonicSystem: TectonicSystem, sizeThreshold: number): void {
+function _absorbSmallPlates(tectonicSystem: TectonicSystem, sizeThreshold: number): void {
   const smallThreshold = 1;
   const smallTilePlateTransferMap: Map<Plate, Plate> = new Map<Plate, Plate>();
   for (const plate of tectonicSystem.plates) {
@@ -231,59 +231,13 @@ function buildTectonicSystem(halfedgeGraph: HalfedgeGraph, numPlates: number): T
   _absorbEnclavedPlates(tectonicSystem);
 
   // 4) Each small tile plate gets absorbed by the neighboring plate
-  _absordSmallPlates(tectonicSystem, 5);
+  _absorbSmallPlates(tectonicSystem, 5);
 
   return tectonicSystem;
 }
 
 function computeTectonicMotion(tectonicSystem: TectonicSystem): void {
-
-  // Ensure the plate centroids are computed
-  for (const plate of tectonicSystem.plates) {
-    plate.updateCentroid();
-  }
-
-  // Randomly assign for each plate a rotation speed (-1, and 1)
-  // and a rotation axis (random unit vector)
-  for (const plate of tectonicSystem.plates) {
-    const rotationSpeed = Math.random() * 2 - 1; // (-1, 1)
-
-    const rotationAxis = new THREE.Vector3(
-      Math.random() * 2 - 1,
-      Math.random() * 2 - 1,
-      Math.random() * 2 - 1
-    ).normalize();
-
-
-    plate.rotationAxis = rotationAxis;
-    plate.rotationSpeed = rotationSpeed;
-  }
-
-  for (const plate of tectonicSystem.plates) {
-    for (const tile of plate.tiles) {
-
-      const tileCentroid = tile.centroid;
-
-      // Compute move direction as cross product between
-      // plate rotation axis and tile centroid
-      const moveDir = new THREE.Vector3().crossVectors(plate.rotationAxis, tileCentroid).normalize();
-
-      // Compute the distance of the tile from the rotation axis
-      // (projection of the tile centroid onto the rotation axis)
-      const distanceFromAxis = tileCentroid.clone().sub(
-        plate.rotationAxis.clone().multiplyScalar(
-          tileCentroid.dot(plate.rotationAxis)
-        )
-      ).length();
-
-      // Compute move speed as proportional to rotation speed and distance from axis
-      const speed = Math.abs(plate.rotationSpeed) * distanceFromAxis;
-
-      // Apply the movement to the tile
-      tile.motionSpeed = moveDir.multiplyScalar(speed);
-    }
-  }
-
+  computeTectonicDynamics(tectonicSystem);
 }
 
 function computePlateBoundaries(tectonicSystem: TectonicSystem): void {
