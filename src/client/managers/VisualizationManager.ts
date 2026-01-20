@@ -15,7 +15,7 @@ import {
   distortGraphLoop,
   makeFaceDistribution
 } from '@core/HalfedgeGraphUtils';
-import { populateIcosahedronHalfedgeGraph } from '../tectonics/geometry/IcosahedronMesh';
+import { populateIcosahedronHalfedgeGraph } from '@core/geometry/IcosahedronMesh';
 import {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
