@@ -93,14 +93,14 @@ function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegme
         dashScales.push(0, 0);
         break;
       case BoundaryType.DIVERGENT:
-        colors.push(1, 0, 0); // Red
-        colors.push(1, 0, 0);
+        colors.push(0, 0, 1); // Blue
+        colors.push(0, 0, 1);
         dashOffsets.push(0, 0);
         dashScales.push(0, 0);
         break;
       case BoundaryType.CONVERGENT:
-        colors.push(0, 0, 1); // Blue
-        colors.push(0, 0, 1);
+        colors.push(1, 0, 0); // Red
+        colors.push(1, 0, 0);
         dashOffsets.push(0, 0);
         dashScales.push(0, 0);
         break;

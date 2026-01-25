@@ -76,46 +76,48 @@ function caracterizeBoundaryEdge(tectonicSystem: TectonicSystem, bEdge: Boundary
   const tileCentroid = tile.centroid;
   const twinTileCentroid = twinTile.centroid;
 
-  const tilesNormVec = new THREE.Vector3().subVectors(twinTileCentroid, tileCentroid).normalize();
+  const twinToTileNormVec = new THREE.Vector3().subVectors(twinTileCentroid, tileCentroid).normalize();
 
-  const planeNormal = new THREE.Vector3().crossVectors(edgeNormVec, tilesNormVec).normalize();
+  const planeNormal = new THREE.Vector3().crossVectors(edgeNormVec, twinToTileNormVec).normalize();
 
-  const tileMotionSpeed = tile.motionVec.clone();
-  const twinTileMotionSpeed = twinTile.motionVec.clone();
+  const tileMotionVec = tile.motionVec.clone();
+  const twinTileMotionVec = twinTile.motionVec.clone();
 
-  // Project both move speeds onto the edge plane, formed
-  // by edgeNormVec and tilesNormVec
-  const tileMotionSpeedProj = tileMotionSpeed.clone().projectOnPlane(planeNormal);
-  const twinTileMoveSpeedProj = twinTileMotionSpeed.clone().projectOnPlane(planeNormal);
+  // Project both move speeds onto the plane defined by the normal vec 
+  // (edgeNormVec cross tilesNormVec)
+  const tileMotionVecProj = tileMotionVec.clone().projectOnPlane(planeNormal);
+  const twinTileMoveSpeedProj = twinTileMotionVec.clone().projectOnPlane(planeNormal);
 
-  const relativeMotionSpeed = twinTileMoveSpeedProj.clone().sub(tileMotionSpeedProj);
+  // normalize both
+  const tileMotionVecProjNorm = tileMotionVecProj.clone().normalize();
+  const twinTileMoveSpeedProjNorm = twinTileMoveSpeedProj.clone().normalize();
 
-  const angleRelativeMotion2EdgeRad = relativeMotionSpeed.angleTo(edgeNormVec);
-  const angleRelativeMotion2EdgeDeg = THREE.MathUtils.radToDeg(angleRelativeMotion2EdgeRad);
+  const relativeMotionVec = twinTileMoveSpeedProj.clone().sub(tileMotionVecProj);
+  const relativeMotionNormVec = relativeMotionVec.clone().normalize();
 
-  const motionRelative2Edge = relativeMotionSpeed.clone().projectOnVector(edgeNormVec);
-  const motionTile2TwinTile = relativeMotionSpeed.clone().projectOnVector(tilesNormVec);
+  // Dot product between relative motion of twin tile and the twin2Tile vector
+  // tells us if tile are moving toward (>0) or away from (<0) each other
+  const relMotionDot = relativeMotionNormVec.dot(twinToTileNormVec);
 
-  const speedAlongBoundary = motionRelative2Edge.length();
-  const speedAcrossBoundary = motionTile2TwinTile.length();
+  // Dot product with edge direction tells us about transform motion
+  const edgeAlignmentDot = relativeMotionNormVec.dot(edgeNormVec);
 
-  const motionAlongIsNegligible = speedAlongBoundary < speedThreshold;
-  const motionAcrossIsNegligible = speedAcrossBoundary < speedThreshold;
-  const motionIsNegligible = motionAlongIsNegligible && motionAcrossIsNegligible;
+  // Dot product of both motion vectors tells us if they are moving in the same direction
+  const motionVecDot = tileMotionVec.dot(twinTileMotionVec);
 
-  const motionIsApart = angleRelativeMotion2EdgeDeg > 90;
-  const motionIsPureShear = Math.abs(angleRelativeMotion2EdgeDeg - 90) < 10;
-
-  if (motionIsNegligible) {
-    bEdge.type = BoundaryType.INACTIVE;
-  }
-
-  if (motionIsPureShear) {
+  // Determine boundary type based on dot products
+  if (Math.abs(relMotionDot) > Math.abs(edgeAlignmentDot)) {
+    // Motion is primarily toward/away from each other
+    if (relMotionDot < 0) {
+      bEdge.type = BoundaryType.CONVERGENT;
+    } else {
+      bEdge.type = BoundaryType.DIVERGENT;
+    }
+  } else if (motionVecDot < 0) {
+    // Motion is primarily along the edge
     bEdge.type = BoundaryType.TRANSFORM;
-  } else if (motionIsApart) {
-    bEdge.type = BoundaryType.DIVERGENT;
   } else {
-    bEdge.type = BoundaryType.CONVERGENT;
+    bEdge.type = BoundaryType.INACTIVE;
   }
 }
 
