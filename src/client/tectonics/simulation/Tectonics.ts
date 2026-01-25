@@ -8,6 +8,7 @@ import {
   plateAbsorbedByPlate,
   transferTileToPlate,
   splitPlateFromTile,
+  refineBoundaryType
 } from '../data/PlateOperations';
 import { computeTectonicDynamics, caracterizeBoundaryEdge } from '../dynamics/dynamics';
 
@@ -470,6 +471,11 @@ function caracterizePlateBoundaries(tectonicSystem: TectonicSystem): void {
       caracterizeBoundaryEdge(tectonicSystem, bEdge);
     }
 
+  }
+
+  // for all boundaries: call the refineBoundaryType from plate operations
+  for (const boundary of tectonicSystem.boundaries) {
+    refineBoundaryType(boundary);
   }
 }
 

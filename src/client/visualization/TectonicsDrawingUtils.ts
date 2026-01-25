@@ -56,7 +56,7 @@ function makeLineSegments2FromPlate(plate: Plate, lines: LineSegments2): void {
   lines.computeLineDistances();
 }
 
-function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegments2): void {
+function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegments2, useRawType: boolean = false): void {
   const positions = new Array<number>();
   const colors = new Array<number>();
   const lineWidths = new Array<number>();
@@ -76,10 +76,12 @@ function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegme
 
     positions.push(vStart.x, vStart.y, vStart.z);
     positions.push(vEnd.x, vEnd.y, vEnd.z);
-    console.log("type: ", bEdge.type);
+
+    const edgeType = useRawType ? bEdge.rawType : bEdge.refinedType;
+    console.log("type: ", edgeType, useRawType ? "(raw)" : "(refined)");
 
     // Customize appearance based on boundary type
-    switch (bEdge.type) {
+    switch (edgeType) {
       case BoundaryType.UNKNOWN:
         colors.push(0, 0, 0); // Black
         colors.push(0, 0, 0);

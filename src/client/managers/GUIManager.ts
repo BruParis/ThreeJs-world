@@ -2,7 +2,7 @@ import { GUI } from 'dat.gui';
 import { debounce } from 'lodash';
 import { VisualizationManager } from './VisualizationManager';
 import { TectonicManager } from './TectonicManager';
-import { InteractionHandler } from '../handlers/InteractionHandler';
+import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
 
 const MIN_DEGREE = 0;
 const MAX_DEGREE = 6;
@@ -106,10 +106,21 @@ export class GUIManager {
       });
     tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
     tectonicGui
-      .add({ iterateBoundaryEdges: this.interactionHandler.getIterateBoundaryEdgesMode() }, 'iterateBoundaryEdges')
-      .name('Iterate Boundary Edges')
-      .onChange((value: boolean) => {
-        this.interactionHandler.setIterateBoundaryEdgesMode(value);
+      .add(
+        { boundaryDisplay: this.interactionHandler.getBoundaryDisplayMode() },
+        'boundaryDisplay',
+        {
+          'None': BoundaryDisplayMode.NONE,
+          'Raw Type': BoundaryDisplayMode.RAW_TYPE,
+          'Refined Type': BoundaryDisplayMode.REFINED_TYPE,
+          'Iteration': BoundaryDisplayMode.ITERATION
+        }
+      )
+      .name('Boundary Display')
+      .onChange((value: BoundaryDisplayMode) => {
+        this.interactionHandler.setBoundaryDisplayMode(value);
+        // Refresh the boundary display with the new mode
+        this.visualizationManager.refreshBoundaryDisplay(value);
       });
     tectonicGui.open();
   }

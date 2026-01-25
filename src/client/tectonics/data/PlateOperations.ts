@@ -1,5 +1,5 @@
 import { Halfedge } from '@core/Halfedge';
-import { Tile, Plate, TectonicSystem } from './Plate';
+import { Tile, Plate, TectonicSystem, PlateBoundary, BoundaryEdge, BoundaryType } from './Plate';
 
 function floodFill(seeds: Halfedge[], selectedSet: Set<Halfedge>): Plate[] {
 
@@ -259,9 +259,108 @@ function splitPlateFromTile(tectonicSystem: TectonicSystem, tile: Tile): void {
   tectonicSystem.update();
 }
 
+/**
+ * Helper for refineBoundaryType: converts segments of certain types if bounded by a specific type.
+ * @param orderedEdges Edges in order along the boundary
+ * @param convertibleTypes Types that can be converted
+ * @param boundingType The type that must be on both sides of a segment
+ * @param targetType The type to convert to
+ */
+function refinePass(
+  orderedEdges: BoundaryEdge[],
+  convertibleTypes: BoundaryType[],
+  boundingType: BoundaryType,
+  targetType: BoundaryType
+): void {
+  const n = orderedEdges.length;
+
+  // Find segments of convertible types
+  let i = 0;
+  while (i < n) {
+    const edge = orderedEdges[i];
+
+    if (!convertibleTypes.includes(edge.refinedType)) {
+      i++;
+      continue;
+    }
+
+    // Found start of a convertible segment
+    const segmentStart = i;
+    let segmentEnd = i;
+
+    // Find the end of this segment
+    while (segmentEnd < n && convertibleTypes.includes(orderedEdges[segmentEnd].refinedType)) {
+      segmentEnd++;
+    }
+    // segmentEnd now points to first edge after segment (or n if segment goes to end)
+
+    // Check what's before and after the segment
+    const beforeIdx = segmentStart - 1;
+    const afterIdx = segmentEnd;
+
+    const typeBefore = beforeIdx >= 0 ? orderedEdges[beforeIdx].refinedType : null;
+    const typeAfter = afterIdx < n ? orderedEdges[afterIdx].refinedType : null;
+
+    // If both sides are the bounding type, convert the segment
+    if (typeBefore === boundingType && typeAfter === boundingType) {
+      for (let j = segmentStart; j < segmentEnd; j++) {
+        orderedEdges[j].refinedType = targetType;
+      }
+    }
+
+    i = segmentEnd;
+  }
+}
+
+/**
+ * Refines boundary edge types by smoothing out isolated segments.
+ *
+ * First pass: Convert inactive/transform edges to divergent if between two divergent segments,
+ * or to convergent if between two convergent segments.
+ *
+ * Second pass: Convert convergent edges to inactive if between two inactive segments,
+ * or divergent edges to transform if between two transform segments.
+ */
+function refineBoundaryType(boundary: PlateBoundary): void {
+  // Collect edges in order
+  const orderedEdges: BoundaryEdge[] = [];
+  for (const edge of boundary.iterateEdges()) {
+    orderedEdges.push(edge);
+  }
+
+  if (orderedEdges.length < 3) {
+    return; // Need at least 3 edges to have "between" relationship
+  }
+
+  // First pass: expand divergent/convergent into inactive/transform segments
+  refinePass(orderedEdges,
+    [BoundaryType.INACTIVE, BoundaryType.TRANSFORM], // types to convert
+    BoundaryType.DIVERGENT,  // if between these
+    BoundaryType.DIVERGENT   // convert to this
+  );
+  refinePass(orderedEdges,
+    [BoundaryType.INACTIVE, BoundaryType.TRANSFORM],
+    BoundaryType.CONVERGENT,
+    BoundaryType.CONVERGENT
+  );
+
+  // Second pass: contract convergent/divergent into inactive/transform segments
+  refinePass(orderedEdges,
+    [BoundaryType.DIVERGENT, BoundaryType.CONVERGENT],
+    BoundaryType.INACTIVE,
+    BoundaryType.INACTIVE
+  );
+  refinePass(orderedEdges,
+    [BoundaryType.DIVERGENT, BoundaryType.CONVERGENT],
+    BoundaryType.TRANSFORM,
+    BoundaryType.TRANSFORM
+  );
+}
+
 export {
   floodFill,
   plateAbsorbedByPlate,
   splitPlateFromTile,
   transferTileToPlate,
+  refineBoundaryType,
 };

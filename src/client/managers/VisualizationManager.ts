@@ -54,6 +54,11 @@ export class VisualizationManager {
   private icoHalfedgeGraph: HalfedgeGraph;
   private icoHalfedgeDualGraph: HalfedgeGraph;
 
+  // Current selection state
+  private currentSelectedHalfedge: Halfedge | null = null;
+  private currentClickPoint: THREE.Vector3 | null = null;
+  private currentBoundary: PlateBoundary | null = null;
+
   // Parameters
   private icoParams = {
     degree: 3,
@@ -360,6 +365,22 @@ export class VisualizationManager {
   }
 
   /**
+   * Displays boundary edges colored by type (raw or refined).
+   * @param boundary The plate boundary to visualize
+   * @param useRawType If true, use rawType; otherwise use refinedType
+   */
+  public displayBoundaryByType(boundary: PlateBoundary, useRawType: boolean): void {
+    const scene = this.sceneManager.getScene();
+
+    if (this.boundaryLines) {
+      scene.remove(this.boundaryLines);
+    }
+
+    makeLineSegments2FromBoundary(boundary, this.boundaryLines, useRawType);
+    scene.add(this.boundaryLines);
+  }
+
+  /**
    * Clears all selection lines from the scene.
    */
   public clearSelectionLines(): void {
@@ -367,6 +388,79 @@ export class VisualizationManager {
     if (this.tileLines) scene.remove(this.tileLines);
     if (this.plateLines) scene.remove(this.plateLines);
     if (this.boundaryLines) scene.remove(this.boundaryLines);
+  }
+
+  /**
+   * Sets the current selection state.
+   */
+  public setCurrentSelection(halfedge: Halfedge | null, clickPoint: THREE.Vector3 | null, boundary: PlateBoundary | null): void {
+    this.currentSelectedHalfedge = halfedge;
+    this.currentClickPoint = clickPoint;
+    this.currentBoundary = boundary;
+  }
+
+  /**
+   * Gets the current selected boundary.
+   */
+  public getCurrentBoundary(): PlateBoundary | null {
+    return this.currentBoundary;
+  }
+
+  /**
+   * Gets the current click point.
+   */
+  public getCurrentClickPoint(): THREE.Vector3 | null {
+    return this.currentClickPoint;
+  }
+
+  /**
+   * Refreshes the boundary display based on the given mode.
+   * @param mode The display mode: 'none', 'rawType', 'refinedType', or 'iteration'
+   */
+  public refreshBoundaryDisplay(mode: string): void {
+    if (!this.currentBoundary) {
+      return;
+    }
+
+    const scene = this.sceneManager.getScene();
+    if (this.boundaryLines) {
+      scene.remove(this.boundaryLines);
+    }
+
+    switch (mode) {
+      case 'none':
+        // Just remove, don't add anything
+        break;
+
+      case 'rawType':
+        makeLineSegments2FromBoundary(this.currentBoundary, this.boundaryLines, true);
+        scene.add(this.boundaryLines);
+        break;
+
+      case 'refinedType':
+        makeLineSegments2FromBoundary(this.currentBoundary, this.boundaryLines, false);
+        scene.add(this.boundaryLines);
+        break;
+
+      case 'iteration':
+        if (!this.currentBoundary.limitEdges || !this.currentClickPoint) {
+          console.warn('Cannot display iteration: no limit edges or click point');
+          return;
+        }
+        const [limitA, limitB] = this.currentBoundary.limitEdges;
+        const distToA = this.currentClickPoint.distanceTo(
+          limitA.halfedge.vertex.position.clone().add(limitA.halfedge.next.vertex.position).multiplyScalar(0.5)
+        );
+        const distToB = this.currentClickPoint.distanceTo(
+          limitB.halfedge.vertex.position.clone().add(limitB.halfedge.next.vertex.position).multiplyScalar(0.5)
+        );
+        const closestLimit = distToA < distToB ? limitA : limitB;
+        const success = makeLineSegments2FromBoundaryGradient(this.currentBoundary, this.boundaryLines, closestLimit);
+        if (success) {
+          scene.add(this.boundaryLines);
+        }
+        break;
+    }
   }
 
   // Getters for all state

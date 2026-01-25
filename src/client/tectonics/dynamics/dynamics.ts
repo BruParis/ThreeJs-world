@@ -55,7 +55,6 @@ function computeTectonicDynamics(tectonicSystem: TectonicSystem): void {
 }
 
 function caracterizeBoundaryEdge(tectonicSystem: TectonicSystem, bEdge: BoundaryEdge): void {
-  const speedThreshold = 0.01;
 
   const he = bEdge.halfedge;
   const twinHe = he.twin;
@@ -88,10 +87,6 @@ function caracterizeBoundaryEdge(tectonicSystem: TectonicSystem, bEdge: Boundary
   const tileMotionVecProj = tileMotionVec.clone().projectOnPlane(planeNormal);
   const twinTileMoveSpeedProj = twinTileMotionVec.clone().projectOnPlane(planeNormal);
 
-  // normalize both
-  const tileMotionVecProjNorm = tileMotionVecProj.clone().normalize();
-  const twinTileMoveSpeedProjNorm = twinTileMoveSpeedProj.clone().normalize();
-
   const relativeMotionVec = twinTileMoveSpeedProj.clone().sub(tileMotionVecProj);
   const relativeMotionNormVec = relativeMotionVec.clone().normalize();
 
@@ -109,15 +104,15 @@ function caracterizeBoundaryEdge(tectonicSystem: TectonicSystem, bEdge: Boundary
   if (Math.abs(relMotionDot) > Math.abs(edgeAlignmentDot)) {
     // Motion is primarily toward/away from each other
     if (relMotionDot < 0) {
-      bEdge.type = BoundaryType.CONVERGENT;
+      bEdge.rawType = BoundaryType.CONVERGENT;
     } else {
-      bEdge.type = BoundaryType.DIVERGENT;
+      bEdge.rawType = BoundaryType.DIVERGENT;
     }
   } else if (motionVecDot < 0) {
     // Motion is primarily along the edge
-    bEdge.type = BoundaryType.TRANSFORM;
+    bEdge.rawType = BoundaryType.TRANSFORM;
   } else {
-    bEdge.type = BoundaryType.INACTIVE;
+    bEdge.rawType = BoundaryType.INACTIVE;
   }
 }
 

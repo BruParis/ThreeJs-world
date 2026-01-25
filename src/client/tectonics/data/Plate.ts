@@ -190,11 +190,22 @@ export enum BoundaryType {
 
 export class BoundaryEdge {
   halfedge: Halfedge;
-  type: BoundaryType;
+  private _rawType: BoundaryType;
+  refinedType: BoundaryType;
 
   constructor(edge: Halfedge) {
     this.halfedge = edge;
-    this.type = BoundaryType.UNKNOWN;
+    this._rawType = BoundaryType.UNKNOWN;
+    this.refinedType = BoundaryType.UNKNOWN;
+  }
+
+  get rawType(): BoundaryType {
+    return this._rawType;
+  }
+
+  set rawType(value: BoundaryType) {
+    this._rawType = value;
+    this.refinedType = value;
   }
 }
 
