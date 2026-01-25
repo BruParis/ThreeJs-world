@@ -91,6 +91,9 @@ export class InteractionHandler {
       // Recolor the tectonic system
       this.tectonicManager.colorTectonicSystem(false);
 
+      // Check if tile is eligible for transfer to dominant plate
+      this.tectonicManager.checkTileTransferEligibility(clickedHe);
+
       // Uncomment these to enable plate operations on click:
       // this.tectonicManager.splitPlateAtEdge(clickedHe);
       // this.tectonicManager.transferTileAtEdge(clickedHe);

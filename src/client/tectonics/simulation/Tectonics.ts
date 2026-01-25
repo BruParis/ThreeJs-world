@@ -44,67 +44,180 @@ function _splitPlateAtBridgeTiles(tectonicSystem: TectonicSystem): void {
   console.log("Number of plates after splitting plates:", tectonicSystem.plates.size);
 }
 
-function _transferAllSingleEdgeBorderTiles(tectonicSystem: TectonicSystem): void {
-  for (const plate of tectonicSystem.plates) {
+interface TileTransferEligibility {
+  isEligible: boolean;
+  isBorderTile: boolean;
+  internalEdgeCount: number;
+  dominantPlate: Plate | null;
+  dominantPlateEdgeCount: number;
+  adjacentPlateCounts: Map<Plate, number>;
+}
 
+function checkTileTransferEligibility(tile: Tile, tectonicSystem: TectonicSystem): TileTransferEligibility {
+  const plate = tile.plate;
+  const result: TileTransferEligibility = {
+    isEligible: false,
+    isBorderTile: false,
+    internalEdgeCount: 0,
+    dominantPlate: null,
+    dominantPlateEdgeCount: 0,
+    adjacentPlateCounts: new Map<Plate, number>()
+  };
+
+  // Check if tile is a border tile
+  const borderEdgeCount = tile.countBorderEdges();
+  if (borderEdgeCount === 0) {
+    return result;
+  }
+  result.isBorderTile = true;
+
+  // Count internal edges (non-border edges = edges shared with same plate)
+  result.internalEdgeCount = tile.countEdges() - borderEdgeCount;
+
+  // Count how many edges this tile shares with each adjacent plate
+  for (const he of tile.loop()) {
+    if (!plate.borderEdge2TileMap.has(he)) {
+      continue;
+    }
+
+    const twinHe = he.twin;
+    const otherTile = tectonicSystem.edge2TileMap.get(twinHe);
+    const otherPlate = otherTile?.plate;
+    if (!otherPlate || otherPlate === plate) {
+      continue;
+    }
+
+    const plateCount = result.adjacentPlateCounts.get(otherPlate) || 0;
+    result.adjacentPlateCounts.set(otherPlate, plateCount + 1);
+  }
+
+  if (result.adjacentPlateCounts.size === 0) {
+    return result;
+  }
+
+  // Find the plate with the most shared borders
+  const [dominantPlate, dominantEdgeCount] = Array.from(result.adjacentPlateCounts.entries())
+    .sort((a, b) => b[1] - a[1])[0];
+
+  result.dominantPlate = dominantPlate;
+  result.dominantPlateEdgeCount = dominantEdgeCount;
+
+  // Eligible if dominant plate shares more edges than internal edges
+  result.isEligible = dominantEdgeCount > result.internalEdgeCount;
+
+  return result;
+}
+
+function logTileTransferEligibility(tile: Tile, tectonicSystem: TectonicSystem): void {
+
+  const plate = tile.plate;
+  let isBorderTile = false;
+  for (const borderTile of plate.iterBorderTiles()) {
+    if (borderTile === tile) {
+      isBorderTile = true;
+      break;
+    }
+  }
+
+  if (!isBorderTile) {
+    console.log("Tile", tile.id, "is not a border tile of its plate", plate.id);
+    return;
+  }
+
+  const result = checkTileTransferEligibility(tile, tectonicSystem);
+
+  console.log("=== Tile Transfer Eligibility Check ===");
+  console.log("Tile ID:", tile.id, "| Plate ID:", tile.plate.id);
+  console.log("Is border tile:", result.isBorderTile);
+
+  if (!result.isBorderTile) {
+    console.log("Not a border tile - not eligible for transfer.");
+    return;
+  }
+
+  console.log("Internal edges (with same plate):", result.internalEdgeCount);
+  console.log("Adjacent plates:");
+  for (const [plate, count] of result.adjacentPlateCounts.entries()) {
+    console.log("  - Plate", plate.id, ":", count, "edges");
+  }
+
+  if (result.dominantPlate) {
+    console.log("Dominant adjacent plate:", result.dominantPlate.id, "with", result.dominantPlateEdgeCount, "edges");
+  }
+
+  console.log("ELIGIBLE FOR TRANSFER:", result.isEligible);
+  if (result.isEligible) {
+    console.log("  -> Would transfer to plate", result.dominantPlate?.id);
+  } else {
+    console.log("  -> Dominant plate edges (", result.dominantPlateEdgeCount, ") <= internal edges (", result.internalEdgeCount, ")");
+  }
+  console.log("========================================");
+}
+
+function _transferBorderTilesToDominantPlate(tectonicSystem: TectonicSystem): Set<number> {
+  // Transfer border tiles to adjacent plate only if that plate shares more edges
+  // with the tile than the tile has internal edges with its current plate
+  const borderTilePlateTransferMap: Map<Tile, Plate> = new Map<Tile, Plate>();
+
+  for (const plate of tectonicSystem.plates) {
     if (plate.tiles.size <= 1) {
       continue;
     }
 
-    let secureCount = 0;
-    let noTransferDone = false;
-    do {
+    for (const borderTile of plate.iterBorderTiles()) {
+      const eligibility = checkTileTransferEligibility(borderTile, tectonicSystem);
 
-      const borderTilePlateTransferMap: Map<Tile, Plate> = new Map<Tile, Plate>();
-      for (const borderTile of plate.iterBorderTiles()) {
-
-        let borderHe: Halfedge | null = null;
-
-        const numNonBorderEdges = borderTile.countEdges() - borderTile.countBorderEdges();
-        if (numNonBorderEdges !== 1) {
-          // isolated tile, skip
-          continue;
-        }
-
-        // Count adjacent plates
-        let otherPlateCounter = new Map<Plate, number>();
-        for (const he of borderTile.loop()) {
-          if (!plate.borderEdge2TileMap.has(he)) {
-            continue;
-          }
-
-          const twinHe = he.twin;
-          const otherPlate = tectonicSystem.edge2TileMap.get(twinHe)?.plate;
-          if (!otherPlate || otherPlate === plate) {
-            console.warn("Could not find other plate for halfedge during tile transfer.");
-            continue;
-          }
-
-          borderHe = he;
-
-          const plateCount = otherPlateCounter.get(otherPlate) || 0;
-          otherPlateCounter.set(otherPlate, plateCount + 1);
-        }
-
-        const targetPlate = Array.from(otherPlateCounter.entries()).sort((a, b) => b[1] - a[1])[0][0];
-        borderTilePlateTransferMap.set(borderTile, targetPlate);
+      if (eligibility.isEligible && eligibility.dominantPlate) {
+        borderTilePlateTransferMap.set(borderTile, eligibility.dominantPlate);
       }
-
-      for (const [borderTile, targetPlate] of borderTilePlateTransferMap.entries()) {
-        transferTileToPlate(borderTile, targetPlate);
-      }
-
-      noTransferDone = borderTilePlateTransferMap.size === 0;
-      if (noTransferDone) {
-        break;
-      }
-
-    } while (secureCount < 100000);
-
-    if (secureCount >= 100000) {
-      console.warn("Secure count reached during tile transfer for plate", plate.id);
     }
   }
+
+  // among all the candidate tiles, remove the one sharing edges with tiles
+  // from other plates that are also being transferre to the tile's original plate
+  const tilesToRemoveFromTransfer: Set<Tile> = new Set<Tile>();
+  for (const [borderTile, targetPlate] of borderTilePlateTransferMap.entries()) {
+    for (const he of borderTile.loop()) {
+      if (!borderTile.plate.borderEdge2TileMap.has(he)) {
+        continue;
+      }
+
+      const twinHe = he.twin;
+      const otherTile = tectonicSystem.edge2TileMap.get(twinHe);
+      const otherPlate = otherTile?.plate;
+      if (!otherPlate || otherPlate === borderTile.plate) {
+        continue;
+      }
+
+      // if other tile has been marked for removal, skip
+      if (tilesToRemoveFromTransfer.has(otherTile!)) {
+        continue;
+      }
+
+      // Check if the other tile is also being transferred to the border tile's plate
+      const otherTileTargetPlate = borderTilePlateTransferMap.get(otherTile!);
+      if (otherTileTargetPlate === borderTile.plate) {
+        tilesToRemoveFromTransfer.add(borderTile);
+        break;
+      }
+    }
+  }
+
+  // remove the tiles marked for removal
+  for (const tileToRemove of tilesToRemoveFromTransfer) {
+    borderTilePlateTransferMap.delete(tileToRemove);
+  }
+
+  // Transfer all tiles
+  const transferredTilesIds: Set<number> = new Set<number>();
+  for (const [borderTile, targetPlate] of borderTilePlateTransferMap.entries()) {
+
+    transferTileToPlate(borderTile, targetPlate);
+
+    transferredTilesIds.add(borderTile.id);
+  }
+
+  return transferredTilesIds;
 }
 
 function _absorbEnclavedPlates(tectonicSystem: TectonicSystem): void {
@@ -188,6 +301,30 @@ function _absorbSmallPlates(tectonicSystem: TectonicSystem, sizeThreshold: numbe
   }
 }
 
+function _transferBorderTilesToDominantPlateLoop(tectonicSystem: TectonicSystem, iterations: number): void {
+  const setsAreEqual = (a: Set<number>, b: Set<number>): boolean =>
+    a.size === b.size && [...a].every(id => b.has(id));
+
+  const start_time = performance.now();
+  const history: Set<number>[] = [];
+
+  for (let i = 0; i < iterations; i++) {
+    const tilesTransferredIds = _transferBorderTilesToDominantPlate(tectonicSystem);
+
+    // Stop if no transfers or alternating state detected (matches 2 iterations ago)
+    if (tilesTransferredIds.size === 0 ||
+      (history.length >= 2 && setsAreEqual(tilesTransferredIds, history[history.length - 2]))) {
+      break;
+    }
+
+    history.push(tilesTransferredIds);
+  }
+
+  const end_time = performance.now();
+  console.log("Time taken for border tile transfers:", (end_time - start_time), "ms - iterations:", history.length);
+
+}
+
 function buildTectonicSystem(halfedgeGraph: HalfedgeGraph, numPlates: number): TectonicSystem {
   console.log("Building tectonic system with", numPlates, "plates.");
 
@@ -220,12 +357,12 @@ function buildTectonicSystem(halfedgeGraph: HalfedgeGraph, numPlates: number): T
 
   tectonicSystem.update();
 
-  // 1) Plates with narrow shape (1 tile large, bridge tile) are split into plates
-  _splitPlateAtBridgeTiles(tectonicSystem);
-
-  // 2) Tiles that are only linked to a plate by a single edge are transferred 
+  // 1) Tiles that are only linked to a plate by a single edge are transferred
   // to the neighboring plate
-  _transferAllSingleEdgeBorderTiles(tectonicSystem);
+  _transferBorderTilesToDominantPlateLoop(tectonicSystem, 50);
+
+  // 2) Plates with narrow shape (1 tile large, bridge tile) are split into plates
+  _splitPlateAtBridgeTiles(tectonicSystem);
 
   // 3) Each plate completely surrounded by the same plate gets absorbed
   _absorbEnclavedPlates(tectonicSystem);
@@ -331,11 +468,9 @@ function caracterizePlateBoundaries(tectonicSystem: TectonicSystem): void {
 
       processBoundaryEdge.add(bEdge);
       caracterizeBoundaryEdge(tectonicSystem, bEdge);
-
-      console.log("Boundary edge", bEdge.halfedge.id, "type:", bEdge.type);
     }
 
   }
 }
 
-export { buildTectonicSystem, computeTectonicMotion, computePlateBoundaries, caracterizePlateBoundaries };
+export { buildTectonicSystem, computeTectonicMotion, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility };

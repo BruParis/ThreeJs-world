@@ -5,7 +5,8 @@ import {
   buildTectonicSystem,
   computeTectonicMotion,
   computePlateBoundaries,
-  caracterizePlateBoundaries
+  caracterizePlateBoundaries,
+  logTileTransferEligibility
 } from '../tectonics/simulation/Tectonics';
 import {
   splitPlateFromTile,
@@ -115,6 +116,56 @@ export class TectonicManager {
         }
       }
     }
+  }
+
+  /**
+   * Shows border tiles by coloring them, all other tiles are white.
+   */
+  public showBorderTiles(): void {
+    const dualMesh = this.visualizationManager.getDualMesh();
+
+    if (!dualMesh) {
+      console.warn('No dual mesh available.');
+      return;
+    }
+
+    if (!this.tectonicSystem) {
+      console.warn('No tectonic plate system available.');
+      return;
+    }
+
+    const whiteColor = new THREE.Color(1, 1, 1);
+    const borderColor = new THREE.Color(1, 0, 0);
+
+    // First reset all tiles to white
+    for (const plate of this.tectonicSystem.plates) {
+      for (const tile of plate.tiles) {
+        for (const auxHe of tile.loop()) {
+          const origFaceIdx = dualMesh.geometry.userData.halfedge2FaceMap.get(auxHe.id);
+          if (origFaceIdx !== undefined) {
+            assignColorToTriangle(dualMesh.geometry, origFaceIdx, whiteColor);
+          }
+        }
+      }
+    }
+
+    // Then color border tiles
+    let totalBorderTiles = 0;
+    for (const plate of this.tectonicSystem.plates) {
+      let plateBorderTileCount = 0;
+      for (const borderTile of plate.iterBorderTiles()) {
+        plateBorderTileCount++;
+        for (const auxHe of borderTile.loop()) {
+          const origFaceIdx = dualMesh.geometry.userData.halfedge2FaceMap.get(auxHe.id);
+          if (origFaceIdx !== undefined) {
+            assignColorToTriangle(dualMesh.geometry, origFaceIdx, borderColor);
+          }
+        }
+      }
+      console.log("Plate", plate.id, "has", plateBorderTileCount, "border tiles out of", plate.tiles.size, "tiles");
+      totalBorderTiles += plateBorderTileCount;
+    }
+    console.log("Total border tiles:", totalBorderTiles);
   }
 
   /**
@@ -231,5 +282,23 @@ export class TectonicManager {
    */
   public getTectonicSystem(): TectonicSystem | null {
     return this.tectonicSystem;
+  }
+
+  /**
+   * Checks and logs if a tile at the given halfedge is eligible for transfer to dominant plate.
+   */
+  public checkTileTransferEligibility(he: Halfedge): void {
+    if (!this.tectonicSystem) {
+      console.warn('No tectonic plates available.');
+      return;
+    }
+
+    const tile = this.tectonicSystem.findTileFromEdge(he);
+    if (!tile) {
+      console.warn('No tile found for the clicked halfedge.');
+      return;
+    }
+
+    logTileTransferEligibility(tile, this.tectonicSystem);
   }
 }

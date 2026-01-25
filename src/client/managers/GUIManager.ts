@@ -94,6 +94,16 @@ export class GUIManager {
         'rebuild'
       )
       .name('Rebuild Plates');
+    tectonicGui
+      .add({ showBorderTiles: false }, 'showBorderTiles')
+      .name('Show Border Tiles')
+      .onChange((value: boolean) => {
+        if (value) {
+          this.tectonicManager.showBorderTiles();
+        } else {
+          this.tectonicManager.colorTectonicSystem(false);
+        }
+      });
     tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
     tectonicGui.open();
   }
