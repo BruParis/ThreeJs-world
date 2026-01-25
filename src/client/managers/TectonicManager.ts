@@ -12,7 +12,7 @@ import {
   transferTileToPlate,
   plateAbsorbedByPlate,
 } from '../tectonics/data/PlateOperations';
-import { makeLineSegments2ForTileMotionSpeed } from '../visualization/TectonicsDrawingUtils';
+import { makeLineSegments2ForTileMotionVec } from '../visualization/TectonicsDrawingUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
 import { idToHSLColor, assignColorToTriangle } from '../utils/ColorUtils';
@@ -36,8 +36,6 @@ export class TectonicManager {
   public rebuildTectonicPlates(numPlates: number = 25): void {
     const dualMesh = this.visualizationManager.getDualMesh();
     const icoHalfedgeDualGraph = this.visualizationManager.getIcoHalfedgeDualGraph();
-    const scene = this.sceneManager.getScene();
-    const motionSpeedLines = this.visualizationManager.getMotionSpeedLines();
 
     if (!dualMesh) {
       console.warn('No dual mesh available for tectonic plates.');
@@ -63,20 +61,23 @@ export class TectonicManager {
     console.log('Generated tectonic network with', this.tectonicSystem.plates.size, 'plates.');
     this.colorTectonicSystem();
 
+    // Update motion vector visualization
+    const scene = this.sceneManager.getScene();
+    const motionVecLines = this.visualizationManager.getMotionVecLines();
+
     let rotation: THREE.Euler | null = null;
-    if (motionSpeedLines) {
-      rotation = motionSpeedLines.rotation.clone();
-      scene.remove(motionSpeedLines);
+    if (motionVecLines) {
+      rotation = motionVecLines.rotation.clone();
+      scene.remove(motionVecLines);
     }
 
-    makeLineSegments2ForTileMotionSpeed(this.tectonicSystem, motionSpeedLines);
-    console.log("Num lines in motionSpeedLines:", motionSpeedLines.geometry.attributes.position.count / 2);
+    makeLineSegments2ForTileMotionVec(this.tectonicSystem, motionVecLines);
 
     if (rotation) {
-      motionSpeedLines.rotation.copy(rotation);
+      motionVecLines.rotation.copy(rotation);
     }
 
-    scene.add(motionSpeedLines);
+    scene.add(motionVecLines);
   }
 
   /**

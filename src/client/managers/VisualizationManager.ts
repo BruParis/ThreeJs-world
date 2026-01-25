@@ -39,14 +39,14 @@ export class VisualizationManager {
   private graphLinesMaterial: LineMaterial;
   private tileLinesMaterial: LineMaterial;
   private plateLinesMaterial: LineMaterial;
-  private motionSpeedLinesMaterial: LineMaterial;
+  private motionVecLinesMaterial: LineMaterial;
   private boundaryLinesMaterial: LineMaterial;
 
   // Line segments
   private halfedgeGraphLines: LineSegments2;
   private tileLines: LineSegments2;
   private plateLines: LineSegments2;
-  private motionSpeedLines: LineSegments2;
+  private motionVecLines: LineSegments2;
   private boundaryLines: LineSegments2;
 
   // Halfedge graphs
@@ -113,7 +113,7 @@ export class VisualizationManager {
       visible: true,
     });
 
-    this.motionSpeedLinesMaterial = new LineMaterial({
+    this.motionVecLinesMaterial = new LineMaterial({
       linewidth: 1,
       depthTest: true,
       depthWrite: true,
@@ -133,7 +133,7 @@ export class VisualizationManager {
     this.halfedgeGraphLines = new LineSegments2(new LineSegmentsGeometry(), this.graphLinesMaterial);
     this.tileLines = new LineSegments2(new LineSegmentsGeometry(), this.tileLinesMaterial);
     this.plateLines = new LineSegments2(new LineSegmentsGeometry(), this.plateLinesMaterial);
-    this.motionSpeedLines = new LineSegments2(new LineSegmentsGeometry(), this.motionSpeedLinesMaterial);
+    this.motionVecLines = new LineSegments2(new LineSegmentsGeometry(), this.motionVecLinesMaterial);
     this.boundaryLines = new LineSegments2(new LineSegmentsGeometry(), this.boundaryLinesMaterial);
   }
 
@@ -379,8 +379,8 @@ export class VisualizationManager {
     return this.plateLinesMaterial;
   }
 
-  public getMotionSpeedLinesMaterial(): LineMaterial {
-    return this.motionSpeedLinesMaterial;
+  public getMotionVecLinesMaterial(): LineMaterial {
+    return this.motionVecLinesMaterial;
   }
 
   public getBoundaryLinesMaterial(): LineMaterial {
@@ -399,8 +399,8 @@ export class VisualizationManager {
     return this.plateLines;
   }
 
-  public getMotionSpeedLines(): LineSegments2 {
-    return this.motionSpeedLines;
+  public getMotionVecLines(): LineSegments2 {
+    return this.motionVecLines;
   }
 
   public getBoundaryLines(): LineSegments2 {

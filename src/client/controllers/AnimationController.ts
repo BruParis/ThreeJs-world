@@ -60,7 +60,7 @@ export class AnimationController {
     const halfedgeGraphLines = this.visualizationManager.getHalfedgeGraphLines();
     const tileLines = this.visualizationManager.getTileLines();
     const plateLines = this.visualizationManager.getPlateLines();
-    const motionSpeedLines = this.visualizationManager.getMotionSpeedLines();
+    const motionVecLines = this.visualizationManager.getMotionVecLines();
     const boundaryLines = this.visualizationManager.getBoundaryLines();
 
     if (icosahedron) {
@@ -83,9 +83,9 @@ export class AnimationController {
       plateLines.rotation.y += this.rotationSpeed;
     }
 
-    if (motionSpeedLines) {
-      motionSpeedLines.rotation.x += this.rotationSpeed;
-      motionSpeedLines.rotation.y += this.rotationSpeed;
+    if (motionVecLines) {
+      motionVecLines.rotation.x += this.rotationSpeed;
+      motionVecLines.rotation.y += this.rotationSpeed;
     }
 
     if (boundaryLines) {

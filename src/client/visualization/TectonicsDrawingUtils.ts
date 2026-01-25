@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 
@@ -57,75 +56,6 @@ function makeLineSegments2FromPlate(plate: Plate, lines: LineSegments2): void {
   lines.computeLineDistances();
 }
 
-function makeLineSegments2ForTileMotionSpeed(tectonicSystem: TectonicSystem, lines: LineSegments2): void {
-  const positions = new Array<number>();
-  const colors = new Array<number>();
-
-  const moveColor = [1.0, 0.1, 0.1];
-  console.log("Making line segments for tile move speeds.");
-
-  const scaleFactor = 0.1;
-  const arrowHeadSize = 0.005;
-
-  for (const plate of tectonicSystem.plates) {
-    for (const tile of plate.tiles) {
-      const tileCentroid = tile.centroid;
-      const originPos = tileCentroid.clone();
-
-      const moveVector = tile.motionSpeed;
-      moveVector.multiplyScalar(scaleFactor);
-
-      const vStart = originPos.clone();
-      const vEnd = originPos.clone().add(moveVector);
-
-      positions.push(vStart.x, vStart.y, vStart.z);
-      positions.push(vEnd.x, vEnd.y, vEnd.z);
-
-      // console.log("start: (", vStart.x.toFixed(3), ",", vStart.y.toFixed(3), ",", vStart.z.toFixed(3), ") ");
-      // console.log("end:   (", vEnd.x.toFixed(3), ",", vEnd.y.toFixed(3), ",", vEnd.z.toFixed(3), ") ");
-
-      // Make a small arrow head
-      const moveDir = moveVector.clone().normalize();
-      const arrowBase = vEnd.clone().sub(moveDir.clone().multiplyScalar(arrowHeadSize));
-      const orthogonalVec1 = new THREE.Vector3().crossVectors(moveDir, new THREE.Vector3(0, 1, 0));
-      if (orthogonalVec1.length() < 0.001) {
-        orthogonalVec1.crossVectors(moveDir, new THREE.Vector3(1, 0, 0));
-      }
-      orthogonalVec1.normalize().multiplyScalar(arrowHeadSize * 0.5);
-      const orthogonalVec2 = new THREE.Vector3().crossVectors(moveDir, orthogonalVec1).normalize().multiplyScalar(arrowHeadSize * 0.5);
-      const arrowPoint1 = arrowBase.clone().add(orthogonalVec1);
-      const arrowPoint2 = arrowBase.clone().sub(orthogonalVec1);
-      const arrowPoint3 = arrowBase.clone().add(orthogonalVec2);
-      positions.push(vEnd.x, vEnd.y, vEnd.z);
-      positions.push(arrowPoint1.x, arrowPoint1.y, arrowPoint1.z);
-      positions.push(vEnd.x, vEnd.y, vEnd.z);
-      positions.push(arrowPoint2.x, arrowPoint2.y, arrowPoint2.z);
-      positions.push(vEnd.x, vEnd.y, vEnd.z);
-      positions.push(arrowPoint3.x, arrowPoint3.y, arrowPoint3.z);
-
-
-      colors.push(moveColor[0], moveColor[1], moveColor[2]);
-      colors.push(moveColor[0], moveColor[1], moveColor[2]);
-      colors.push(moveColor[0], moveColor[1], moveColor[2]);
-      colors.push(moveColor[0], moveColor[1], moveColor[2]);
-      colors.push(moveColor[0], moveColor[1], moveColor[2]);
-      colors.push(moveColor[0], moveColor[1], moveColor[2]);
-      colors.push(moveColor[0], moveColor[1], moveColor[2]);
-      colors.push(moveColor[0], moveColor[1], moveColor[2]);
-
-    }
-  }
-
-  console.log("Num lines for tile move speeds:", positions.length / 6);
-
-  lines.geometry.dispose();
-  lines.geometry = new LineSegmentsGeometry();
-  lines.geometry.setPositions(positions);
-  lines.geometry.setColors(colors);
-  lines.computeLineDistances();
-
-}
-
 function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegments2): void {
   const positions = new Array<number>();
   const colors = new Array<number>();
@@ -134,8 +64,6 @@ function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegme
   const dashScales = new Array<number>();
 
   const offsetFactor = 0.001;
-  const arrowOffsetFactor = 0.01;
-  const arrowHeadSize = 0.02;
 
   console.log("Number of boundaryEdges: ", boundary.boundaryEdges.size);
 
@@ -159,7 +87,7 @@ function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegme
         dashScales.push(0.5, 0.5);
         break;
       case BoundaryType.INACTIVE:
-        colors.push(0.6, 0.3, 0);
+        colors.push(0.6, 0.3, 0); // Brown
         colors.push(0.6, 0.3, 0);
         dashOffsets.push(0, 0);
         dashScales.push(0, 0);
@@ -182,59 +110,7 @@ function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegme
         dashOffsets.push(0, 0.2);
         dashScales.push(0.2, 0.2);
         break;
-      case BoundaryType.OBLIQUE_DIVERGENT:
-        colors.push(1, 0.5, 0); // Orange
-        colors.push(1, 0.5, 0);
-        dashOffsets.push(0, 0);
-        dashScales.push(0, 0);
-        break;
-      case BoundaryType.OBLIQUE_CONVERGENT:
-        colors.push(0, 1, 1); // Cyan
-        colors.push(0, 1, 1);
-        dashOffsets.push(0, 0);
-        dashScales.push(0, 0);
-        break;
     }
-
-    const relativeMotionSpeed = bEdge.relativeMotionSpeed;
-    // Draw an arrow indicating relative motion
-    // The center of the arrow is at the midpoint of the boundary edge
-    const originPos = vStart.clone().add(vEnd).multiplyScalar(0.5);
-    const moveVector = relativeMotionSpeed.clone().multiplyScalar(0.1);
-
-    const arrowEnd = originPos.clone().add(moveVector);
-    const arrowStart = originPos.clone();
-    arrowStart.add(moveVector.clone().multiplyScalar(-0.5));
-
-    const moveDir = moveVector.clone().normalize();
-    const arrowBase = arrowEnd.clone().sub(moveDir.clone().multiplyScalar(arrowHeadSize));
-    const orthogonalVec1 = new THREE.Vector3().crossVectors(moveDir, new THREE.Vector3(0, 1, 0));
-    if (orthogonalVec1.length() < 0.001) {
-      orthogonalVec1.crossVectors(moveDir, new THREE.Vector3(1, 0, 0));
-    }
-    orthogonalVec1.normalize().multiplyScalar(arrowHeadSize * 0.5);
-    const arrowPoint1 = arrowBase.clone().add(orthogonalVec1);
-    const arrowPoint2 = arrowBase.clone().sub(orthogonalVec1);
-
-    arrowStart.multiplyScalar(1 + arrowOffsetFactor);
-    arrowEnd.multiplyScalar(1 + arrowOffsetFactor);
-    arrowPoint1.multiplyScalar(1 + arrowOffsetFactor);
-    arrowPoint2.multiplyScalar(1 + arrowOffsetFactor);
-
-    positions.push(arrowStart.x, arrowStart.y, arrowStart.z);
-    positions.push(arrowEnd.x, arrowEnd.y, arrowEnd.z);
-    positions.push(arrowEnd.x, arrowEnd.y, arrowEnd.z);
-    positions.push(arrowPoint1.x, arrowPoint1.y, arrowPoint1.z);
-    positions.push(arrowEnd.x, arrowEnd.y, arrowEnd.z);
-    positions.push(arrowPoint2.x, arrowPoint2.y, arrowPoint2.z);
-
-    colors.push(1, 1, 0); // Yellow for motion arrows
-    colors.push(1, 1, 0);
-    colors.push(1, 1, 0);
-    colors.push(1, 1, 0);
-    colors.push(1, 1, 0);
-    colors.push(1, 1, 0);
-
   }
 
   lines.geometry.dispose();
@@ -257,9 +133,68 @@ function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegme
   lines.computeLineDistances();
 }
 
+function makeLineSegments2ForTileMotionVec(tectonicSystem: TectonicSystem, lines: LineSegments2): void {
+  const positions = new Array<number>();
+  const colors = new Array<number>();
+
+  const moveColor = [1.0, 0.1, 0.1];
+
+  const scaleFactor = 0.1;
+  const arrowHeadSize = 0.005;
+
+  for (const plate of tectonicSystem.plates) {
+    for (const tile of plate.tiles) {
+      const tileCentroid = tile.centroid;
+      const originPos = tileCentroid.clone();
+
+      const moveVector = tile.motionVec.clone().multiplyScalar(scaleFactor);
+
+      const vStart = originPos.clone();
+      const vEnd = originPos.clone().add(moveVector);
+
+      positions.push(vStart.x, vStart.y, vStart.z);
+      positions.push(vEnd.x, vEnd.y, vEnd.z);
+
+      // Make a small arrow head
+      const moveDir = moveVector.clone().normalize();
+      const arrowBase = vEnd.clone().sub(moveDir.clone().multiplyScalar(arrowHeadSize));
+      const orthogonalVec1 = new THREE.Vector3().crossVectors(moveDir, new THREE.Vector3(0, 1, 0));
+      if (orthogonalVec1.length() < 0.001) {
+        orthogonalVec1.crossVectors(moveDir, new THREE.Vector3(1, 0, 0));
+      }
+      orthogonalVec1.normalize().multiplyScalar(arrowHeadSize * 0.5);
+      const orthogonalVec2 = new THREE.Vector3().crossVectors(moveDir, orthogonalVec1).normalize().multiplyScalar(arrowHeadSize * 0.5);
+      const arrowPoint1 = arrowBase.clone().add(orthogonalVec1);
+      const arrowPoint2 = arrowBase.clone().sub(orthogonalVec1);
+      const arrowPoint3 = arrowBase.clone().add(orthogonalVec2);
+      positions.push(vEnd.x, vEnd.y, vEnd.z);
+      positions.push(arrowPoint1.x, arrowPoint1.y, arrowPoint1.z);
+      positions.push(vEnd.x, vEnd.y, vEnd.z);
+      positions.push(arrowPoint2.x, arrowPoint2.y, arrowPoint2.z);
+      positions.push(vEnd.x, vEnd.y, vEnd.z);
+      positions.push(arrowPoint3.x, arrowPoint3.y, arrowPoint3.z);
+
+      colors.push(moveColor[0], moveColor[1], moveColor[2]);
+      colors.push(moveColor[0], moveColor[1], moveColor[2]);
+      colors.push(moveColor[0], moveColor[1], moveColor[2]);
+      colors.push(moveColor[0], moveColor[1], moveColor[2]);
+      colors.push(moveColor[0], moveColor[1], moveColor[2]);
+      colors.push(moveColor[0], moveColor[1], moveColor[2]);
+      colors.push(moveColor[0], moveColor[1], moveColor[2]);
+      colors.push(moveColor[0], moveColor[1], moveColor[2]);
+    }
+  }
+
+  lines.geometry.dispose();
+  lines.geometry = new LineSegmentsGeometry();
+  lines.geometry.setPositions(positions);
+  lines.geometry.setColors(colors);
+  lines.computeLineDistances();
+}
+
 export {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
-  makeLineSegments2ForTileMotionSpeed,
-  makeLineSegments2FromBoundary
+  makeLineSegments2FromBoundary,
+  makeLineSegments2ForTileMotionVec
 };

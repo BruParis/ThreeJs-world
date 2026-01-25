@@ -18,7 +18,7 @@ export class Tile {
   edge: Halfedge;
   plate: Plate;
   centroid: THREE.Vector3;
-  motionSpeed: THREE.Vector3 = new THREE.Vector3();
+  motionVec: THREE.Vector3 = new THREE.Vector3();
 
   *loop(): IterableIterator<Halfedge> {
     for (const he of this.edge.nextLoop()) {
@@ -178,29 +178,23 @@ export class Plate {
 
 // INACTIVE: no relative motion
 // DIVERGENT: plates moving apart
-// CONVERTGENT: plates moving towards each other
+// CONVERGENT: plates moving towards each other
 // TRANSFORM: plates sliding past each other
-// OBLIQUE_DIVERGENT: plates moving apart with a shear component
-// OBLIQUE_CONVERGENT: plates moving towards each other with a shear component
 export enum BoundaryType {
   UNKNOWN = 'unknown',
   INACTIVE = 'inactive',
   DIVERGENT = 'divergent',
   CONVERGENT = 'convergent',
-  TRANSFORM = 'transform',
-  OBLIQUE_DIVERGENT = 'oblique_divergent',
-  OBLIQUE_CONVERGENT = 'oblique_convergent'
+  TRANSFORM = 'transform'
 }
 
 export class BoundaryEdge {
   halfedge: Halfedge;
   type: BoundaryType;
-  relativeMotionSpeed: THREE.Vector3;
 
   constructor(edge: Halfedge) {
     this.halfedge = edge;
     this.type = BoundaryType.UNKNOWN;
-    this.relativeMotionSpeed = new THREE.Vector3();
   }
 }
 

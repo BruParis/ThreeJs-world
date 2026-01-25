@@ -5,7 +5,7 @@ import { TectonicManager } from './TectonicManager';
 import { InteractionHandler } from '../handlers/InteractionHandler';
 
 const MIN_DEGREE = 0;
-const MAX_DEGREE = 7;
+const MAX_DEGREE = 6;
 
 /**
  * Manages the dat.GUI interface and coordinates user input with other managers.
@@ -41,7 +41,7 @@ export class GUIManager {
     const icosahedronMaterial = this.visualizationManager.getIcosahedronMaterial();
     const dualMaterial = this.visualizationManager.getDualMaterial();
     const graphLinesMaterial = this.visualizationManager.getGraphLinesMaterial();
-    const motionSpeedLinesMaterial = this.visualizationManager.getMotionSpeedLinesMaterial();
+    const motionVecLinesMaterial = this.visualizationManager.getMotionVecLinesMaterial();
 
     // Subdivision degree control with debounce
     this.gui
@@ -94,7 +94,7 @@ export class GUIManager {
         'rebuild'
       )
       .name('Rebuild Plates');
-    tectonicGui.add(motionSpeedLinesMaterial, 'visible').name('Show Motion');
+    tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
     tectonicGui.open();
   }
 
