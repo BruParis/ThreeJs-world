@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 
-import { Tile, Plate, PlateBoundary, BoundaryType, TectonicSystem } from '../tectonics/data/Plate';
+import { Tile, Plate, PlateBoundary, BoundaryType, BoundaryEdge, TectonicSystem } from '../tectonics/data/Plate';
 
 
 function makeLineSegments2FromTile(tile: Tile, lines: LineSegments2): void {
@@ -192,9 +192,79 @@ function makeLineSegments2ForTileMotionVec(tectonicSystem: TectonicSystem, lines
   lines.computeLineDistances();
 }
 
+/**
+ * Creates line segments for a boundary with gradient coloring from one limit to another.
+ * @param boundary The plate boundary to visualize
+ * @param lines The LineSegments2 object to populate
+ * @param startLimit Optional: which limit edge to start from. If not provided, uses first limit.
+ * @returns true if successful, false if boundary has no limits (closed loop)
+ */
+function makeLineSegments2FromBoundaryGradient(
+  boundary: PlateBoundary,
+  lines: LineSegments2,
+  startLimit?: BoundaryEdge
+): boolean {
+  const positions = new Array<number>();
+  const colors = new Array<number>();
+
+  const offsetFactor = 0.002; // Slightly higher than regular boundary lines
+
+  // Check if boundary has limit edges
+  if (!boundary.limitEdges) {
+    console.warn(`PlateBoundary ${boundary.id}: no limit edges (closed loop), cannot create gradient`);
+    return false;
+  }
+
+  // Collect edges in order
+  const orderedEdges: BoundaryEdge[] = [];
+  for (const edge of boundary.iterateEdges(startLimit)) {
+    orderedEdges.push(edge);
+  }
+
+  const totalEdges = orderedEdges.length;
+  if (totalEdges === 0) {
+    return false;
+  }
+
+  // Gradient colors: start (cyan) to end (magenta)
+  const startColor = [0, 1, 1]; // Cyan
+  const endColor = [1, 0, 1];   // Magenta
+
+  for (let i = 0; i < orderedEdges.length; i++) {
+    const bEdge = orderedEdges[i];
+    const t = totalEdges > 1 ? i / (totalEdges - 1) : 0;
+
+    const vStart = bEdge.halfedge.vertex.position.clone();
+    const vEnd = bEdge.halfedge.next.vertex.position.clone();
+
+    vStart.multiplyScalar(1 + offsetFactor);
+    vEnd.multiplyScalar(1 + offsetFactor);
+
+    positions.push(vStart.x, vStart.y, vStart.z);
+    positions.push(vEnd.x, vEnd.y, vEnd.z);
+
+    // Interpolate color
+    const r = startColor[0] + t * (endColor[0] - startColor[0]);
+    const g = startColor[1] + t * (endColor[1] - startColor[1]);
+    const b = startColor[2] + t * (endColor[2] - startColor[2]);
+
+    colors.push(r, g, b);
+    colors.push(r, g, b);
+  }
+
+  lines.geometry.dispose();
+  lines.geometry = new LineSegmentsGeometry();
+  lines.geometry.setPositions(positions);
+  lines.geometry.setColors(colors);
+  lines.computeLineDistances();
+
+  return true;
+}
+
 export {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
   makeLineSegments2FromBoundary,
-  makeLineSegments2ForTileMotionVec
+  makeLineSegments2ForTileMotionVec,
+  makeLineSegments2FromBoundaryGradient
 };

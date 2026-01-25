@@ -1,6 +1,8 @@
+import * as THREE from 'three';
 import { SceneManager } from '../managers/SceneManager';
 import { VisualizationManager } from '../managers/VisualizationManager';
 import { TectonicManager } from '../managers/TectonicManager';
+import { BoundaryEdge } from '../tectonics/data/Plate';
 
 /**
  * Handles mouse interaction events, raycasting, and selection.
@@ -10,6 +12,7 @@ export class InteractionHandler {
   private visualizationManager: VisualizationManager;
   private tectonicManager: TectonicManager;
   private selectionMode: boolean = true;
+  private iterateBoundaryEdgesMode: boolean = false;
 
   // Bound event handlers
   private boundOnMouseClick: (event: MouseEvent) => void;
@@ -94,11 +97,64 @@ export class InteractionHandler {
       // Check if tile is eligible for transfer to dominant plate
       this.tectonicManager.checkTileTransferEligibility(clickedHe);
 
+      // Handle iterate boundary edges debug mode
+      if (this.iterateBoundaryEdgesMode) {
+        this.handleIterateBoundaryEdgesClick(clickedHe, intersect.point);
+      }
+
       // Uncomment these to enable plate operations on click:
       // this.tectonicManager.splitPlateAtEdge(clickedHe);
       // this.tectonicManager.transferTileAtEdge(clickedHe);
       // this.tectonicManager.absorbPlateFromEdge(clickedHe);
     }
+  }
+
+  /**
+   * Handles click in iterate boundary edges debug mode.
+   * Finds the boundary, warns if not updated, finds closest limit edge,
+   * and colors edges with gradient.
+   */
+  private handleIterateBoundaryEdgesClick(clickedHe: import('@core/Halfedge').Halfedge, clickPoint: THREE.Vector3): void {
+    const tectonicSystem = this.tectonicManager.getTectonicSystem();
+    if (!tectonicSystem) {
+      console.warn('No tectonic system available for boundary iteration.');
+      return;
+    }
+
+    // Find boundary from clicked edge
+    const boundary = tectonicSystem.edge2BoundaryMap.get(clickedHe);
+    if (!boundary) {
+      console.warn('Clicked edge is not on a plate boundary.');
+      return;
+    }
+
+    // Check if boundary has limit edges
+    if (!boundary.limitEdges) {
+      console.warn(`Boundary ${boundary.id} has no limit edges. Call update() on the boundary first, or it may be a closed loop.`);
+      return;
+    }
+
+    const [limitA, limitB] = boundary.limitEdges;
+
+    // Find the closest limit edge to the click point
+    const distToA = this.distanceToEdge(clickPoint, limitA);
+    const distToB = this.distanceToEdge(clickPoint, limitB);
+    const closestLimit = distToA < distToB ? limitA : limitB;
+
+    console.log(`Iterating boundary ${boundary.id} from limit edge (distance A: ${distToA.toFixed(3)}, B: ${distToB.toFixed(3)})`);
+
+    // Display the boundary with gradient coloring starting from closest limit
+    this.visualizationManager.displayBoundaryGradient(boundary, closestLimit);
+  }
+
+  /**
+   * Computes the distance from a point to a boundary edge (using edge midpoint).
+   */
+  private distanceToEdge(point: THREE.Vector3, edge: BoundaryEdge): number {
+    const edgeStart = edge.halfedge.vertex.position;
+    const edgeEnd = edge.halfedge.next.vertex.position;
+    const midpoint = new THREE.Vector3().addVectors(edgeStart, edgeEnd).multiplyScalar(0.5);
+    return point.distanceTo(midpoint);
   }
 
   /**
@@ -165,5 +221,19 @@ export class InteractionHandler {
    */
   public getSelectionMode(): boolean {
     return this.selectionMode;
+  }
+
+  /**
+   * Sets the iterate boundary edges debug mode.
+   */
+  public setIterateBoundaryEdgesMode(value: boolean): void {
+    this.iterateBoundaryEdgesMode = value;
+  }
+
+  /**
+   * Gets the iterate boundary edges debug mode.
+   */
+  public getIterateBoundaryEdgesMode(): boolean {
+    return this.iterateBoundaryEdgesMode;
   }
 }

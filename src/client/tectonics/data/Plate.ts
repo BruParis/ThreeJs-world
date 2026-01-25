@@ -204,6 +204,15 @@ export class PlateBoundary {
   plateB: Plate;
   boundaryEdges: Set<BoundaryEdge>;
 
+  // Limit edges (the two endpoints of the boundary chain)
+  private _limitEdges: [BoundaryEdge, BoundaryEdge] | null = null;
+  // Adjacency map: each edge maps to its neighbors in the chain
+  private _adjacencyMap: Map<BoundaryEdge, BoundaryEdge[]> = new Map();
+
+  get limitEdges(): [BoundaryEdge, BoundaryEdge] | null {
+    return this._limitEdges;
+  }
+
   constructor(plateA: Plate, plateB: Plate, borderEdges: Set<Halfedge>) {
     this.id = _idBoundaryCount++;
     this.plateA = plateA;
@@ -213,6 +222,119 @@ export class PlateBoundary {
     for (const he of borderEdges) {
       const boundaryEdge = new BoundaryEdge(he);
       this.boundaryEdges.add(boundaryEdge);
+    }
+
+    this.update();
+  }
+
+  /**
+   * Updates the boundary's internal structure after construction.
+   * Computes adjacency between edges and identifies the two limit edges.
+   * Must be called after all boundary edges are added.
+   */
+  update(): void {
+    this._adjacencyMap.clear();
+    this._limitEdges = null;
+
+    if (this.boundaryEdges.size === 0) {
+      return;
+    }
+
+    const edgeArray = Array.from(this.boundaryEdges);
+
+    // Build a map from vertex ID to edges that touch that vertex
+    const vertexToEdges: Map<number, BoundaryEdge[]> = new Map();
+
+    for (const bEdge of edgeArray) {
+      const startVertexId = bEdge.halfedge.vertex.id;
+      const endVertexId = bEdge.halfedge.twin.vertex.id;
+
+      if (!vertexToEdges.has(startVertexId)) {
+        vertexToEdges.set(startVertexId, []);
+      }
+      vertexToEdges.get(startVertexId)!.push(bEdge);
+
+      if (!vertexToEdges.has(endVertexId)) {
+        vertexToEdges.set(endVertexId, []);
+      }
+      vertexToEdges.get(endVertexId)!.push(bEdge);
+    }
+
+    // Build adjacency: two edges are adjacent if they share a vertex
+    for (const bEdge of edgeArray) {
+      const neighbors: BoundaryEdge[] = [];
+      const startVertexId = bEdge.halfedge.vertex.id;
+      const endVertexId = bEdge.halfedge.twin.vertex.id;
+
+      for (const otherEdge of vertexToEdges.get(startVertexId) || []) {
+        if (otherEdge !== bEdge && !neighbors.includes(otherEdge)) {
+          neighbors.push(otherEdge);
+        }
+      }
+
+      for (const otherEdge of vertexToEdges.get(endVertexId) || []) {
+        if (otherEdge !== bEdge && !neighbors.includes(otherEdge)) {
+          neighbors.push(otherEdge);
+        }
+      }
+
+      this._adjacencyMap.set(bEdge, neighbors);
+    }
+
+    // Find limit edges (edges with only 1 neighbor = endpoints of the chain)
+    const limits: BoundaryEdge[] = [];
+    for (const [bEdge, neighbors] of this._adjacencyMap) {
+      if (neighbors.length === 1) {
+        limits.push(bEdge);
+      }
+    }
+
+    if (limits.length === 2) {
+      this._limitEdges = [limits[0], limits[1]];
+    } else if (limits.length === 0 && this.boundaryEdges.size > 0) {
+      // Boundary forms a closed loop - no limits
+      console.warn(`PlateBoundary ${this.id}: boundary forms a closed loop, no limit edges`);
+    } else if (limits.length !== 0) {
+      console.warn(`PlateBoundary ${this.id}: unexpected number of limit edges: ${limits.length}`);
+    }
+  }
+
+  /**
+   * Iterates over all boundary edges in order, from one limit to the other.
+   * @param startLimit Optional starting limit edge. If not provided, starts from the first limit.
+   */
+  *iterateEdges(startLimit?: BoundaryEdge): IterableIterator<BoundaryEdge> {
+    if (this.boundaryEdges.size === 0) {
+      return;
+    }
+
+    // Determine starting edge
+    let current: BoundaryEdge | undefined;
+    if (startLimit && this.boundaryEdges.has(startLimit)) {
+      current = startLimit;
+    } else if (this._limitEdges) {
+      current = this._limitEdges[0];
+    } else {
+      // No limits (closed loop), start from any edge
+      current = this.boundaryEdges.values().next().value;
+    }
+
+    if (!current) {
+      return;
+    }
+
+    const visited = new Set<BoundaryEdge>();
+
+    while (current && !visited.has(current)) {
+      yield current;
+      visited.add(current);
+
+      const neighbors: BoundaryEdge[] = this._adjacencyMap.get(current) || [];
+      const next: BoundaryEdge | undefined = neighbors.find((n: BoundaryEdge) => !visited.has(n));
+      if (!next) {
+        break;
+      }
+      current = next;
     }
   }
 }

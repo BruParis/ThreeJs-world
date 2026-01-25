@@ -105,6 +105,12 @@ export class GUIManager {
         }
       });
     tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
+    tectonicGui
+      .add({ iterateBoundaryEdges: this.interactionHandler.getIterateBoundaryEdgesMode() }, 'iterateBoundaryEdges')
+      .name('Iterate Boundary Edges')
+      .onChange((value: boolean) => {
+        this.interactionHandler.setIterateBoundaryEdgesMode(value);
+      });
     tectonicGui.open();
   }
 

@@ -4,7 +4,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
 import { Halfedge } from '@core/Halfedge';
-import { TectonicSystem } from '../tectonics/data/Plate';
+import { TectonicSystem, PlateBoundary, BoundaryEdge } from '../tectonics/data/Plate';
 import {
   makeBufferGeometryFromHalfedgeGraph,
   makeBufferGeometryFromLoops,
@@ -19,7 +19,8 @@ import { populateIcosahedronHalfedgeGraph } from '@core/geometry/IcosahedronMesh
 import {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
-  makeLineSegments2FromBoundary
+  makeLineSegments2FromBoundary,
+  makeLineSegments2FromBoundaryGradient
 } from '../visualization/TectonicsDrawingUtils';
 import { SceneManager } from './SceneManager';
 
@@ -338,6 +339,24 @@ export class VisualizationManager {
     makeLineSegments2FromBoundary(boundary, this.boundaryLines);
 
     scene.add(this.boundaryLines);
+  }
+
+  /**
+   * Displays boundary edges with gradient coloring from one limit to the other.
+   * @param boundary The plate boundary to visualize
+   * @param startLimit Optional: which limit edge to start the gradient from
+   */
+  public displayBoundaryGradient(boundary: PlateBoundary, startLimit?: BoundaryEdge): void {
+    const scene = this.sceneManager.getScene();
+
+    if (this.boundaryLines) {
+      scene.remove(this.boundaryLines);
+    }
+
+    const success = makeLineSegments2FromBoundaryGradient(boundary, this.boundaryLines, startLimit);
+    if (success) {
+      scene.add(this.boundaryLines);
+    }
   }
 
   /**
