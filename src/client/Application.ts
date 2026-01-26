@@ -54,12 +54,14 @@ export class Application {
 
   /**
    * Resets the visualization by rebuilding the icosahedron at a specific degree (optional).
+   * Also rebuilds the tectonic plates since they depend on the underlying geometry.
    */
   public reset(degree?: number): void {
     if (degree !== undefined) {
       this.visualizationManager.getIcoParams().degree = degree;
     }
     this.visualizationManager.rebuildIcosahedronHalfedgeDS();
+    this.tectonicManager.rebuildTectonicPlates();
   }
 
   /**

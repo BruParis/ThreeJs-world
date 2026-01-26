@@ -2,9 +2,10 @@ import * as THREE from 'three';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
 import { Halfedge } from '@core/Halfedge';
-import { TectonicSystem, PlateBoundary, BoundaryEdge } from '../tectonics/data/Plate';
+import { TectonicSystem, PlateBoundary, BoundaryEdge, Tile, Plate } from '../tectonics/data/Plate';
 import {
   makeBufferGeometryFromHalfedgeGraph,
   makeBufferGeometryFromLoops,
@@ -60,6 +61,10 @@ export class VisualizationManager {
   private currentSelectedHalfedge: Halfedge | null = null;
   private currentClickPoint: THREE.Vector3 | null = null;
   private currentBoundary: PlateBoundary | null = null;
+
+  // Labels for tile and plate info
+  private tileLabel: CSS2DObject | null = null;
+  private plateLabel: CSS2DObject | null = null;
 
   // Parameters
   private icoParams = {
@@ -399,6 +404,87 @@ export class VisualizationManager {
     if (this.tileLines) scene.remove(this.tileLines);
     if (this.plateLines) scene.remove(this.plateLines);
     if (this.boundaryLines) scene.remove(this.boundaryLines);
+  }
+
+  /**
+   * Displays labels for the selected tile and its plate.
+   * Labels are added as children of dualMesh so they rotate with the scene.
+   * @param tile The selected tile
+   */
+  public displayTileAndPlateLabels(tile: Tile): void {
+    if (!this.dualMesh) {
+      console.warn('No dual mesh available for labels.');
+      return;
+    }
+
+    // Remove existing labels
+    this.clearLabels();
+
+    const plate = tile.plate;
+    const elevationFactor = 1.15;
+
+    // Create tile label
+    const tileLabelDiv = document.createElement('div');
+    tileLabelDiv.className = 'tile-label';
+    tileLabelDiv.style.cssText = `
+      background: rgba(255, 255, 255, 0.9);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #333;
+      border: 1px solid #666;
+    `;
+    tileLabelDiv.innerHTML = `
+      <strong>Tile #${tile.id}</strong><br>
+      Area: ${tile.area.toFixed(6)}
+    `;
+
+    this.tileLabel = new CSS2DObject(tileLabelDiv);
+    const tilePos = tile.centroid.clone().multiplyScalar(elevationFactor);
+    this.tileLabel.position.copy(tilePos);
+    // Add as child of dualMesh so it rotates with the scene
+    this.dualMesh.add(this.tileLabel);
+
+    // Create plate label
+    const plateLabelDiv = document.createElement('div');
+    plateLabelDiv.className = 'plate-label';
+    plateLabelDiv.style.cssText = `
+      background: rgba(240, 240, 255, 0.9);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #333;
+      border: 1px solid #336;
+    `;
+    plateLabelDiv.innerHTML = `
+      <strong>Plate #${plate.id}</strong><br>
+      Category: ${plate.category}<br>
+      Area: ${plate.area.toFixed(6)}<br>
+      Tiles: ${plate.tiles.size}
+    `;
+
+    this.plateLabel = new CSS2DObject(plateLabelDiv);
+    // Position plate label at plate centroid, slightly more elevated
+    const platePos = plate.centroid.clone().multiplyScalar(elevationFactor * 1.1);
+    this.plateLabel.position.copy(platePos);
+    // Add as child of dualMesh so it rotates with the scene
+    this.dualMesh.add(this.plateLabel);
+  }
+
+  /**
+   * Clears tile and plate labels from the scene.
+   */
+  public clearLabels(): void {
+    if (this.tileLabel) {
+      this.tileLabel.removeFromParent();
+      this.tileLabel = null;
+    }
+    if (this.plateLabel) {
+      this.plateLabel.removeFromParent();
+      this.plateLabel = null;
+    }
   }
 
   /**

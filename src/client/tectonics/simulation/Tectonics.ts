@@ -371,6 +371,11 @@ function buildTectonicSystem(halfedgeGraph: HalfedgeGraph, numPlates: number): T
   // 4) Each small tile plate gets absorbed by the neighboring plate
   _absorbSmallPlates(tectonicSystem, 5);
 
+  // 5) Compute plate areas now that all modifications are complete
+  for (const plate of tectonicSystem.plates) {
+    plate.computeArea();
+  }
+
   return tectonicSystem;
 }
 
@@ -480,15 +485,44 @@ function caracterizePlateBoundaries(tectonicSystem: TectonicSystem): void {
 }
 
 /**
- * Assigns random categories (continental or oceanic) to all plates.
+ * Assigns categories (continental or oceanic) to plates based on area ratio.
+ * Uses a greedy approximation algorithm to achieve the target area distribution.
  * @param tectonicSystem The tectonic system to categorize
- * @param continentalRatio Ratio of plates to be continental (default 0.3 = 30%)
+ * @param continentalRatio Target ratio of continental area (default 0.3 = 30%)
  */
-function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: number = 0.7): void {
+function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: number = 0.3): void {
+  // Compute total area
+  let totalArea = 0;
   for (const plate of tectonicSystem.plates) {
-    const isContinental = Math.random() < continentalRatio;
-    plate.category = isContinental ? PlateCategory.CONTINENTAL : PlateCategory.OCEANIC;
+    totalArea += plate.area;
   }
+
+  const targetContinentalArea = totalArea * continentalRatio;
+
+  // Shuffle plates randomly for variety in results
+  const plates = Array.from(tectonicSystem.plates);
+  for (let i = plates.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [plates[i], plates[j]] = [plates[j], plates[i]];
+  }
+
+  // Greedy assignment: for each plate, check if adding it to continental
+  // brings us closer to the target area ratio
+  let continentalArea = 0;
+  for (const plate of plates) {
+    const distanceWithout = Math.abs(targetContinentalArea - continentalArea);
+    const distanceWith = Math.abs(targetContinentalArea - (continentalArea + plate.area));
+
+    if (distanceWith <= distanceWithout) {
+      plate.category = PlateCategory.CONTINENTAL;
+      continentalArea += plate.area;
+    } else {
+      plate.category = PlateCategory.OCEANIC;
+    }
+  }
+
+  const actualRatio = continentalArea / totalArea;
+  console.log(`Plate categorization: target=${(continentalRatio * 100).toFixed(1)}%, actual=${(actualRatio * 100).toFixed(1)}%`);
 }
 
 export { buildTectonicSystem, computeTectonicMotion, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility, categorizePlates };

@@ -19,6 +19,7 @@ export class Tile {
   plate: Plate;
   centroid: THREE.Vector3;
   motionVec: THREE.Vector3 = new THREE.Vector3();
+  readonly area: number;
 
   *loop(): IterableIterator<Halfedge> {
     for (const he of this.edge.nextLoop()) {
@@ -30,23 +31,53 @@ export class Tile {
     this.edge = halfedge;
     this.plate = plate;
 
-    // Compute centroid
-    const verticesPosSet: Set<THREE.Vector3> = new Set<THREE.Vector3>();
+    // Collect vertices
+    const vertices: THREE.Vector3[] = [];
     for (const he of this.loop()) {
-      const vertexPos = he.vertex.position;
-      verticesPosSet.add(vertexPos);
+      vertices.push(he.vertex.position);
     }
 
+    // Compute centroid
     this.centroid = new THREE.Vector3();
-    const numVertices = verticesPosSet.size;
-    for (const vertexPos of verticesPosSet) {
+    for (const vertexPos of vertices) {
       this.centroid.add(vertexPos);
     }
-
-    this.centroid.divideScalar(numVertices);
-
+    this.centroid.divideScalar(vertices.length);
     this.centroid.normalize();
 
+    // Compute area (spherical polygon area on unit sphere)
+    this.area = this.computeSphericalPolygonArea(vertices);
+  }
+
+  /**
+   * Computes the area of a spherical polygon on a unit sphere.
+   * Uses triangulation from centroid and sums spherical triangle areas.
+   */
+  private computeSphericalPolygonArea(vertices: THREE.Vector3[]): number {
+    const n = vertices.length;
+    if (n < 3) return 0;
+
+    let totalArea = 0;
+    const center = this.centroid;
+
+    for (let i = 0; i < n; i++) {
+      const v1 = vertices[i];
+      const v2 = vertices[(i + 1) % n];
+      totalArea += this.sphericalTriangleArea(center, v1, v2);
+    }
+
+    return totalArea;
+  }
+
+  /**
+   * Computes the area of a spherical triangle on a unit sphere using the formula:
+   * Area = 2 * atan2(|A · (B × C)|, 1 + A·B + B·C + C·A)
+   */
+  private sphericalTriangleArea(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): number {
+    const crossBC = new THREE.Vector3().crossVectors(b, c);
+    const numerator = Math.abs(a.dot(crossBC));
+    const denominator = 1 + a.dot(b) + b.dot(c) + c.dot(a);
+    return 2 * Math.atan2(numerator, denominator);
   }
 
   countEdges(): number {
@@ -96,10 +127,11 @@ export class Plate {
   system: TectonicSystem;
   centroid: THREE.Vector3;
   // Motion quantities units are irrelevant,
-  // just use normalized magnitudes 
+  // just use normalized magnitudes
   // (not really simulating anything physical here)
   rotationAxis: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
   rotationSpeed: number = 0; // radians per unit time
+  private _area: number = 0;
 
   *iterBorderTiles(): IterableIterator<Tile> {
     const visitedTiles: Set<Tile> = new Set<Tile>();
@@ -173,6 +205,24 @@ export class Plate {
     this.centroid.divideScalar(numVertices);
 
     this.centroid.normalize();
+  }
+
+  /**
+   * Gets the plate area. Must call computeArea() first after all modifications.
+   */
+  get area(): number {
+    return this._area;
+  }
+
+  /**
+   * Computes the plate area as the sum of all tile areas.
+   * Call this after all tile modifications (transfers, absorptions) are complete.
+   */
+  computeArea(): void {
+    this._area = 0;
+    for (const tile of this.tiles) {
+      this._area += tile.area;
+    }
   }
 }
 

@@ -96,6 +96,12 @@ export class InteractionHandler {
       this.visualizationManager.displayPlateLines(clickedHe, tectonicSystem);
       this.visualizationManager.displayBoundaryLines(clickedHe, tectonicSystem);
 
+      // Display tile and plate labels
+      const tile = tectonicSystem.findTileFromEdge(clickedHe);
+      if (tile) {
+        this.visualizationManager.displayTileAndPlateLabels(tile);
+      }
+
       // Recolor the tectonic system using current display mode
       this.tectonicManager.refreshPlateDisplay();
 

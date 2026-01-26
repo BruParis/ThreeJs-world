@@ -60,8 +60,11 @@ export class GUIManager {
         this.interactionHandler.setSelectionMode(value);
       });
 
-    // Icosahedron folder
-    const icoGui = this.gui.addFolder('Icosahedron');
+    // Geometry folder (contains Icosahedron, Dual Graph, Dual Mesh)
+    const geometryGui = this.gui.addFolder('Geometry');
+
+    // Icosahedron subfolder
+    const icoGui = geometryGui.addFolder('Icosahedron');
     icoGui.add(icosahedronMaterial, 'visible').name('Visible');
     icoGui.add(icosahedronMaterial, 'wireframe').name('Wireframe');
     icoGui.add(icosahedronMaterial, 'vertexColors').name('Vertex Colors').onChange(() => {
@@ -71,15 +74,15 @@ export class GUIManager {
     icoGui.add(icoParams, 'numFaces').name('Num Faces').listen();
     icoGui.add(icoParams, 'numHalfedges').name('Num Halfedges').listen();
 
-    // Dual Graph folder
-    const dualGui = this.gui.addFolder('Dual Graph');
+    // Dual Graph subfolder
+    const dualGui = geometryGui.addFolder('Dual Graph');
     dualGui.add(graphLinesMaterial, 'visible').name('Visible');
     dualGui.add(icoDualParams, 'pentagons').name('Num Pentagons').listen();
     dualGui.add(icoDualParams, 'hexagons').name('Num Hexagons').listen();
     dualGui.add(icoDualParams, 'heptagons').name('Num Heptagons').listen();
 
-    // Dual Mesh folder
-    const dualMeshGui = this.gui.addFolder('Dual Mesh');
+    // Dual Mesh subfolder
+    const dualMeshGui = geometryGui.addFolder('Dual Mesh');
     dualMeshGui.add(dualMaterial, 'visible').name('Visible');
     dualMeshGui.add(dualMaterial, 'wireframe').name('Wireframe');
     dualMeshGui.open();
