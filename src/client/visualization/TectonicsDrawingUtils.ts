@@ -3,6 +3,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 
 import { Tile, Plate, PlateBoundary, BoundaryType, BoundaryEdge, TectonicSystem } from '../tectonics/data/Plate';
+import { BOUNDARY_COLORS } from './BoundaryColors';
 
 
 function makeLineSegments2FromTile(tile: Tile, lines: LineSegments2): void {
@@ -81,37 +82,20 @@ function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegme
     console.log("type: ", edgeType, useRawType ? "(raw)" : "(refined)");
 
     // Customize appearance based on boundary type
-    switch (edgeType) {
-      case BoundaryType.UNKNOWN:
-        colors.push(0, 0, 0); // Black
-        colors.push(0, 0, 0);
-        dashOffsets.push(0, 0.5);
-        dashScales.push(0.5, 0.5);
-        break;
-      case BoundaryType.INACTIVE:
-        colors.push(0.6, 0.3, 0); // Brown
-        colors.push(0.6, 0.3, 0);
-        dashOffsets.push(0, 0);
-        dashScales.push(0, 0);
-        break;
-      case BoundaryType.DIVERGENT:
-        colors.push(0, 0, 1); // Blue
-        colors.push(0, 0, 1);
-        dashOffsets.push(0, 0);
-        dashScales.push(0, 0);
-        break;
-      case BoundaryType.CONVERGENT:
-        colors.push(1, 0, 0); // Red
-        colors.push(1, 0, 0);
-        dashOffsets.push(0, 0);
-        dashScales.push(0, 0);
-        break;
-      case BoundaryType.TRANSFORM:
-        colors.push(0, 1, 0); // Green
-        colors.push(0, 1, 0);
-        dashOffsets.push(0, 0.2);
-        dashScales.push(0.2, 0.2);
-        break;
+    const color = BOUNDARY_COLORS[edgeType];
+    colors.push(color[0], color[1], color[2]);
+    colors.push(color[0], color[1], color[2]);
+
+    // Set dash parameters based on type
+    if (edgeType === BoundaryType.UNKNOWN) {
+      dashOffsets.push(0, 0.5);
+      dashScales.push(0.5, 0.5);
+    } else if (edgeType === BoundaryType.TRANSFORM) {
+      dashOffsets.push(0, 0.2);
+      dashScales.push(0.2, 0.2);
+    } else {
+      dashOffsets.push(0, 0);
+      dashScales.push(0, 0);
     }
   }
 

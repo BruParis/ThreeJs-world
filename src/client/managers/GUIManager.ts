@@ -3,6 +3,7 @@ import { debounce } from 'lodash';
 import { VisualizationManager } from './VisualizationManager';
 import { TectonicManager } from './TectonicManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
+import { BOUNDARY_LEGEND, boundaryColorToHex } from '../visualization/BoundaryColors';
 
 const MIN_DEGREE = 0;
 const MAX_DEGREE = 6;
@@ -105,24 +106,45 @@ export class GUIManager {
         }
       });
     tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
-    tectonicGui
+    tectonicGui.open();
+
+    // Boundary Display subfolder with legend
+    const boundaryGui = this.gui.addFolder('Boundary Display');
+
+    // Add boundary display mode selector
+    boundaryGui
       .add(
         { boundaryDisplay: this.interactionHandler.getBoundaryDisplayMode() },
         'boundaryDisplay',
         {
-          'None': BoundaryDisplayMode.NONE,
           'Raw Type': BoundaryDisplayMode.RAW_TYPE,
           'Refined Type': BoundaryDisplayMode.REFINED_TYPE,
           'Iteration': BoundaryDisplayMode.ITERATION
         }
       )
-      .name('Boundary Display')
+      .name('Display Mode')
       .onChange((value: BoundaryDisplayMode) => {
         this.interactionHandler.setBoundaryDisplayMode(value);
         // Refresh the boundary display with the new mode
         this.visualizationManager.refreshBoundaryDisplay(value);
       });
-    tectonicGui.open();
+
+    // Add color legend entries
+    const legendColors: Record<string, number> = {};
+    for (const entry of BOUNDARY_LEGEND) {
+      legendColors[entry.label] = boundaryColorToHex(entry.type);
+    }
+
+    for (const entry of BOUNDARY_LEGEND) {
+      const controller = boundaryGui.addColor(legendColors, entry.label);
+      // Make the color read-only by resetting on change
+      controller.onChange(() => {
+        legendColors[entry.label] = boundaryColorToHex(entry.type);
+        controller.updateDisplay();
+      });
+    }
+
+    boundaryGui.open();
   }
 
   /**

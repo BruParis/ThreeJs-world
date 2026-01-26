@@ -4,7 +4,6 @@ import { VisualizationManager } from '../managers/VisualizationManager';
 import { TectonicManager } from '../managers/TectonicManager';
 
 export enum BoundaryDisplayMode {
-  NONE = 'none',
   RAW_TYPE = 'rawType',
   REFINED_TYPE = 'refinedType',
   ITERATION = 'iteration'
@@ -18,7 +17,7 @@ export class InteractionHandler {
   private visualizationManager: VisualizationManager;
   private tectonicManager: TectonicManager;
   private selectionMode: boolean = true;
-  private boundaryDisplayMode: BoundaryDisplayMode = BoundaryDisplayMode.NONE;
+  private boundaryDisplayMode: BoundaryDisplayMode = BoundaryDisplayMode.RAW_TYPE;
 
   // Bound event handlers
   private boundOnMouseClick: (event: MouseEvent) => void;
@@ -104,9 +103,7 @@ export class InteractionHandler {
       this.tectonicManager.checkTileTransferEligibility(clickedHe);
 
       // Handle boundary display mode
-      if (this.boundaryDisplayMode !== BoundaryDisplayMode.NONE) {
-        this.handleBoundaryDisplayClick(clickedHe, intersect.point);
-      }
+      this.handleBoundaryDisplayClick(clickedHe, intersect.point);
 
       // Uncomment these to enable plate operations on click:
       // this.tectonicManager.splitPlateAtEdge(clickedHe);
