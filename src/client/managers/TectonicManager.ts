@@ -6,14 +6,16 @@ import {
   computeTectonicMotion,
   computePlateBoundaries,
   caracterizePlateBoundaries,
-  logTileTransferEligibility
+  logTileTransferEligibility,
+  categorizePlates
 } from '../tectonics/simulation/Tectonics';
+import { PLATE_CATEGORY_COLORS, PlateDisplayMode } from '../visualization/PlateColors';
 import {
   splitPlateFromTile,
   transferTileToPlate,
   plateAbsorbedByPlate,
 } from '../tectonics/data/PlateOperations';
-import { makeLineSegments2ForTileMotionVec } from '../visualization/TectonicsDrawingUtils';
+import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundaries } from '../visualization/TectonicsDrawingUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
 import { idToHSLColor, assignColorToTriangle } from '../utils/ColorUtils';
@@ -25,10 +27,37 @@ export class TectonicManager {
   private visualizationManager: VisualizationManager;
   private sceneManager: SceneManager;
   private tectonicSystem: TectonicSystem | null = null;
+  private plateDisplayMode: PlateDisplayMode = PlateDisplayMode.NONE;
 
   constructor(visualizationManager: VisualizationManager, sceneManager: SceneManager) {
     this.visualizationManager = visualizationManager;
     this.sceneManager = sceneManager;
+  }
+
+  /**
+   * Sets the plate display mode and refreshes the visualization.
+   */
+  public setPlateDisplayMode(mode: PlateDisplayMode): void {
+    this.plateDisplayMode = mode;
+    this.refreshPlateDisplay();
+  }
+
+  /**
+   * Gets the current plate display mode.
+   */
+  public getPlateDisplayMode(): PlateDisplayMode {
+    return this.plateDisplayMode;
+  }
+
+  /**
+   * Refreshes the plate visualization based on the current display mode.
+   */
+  public refreshPlateDisplay(): void {
+    if (this.plateDisplayMode === PlateDisplayMode.CATEGORY) {
+      this.colorTectonicSystemByCategory();
+    } else {
+      this.colorTectonicSystem(false);
+    }
   }
 
   /**
@@ -54,13 +83,14 @@ export class TectonicManager {
 
     this.tectonicSystem = buildTectonicSystem(icoHalfedgeDualGraph, numPlates);
 
+    categorizePlates(this.tectonicSystem);
     computeTectonicMotion(this.tectonicSystem);
 
     computePlateBoundaries(this.tectonicSystem);
     caracterizePlateBoundaries(this.tectonicSystem);
 
     console.log('Generated tectonic network with', this.tectonicSystem.plates.size, 'plates.');
-    this.colorTectonicSystem();
+    this.refreshPlateDisplay();
 
     // Update motion vector visualization
     const scene = this.sceneManager.getScene();
@@ -79,6 +109,22 @@ export class TectonicManager {
     }
 
     scene.add(motionVecLines);
+
+    // Update all boundaries visualization (light gray)
+    const allBoundariesLines = this.visualizationManager.getAllBoundariesLines();
+
+    if (allBoundariesLines) {
+      rotation = allBoundariesLines.rotation.clone();
+      scene.remove(allBoundariesLines);
+    }
+
+    makeLineSegments2ForAllBoundaries(this.tectonicSystem, allBoundariesLines);
+
+    if (rotation) {
+      allBoundariesLines.rotation.copy(rotation);
+    }
+
+    scene.add(allBoundariesLines);
   }
 
   /**
@@ -110,6 +156,39 @@ export class TectonicManager {
           // so we need to check for undefined
           if (origFaceIdx !== undefined) {
             assignColorToTriangle(dualMesh.geometry, origFaceIdx, plateColor);
+          } else {
+            console.warn('No face found for halfedge id:', auxHe.id);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Colors the tectonic system by plate category (continental/oceanic).
+   */
+  public colorTectonicSystemByCategory(): void {
+    const dualMesh = this.visualizationManager.getDualMesh();
+
+    if (!dualMesh) {
+      console.warn('No dual mesh available for coloring tectonic plates.');
+      return;
+    }
+
+    if (!this.tectonicSystem) {
+      console.warn('No tectonic plate system available.');
+      return;
+    }
+
+    for (const plate of this.tectonicSystem.plates) {
+      const [r, g, b] = PLATE_CATEGORY_COLORS[plate.category];
+      const categoryColor = new THREE.Color(r, g, b);
+
+      for (const tile of plate.tiles) {
+        for (const auxHe of tile.loop()) {
+          const origFaceIdx = dualMesh.geometry.userData.halfedge2FaceMap.get(auxHe.id);
+          if (origFaceIdx !== undefined) {
+            assignColorToTriangle(dualMesh.geometry, origFaceIdx, categoryColor);
           } else {
             console.warn('No face found for halfedge id:', auxHe.id);
           }

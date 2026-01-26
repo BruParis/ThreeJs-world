@@ -42,6 +42,7 @@ export class VisualizationManager {
   private plateLinesMaterial: LineMaterial;
   private motionVecLinesMaterial: LineMaterial;
   private boundaryLinesMaterial: LineMaterial;
+  private allBoundariesLinesMaterial: LineMaterial;
 
   // Line segments
   private halfedgeGraphLines: LineSegments2;
@@ -49,6 +50,7 @@ export class VisualizationManager {
   private plateLines: LineSegments2;
   private motionVecLines: LineSegments2;
   private boundaryLines: LineSegments2;
+  private allBoundariesLines: LineSegments2;
 
   // Halfedge graphs
   private icoHalfedgeGraph: HalfedgeGraph;
@@ -135,12 +137,21 @@ export class VisualizationManager {
       visible: true,
     });
 
+    this.allBoundariesLinesMaterial = new LineMaterial({
+      linewidth: 3,
+      depthTest: true,
+      depthWrite: true,
+      vertexColors: true,
+      visible: true,
+    });
+
     // Initialize line segments
     this.halfedgeGraphLines = new LineSegments2(new LineSegmentsGeometry(), this.graphLinesMaterial);
     this.tileLines = new LineSegments2(new LineSegmentsGeometry(), this.tileLinesMaterial);
     this.plateLines = new LineSegments2(new LineSegmentsGeometry(), this.plateLinesMaterial);
     this.motionVecLines = new LineSegments2(new LineSegmentsGeometry(), this.motionVecLinesMaterial);
     this.boundaryLines = new LineSegments2(new LineSegmentsGeometry(), this.boundaryLinesMaterial);
+    this.allBoundariesLines = new LineSegments2(new LineSegmentsGeometry(), this.allBoundariesLinesMaterial);
   }
 
   /**
@@ -518,6 +529,14 @@ export class VisualizationManager {
 
   public getBoundaryLines(): LineSegments2 {
     return this.boundaryLines;
+  }
+
+  public getAllBoundariesLines(): LineSegments2 {
+    return this.allBoundariesLines;
+  }
+
+  public getAllBoundariesLinesMaterial(): LineMaterial {
+    return this.allBoundariesLinesMaterial;
   }
 
   public getIcoHalfedgeGraph(): HalfedgeGraph {

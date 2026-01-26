@@ -62,6 +62,7 @@ export class AnimationController {
     const plateLines = this.visualizationManager.getPlateLines();
     const motionVecLines = this.visualizationManager.getMotionVecLines();
     const boundaryLines = this.visualizationManager.getBoundaryLines();
+    const allBoundariesLines = this.visualizationManager.getAllBoundariesLines();
 
     if (icosahedron) {
       icosahedron.rotation.x += this.rotationSpeed;
@@ -91,6 +92,11 @@ export class AnimationController {
     if (boundaryLines) {
       boundaryLines.rotation.x += this.rotationSpeed;
       boundaryLines.rotation.y += this.rotationSpeed;
+    }
+
+    if (allBoundariesLines) {
+      allBoundariesLines.rotation.x += this.rotationSpeed;
+      allBoundariesLines.rotation.y += this.rotationSpeed;
     }
 
     if (dualMesh) {

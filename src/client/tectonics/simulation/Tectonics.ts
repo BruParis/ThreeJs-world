@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Vertex } from '@core/Vertex';
 import { Halfedge } from '@core/Halfedge';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
-import { Tile, Plate, BoundaryEdge, TectonicSystem, makePlateBoundary } from '../data/Plate';
+import { Tile, Plate, PlateCategory, BoundaryEdge, TectonicSystem, makePlateBoundary } from '../data/Plate';
 import {
   floodFill,
   plateAbsorbedByPlate,
@@ -479,4 +479,16 @@ function caracterizePlateBoundaries(tectonicSystem: TectonicSystem): void {
   }
 }
 
-export { buildTectonicSystem, computeTectonicMotion, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility };
+/**
+ * Assigns random categories (continental or oceanic) to all plates.
+ * @param tectonicSystem The tectonic system to categorize
+ * @param continentalRatio Ratio of plates to be continental (default 0.3 = 30%)
+ */
+function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: number = 0.7): void {
+  for (const plate of tectonicSystem.plates) {
+    const isContinental = Math.random() < continentalRatio;
+    plate.category = isContinental ? PlateCategory.CONTINENTAL : PlateCategory.OCEANIC;
+  }
+}
+
+export { buildTectonicSystem, computeTectonicMotion, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility, categorizePlates };

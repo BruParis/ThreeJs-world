@@ -64,7 +64,8 @@ function makeLineSegments2FromBoundary(boundary: PlateBoundary, lines: LineSegme
   const dashOffsets = new Array<number>();
   const dashScales = new Array<number>();
 
-  const offsetFactor = 0.001;
+  // Higher offset than allBoundaries (0.001) to render above them
+  const offsetFactor = 0.003;
 
   console.log("Number of boundaryEdges: ", boundary.boundaryEdges.size);
 
@@ -193,7 +194,8 @@ function makeLineSegments2FromBoundaryGradient(
   const positions = new Array<number>();
   const colors = new Array<number>();
 
-  const offsetFactor = 0.002; // Slightly higher than regular boundary lines
+  // Higher offset than allBoundaries (0.001) to render above them
+  const offsetFactor = 0.003;
 
   // Check if boundary has limit edges
   if (!boundary.limitEdges) {
@@ -247,10 +249,50 @@ function makeLineSegments2FromBoundaryGradient(
   return true;
 }
 
+/**
+ * Creates line segments for all boundaries in the tectonic system with a uniform color.
+ * @param tectonicSystem The tectonic system containing all boundaries
+ * @param lines The LineSegments2 object to populate
+ * @param color RGB color array [r, g, b] with values in range [0, 1], defaults to light gray
+ */
+function makeLineSegments2ForAllBoundaries(
+  tectonicSystem: TectonicSystem,
+  lines: LineSegments2,
+  color: [number, number, number] = [0.7, 0.7, 0.7]
+): void {
+  const positions = new Array<number>();
+  const colors = new Array<number>();
+
+  const offsetFactor = 0.001;
+
+  for (const boundary of tectonicSystem.boundaries) {
+    for (const bEdge of boundary.boundaryEdges) {
+      const vStart = bEdge.halfedge.vertex.position.clone();
+      const vEnd = bEdge.halfedge.next.vertex.position.clone();
+
+      vStart.multiplyScalar(1 + offsetFactor);
+      vEnd.multiplyScalar(1 + offsetFactor);
+
+      positions.push(vStart.x, vStart.y, vStart.z);
+      positions.push(vEnd.x, vEnd.y, vEnd.z);
+
+      colors.push(color[0], color[1], color[2]);
+      colors.push(color[0], color[1], color[2]);
+    }
+  }
+
+  lines.geometry.dispose();
+  lines.geometry = new LineSegmentsGeometry();
+  lines.geometry.setPositions(positions);
+  lines.geometry.setColors(colors);
+  lines.computeLineDistances();
+}
+
 export {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
   makeLineSegments2FromBoundary,
   makeLineSegments2ForTileMotionVec,
-  makeLineSegments2FromBoundaryGradient
+  makeLineSegments2FromBoundaryGradient,
+  makeLineSegments2ForAllBoundaries
 };

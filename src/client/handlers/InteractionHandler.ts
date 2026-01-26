@@ -96,8 +96,8 @@ export class InteractionHandler {
       this.visualizationManager.displayPlateLines(clickedHe, tectonicSystem);
       this.visualizationManager.displayBoundaryLines(clickedHe, tectonicSystem);
 
-      // Recolor the tectonic system
-      this.tectonicManager.colorTectonicSystem(false);
+      // Recolor the tectonic system using current display mode
+      this.tectonicManager.refreshPlateDisplay();
 
       // Check if tile is eligible for transfer to dominant plate
       this.tectonicManager.checkTileTransferEligibility(clickedHe);
@@ -114,7 +114,7 @@ export class InteractionHandler {
 
   /**
    * Handles click for boundary display modes.
-   * Finds the boundary, stores selection, and displays it according to the current mode.
+   * Finds the closest boundary to the click point and displays it according to the current mode.
    */
   private handleBoundaryDisplayClick(clickedHe: import('@core/Halfedge').Halfedge, clickPoint: THREE.Vector3): void {
     const tectonicSystem = this.tectonicManager.getTectonicSystem();
@@ -123,15 +123,32 @@ export class InteractionHandler {
       return;
     }
 
-    // Find boundary from clicked edge
-    const boundary = tectonicSystem.edge2BoundaryMap.get(clickedHe);
-    if (!boundary) {
-      console.warn('Clicked edge is not on a plate boundary.');
+    // Find the closest boundary edge to the click point
+    let closestBoundary = null;
+    let closestDistance = Infinity;
+
+    for (const boundary of tectonicSystem.boundaries) {
+      for (const bEdge of boundary.boundaryEdges) {
+        // Calculate midpoint of the edge
+        const edgeMidpoint = bEdge.halfedge.vertex.position.clone()
+          .add(bEdge.halfedge.next.vertex.position)
+          .multiplyScalar(0.5);
+
+        const distance = clickPoint.distanceTo(edgeMidpoint);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestBoundary = boundary;
+        }
+      }
+    }
+
+    if (!closestBoundary) {
+      console.warn('No boundary found near the clicked point.');
       return;
     }
 
     // Store selection state
-    this.visualizationManager.setCurrentSelection(clickedHe, clickPoint, boundary);
+    this.visualizationManager.setCurrentSelection(clickedHe, clickPoint, closestBoundary);
 
     // Refresh display with current mode
     this.visualizationManager.refreshBoundaryDisplay(this.boundaryDisplayMode);

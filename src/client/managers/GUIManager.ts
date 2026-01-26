@@ -4,6 +4,7 @@ import { VisualizationManager } from './VisualizationManager';
 import { TectonicManager } from './TectonicManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
 import { BOUNDARY_LEGEND, boundaryColorToHex } from '../visualization/BoundaryColors';
+import { PLATE_CATEGORY_LEGEND, plateCategoryColorToHex, PlateDisplayMode } from '../visualization/PlateColors';
 
 const MIN_DEGREE = 0;
 const MAX_DEGREE = 6;
@@ -84,7 +85,7 @@ export class GUIManager {
     dualMeshGui.open();
 
     // Tectonic Plates folder
-    const tectonicGui = this.gui.addFolder("Tectonic Plates");
+    const tectonicGui = this.gui.addFolder("Tectonic");
     tectonicGui
       .add(
         {
@@ -106,10 +107,45 @@ export class GUIManager {
         }
       });
     tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
+
+    // Plate subfolder with category display
+    const plateGui = tectonicGui.addFolder('Plate');
+
+    // Add plate display mode selector
+    plateGui
+      .add(
+        { plateDisplay: this.tectonicManager.getPlateDisplayMode() },
+        'plateDisplay',
+        {
+          'None': PlateDisplayMode.NONE,
+          'Category': PlateDisplayMode.CATEGORY
+        }
+      )
+      .name('Display Mode')
+      .onChange((value: PlateDisplayMode) => {
+        this.tectonicManager.setPlateDisplayMode(value);
+      });
+
+    // Add plate category color legend
+    const plateLegendColors: Record<string, number> = {};
+    for (const entry of PLATE_CATEGORY_LEGEND) {
+      plateLegendColors[entry.label] = plateCategoryColorToHex(entry.category);
+    }
+
+    for (const entry of PLATE_CATEGORY_LEGEND) {
+      const controller = plateGui.addColor(plateLegendColors, entry.label);
+      // Make the color read-only by resetting on change
+      controller.onChange(() => {
+        plateLegendColors[entry.label] = plateCategoryColorToHex(entry.category);
+        controller.updateDisplay();
+      });
+    }
+
+    plateGui.open();
     tectonicGui.open();
 
     // Boundary Display subfolder with legend
-    const boundaryGui = this.gui.addFolder('Boundary Display');
+    const boundaryGui = tectonicGui.addFolder('Boundary');
 
     // Add boundary display mode selector
     boundaryGui
