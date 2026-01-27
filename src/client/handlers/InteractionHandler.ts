@@ -91,10 +91,9 @@ export class InteractionHandler {
         return;
       }
 
-      // Display tile, plate, and boundary edges
+      // Display tile and plate edges
       this.visualizationManager.displayTileLines(clickedHe, tectonicSystem);
       this.visualizationManager.displayPlateLines(clickedHe, tectonicSystem);
-      this.visualizationManager.displayBoundaryLines(clickedHe, tectonicSystem);
 
       // Display tile and plate labels
       const tile = tectonicSystem.findTileFromEdge(clickedHe);
@@ -120,7 +119,8 @@ export class InteractionHandler {
 
   /**
    * Handles click for boundary display modes.
-   * Finds the closest boundary to the click point and displays it according to the current mode.
+   * Only displays a boundary if the clicked tile has boundary edges.
+   * Finds the closest boundary edge belonging to the tile and displays that boundary.
    */
   private handleBoundaryDisplayClick(clickedHe: import('@core/Halfedge').Halfedge, clickPoint: THREE.Vector3): void {
     const tectonicSystem = this.tectonicManager.getTectonicSystem();
@@ -129,28 +129,50 @@ export class InteractionHandler {
       return;
     }
 
-    // Find the closest boundary edge to the click point
-    let closestBoundary = null;
-    let closestDistance = Infinity;
+    // Find the tile from the clicked halfedge
+    const tile = tectonicSystem.findTileFromEdge(clickedHe);
+    if (!tile) {
+      console.warn('No tile found for clicked halfedge.');
+      this.visualizationManager.setCurrentSelection(null, null, null);
+      this.visualizationManager.refreshBoundaryDisplay(this.boundaryDisplayMode);
+      return;
+    }
 
-    for (const boundary of tectonicSystem.boundaries) {
-      for (const bEdge of boundary.boundaryEdges) {
-        // Calculate midpoint of the edge
-        const edgeMidpoint = bEdge.halfedge.vertex.position.clone()
-          .add(bEdge.halfedge.next.vertex.position)
-          .multiplyScalar(0.5);
+    const plate = tile.plate;
 
-        const distance = clickPoint.distanceTo(edgeMidpoint);
-        if (distance < closestDistance) {
-          closestDistance = distance;
-          closestBoundary = boundary;
+    // Collect boundary edges that belong to this tile
+    const tileBoundaryEdges: { halfedge: import('@core/Halfedge').Halfedge; boundary: import('../tectonics/data/Plate').PlateBoundary }[] = [];
+    for (const he of tile.loop()) {
+      if (plate.borderEdge2TileMap.has(he)) {
+        const boundary = tectonicSystem.edge2BoundaryMap.get(he);
+        if (boundary) {
+          tileBoundaryEdges.push({ halfedge: he, boundary });
         }
       }
     }
 
-    if (!closestBoundary) {
-      console.warn('No boundary found near the clicked point.');
+    // If tile has no boundary edges, clear the display
+    if (tileBoundaryEdges.length === 0) {
+      this.visualizationManager.setCurrentSelection(null, null, null);
+      this.visualizationManager.refreshBoundaryDisplay(this.boundaryDisplayMode);
       return;
+    }
+
+    // Find the closest boundary edge to the click point
+    let closestBoundary = tileBoundaryEdges[0].boundary;
+    let closestDistance = Infinity;
+
+    for (const { halfedge, boundary } of tileBoundaryEdges) {
+      // Calculate midpoint of the edge
+      const edgeMidpoint = halfedge.vertex.position.clone()
+        .add(halfedge.twin.vertex.position)
+        .multiplyScalar(0.5);
+
+      const distance = clickPoint.distanceTo(edgeMidpoint);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestBoundary = boundary;
+      }
     }
 
     // Store selection state

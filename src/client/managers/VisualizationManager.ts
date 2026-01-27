@@ -515,13 +515,16 @@ export class VisualizationManager {
    * @param mode The display mode: 'none', 'rawType', 'refinedType', or 'iteration'
    */
   public refreshBoundaryDisplay(mode: string): void {
-    if (!this.currentBoundary) {
-      return;
-    }
-
     const scene = this.sceneManager.getScene();
+
+    // Always remove existing boundary lines first
     if (this.boundaryLines) {
       scene.remove(this.boundaryLines);
+    }
+
+    // If no boundary selected, just clear and return
+    if (!this.currentBoundary) {
+      return;
     }
 
     switch (mode) {
