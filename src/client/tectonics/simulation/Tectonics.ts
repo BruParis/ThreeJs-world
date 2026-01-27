@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Vertex } from '@core/Vertex';
 import { Halfedge } from '@core/Halfedge';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
-import { Tile, Plate, PlateCategory, BoundaryEdge, TectonicSystem, makePlateBoundary } from '../data/Plate';
+import { Tile, Plate, PlateCategory, BoundaryEdge, BoundaryType, TectonicSystem, makePlateBoundary } from '../data/Plate';
 import {
   floodFill,
   plateAbsorbedByPlate,
@@ -485,8 +485,33 @@ function caracterizePlateBoundaries(tectonicSystem: TectonicSystem): void {
 }
 
 /**
+ * Computes the divergent edge ratio for a plate.
+ * Returns the number of divergent boundary edges divided by total boundary edges.
+ */
+function computePlateDivergentRatio(plate: Plate, tectonicSystem: TectonicSystem): number {
+  let divergentCount = 0;
+  let totalCount = 0;
+
+  for (const boundary of tectonicSystem.boundaries) {
+    if (boundary.plateA !== plate && boundary.plateB !== plate) {
+      continue;
+    }
+
+    for (const bEdge of boundary.boundaryEdges) {
+      totalCount++;
+      if (bEdge.refinedType === BoundaryType.DIVERGENT) {
+        divergentCount++;
+      }
+    }
+  }
+
+  return totalCount > 0 ? divergentCount / totalCount : 0;
+}
+
+/**
  * Assigns categories (continental or oceanic) to plates based on area ratio.
  * Uses a greedy approximation algorithm to achieve the target area distribution.
+ * Plates with more divergent boundaries are biased toward oceanic.
  * @param tectonicSystem The tectonic system to categorize
  * @param continentalRatio Target ratio of continental area (default 0.3 = 30%)
  */
@@ -499,17 +524,26 @@ function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: numb
 
   const targetContinentalArea = totalArea * continentalRatio;
 
-  // Shuffle plates randomly for variety in results
-  const plates = Array.from(tectonicSystem.plates);
-  for (let i = plates.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [plates[i], plates[j]] = [plates[j], plates[i]];
-  }
+  // Compute divergent ratio for each plate and sort ascending
+  // Plates with fewer divergent edges are processed first (more likely continental)
+  const platesWithRatio = Array.from(tectonicSystem.plates).map(plate => ({
+    plate,
+    divergentRatio: computePlateDivergentRatio(plate, tectonicSystem)
+  }));
+
+  // Sort by divergent ratio ascending, with random tiebreaker for variety
+  platesWithRatio.sort((a, b) => {
+    const diff = a.divergentRatio - b.divergentRatio;
+    if (Math.abs(diff) < 0.001) {
+      return Math.random() - 0.5; // Random tiebreaker
+    }
+    return diff;
+  });
 
   // Greedy assignment: for each plate, check if adding it to continental
   // brings us closer to the target area ratio
   let continentalArea = 0;
-  for (const plate of plates) {
+  for (const { plate } of platesWithRatio) {
     const distanceWithout = Math.abs(targetContinentalArea - continentalArea);
     const distanceWith = Math.abs(targetContinentalArea - (continentalArea + plate.area));
 

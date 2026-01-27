@@ -113,13 +113,6 @@ export class GUIManager {
       });
     tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
 
-    // Net Rotation subfolder (should be ~0 after zero net rotation correction)
-    const netRotationGui = tectonicGui.addFolder('Net Rotation');
-    netRotationGui.add(this.netRotationParams, 'x').name('X').listen();
-    netRotationGui.add(this.netRotationParams, 'y').name('Y').listen();
-    netRotationGui.add(this.netRotationParams, 'z').name('Z').listen();
-    netRotationGui.add(this.netRotationParams, 'magnitude').name('Magnitude').listen();
-
     // Plate subfolder with category display
     const plateGui = tectonicGui.addFolder('Plate');
 
@@ -154,6 +147,14 @@ export class GUIManager {
     }
 
     plateGui.open();
+
+    // Net Rotation subfolder (should be ~0 after zero net rotation correction)
+    const netRotationGui = plateGui.addFolder('Net Rotation');
+    netRotationGui.add(this.netRotationParams, 'x').name('X').listen();
+    netRotationGui.add(this.netRotationParams, 'y').name('Y').listen();
+    netRotationGui.add(this.netRotationParams, 'z').name('Z').listen();
+    netRotationGui.add(this.netRotationParams, 'magnitude').name('Magnitude').listen();
+
     tectonicGui.open();
 
     // Boundary Display subfolder with legend

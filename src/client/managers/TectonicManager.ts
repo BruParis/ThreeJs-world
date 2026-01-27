@@ -85,15 +85,19 @@ export class TectonicManager {
 
     this.tectonicSystem = buildTectonicSystem(icoHalfedgeDualGraph, numPlates);
 
-    categorizePlates(this.tectonicSystem);
+    // Compute motion first (needed for boundary characterization)
     computeTectonicMotion(this.tectonicSystem);
 
     // Compute net rotation after motion to verify zero net rotation
     const { netRotation } = computeNetRotation(this.tectonicSystem.plates);
     this.netRotation = netRotation;
 
+    // Compute and characterize boundaries (needed for plate categorization)
     computePlateBoundaries(this.tectonicSystem);
     caracterizePlateBoundaries(this.tectonicSystem);
+
+    // Categorize plates after boundaries are known (uses divergent edge info)
+    categorizePlates(this.tectonicSystem);
 
     console.log('Generated tectonic network with', this.tectonicSystem.plates.size, 'plates.');
     this.refreshPlateDisplay();
