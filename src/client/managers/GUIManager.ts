@@ -18,6 +18,7 @@ export class GUIManager {
   private tectonicManager: TectonicManager;
   private interactionHandler: InteractionHandler;
   private onResetCallback: (degree: number) => void;
+  private netRotationParams = { x: 0, y: 0, z: 0, magnitude: 0 };
 
   constructor(
     visualizationManager: VisualizationManager,
@@ -94,6 +95,7 @@ export class GUIManager {
         {
           rebuild: () => {
             this.tectonicManager.rebuildTectonicPlates();
+            this.updateNetRotationDisplay();
           }
         },
         'rebuild'
@@ -110,6 +112,13 @@ export class GUIManager {
         }
       });
     tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
+
+    // Net Rotation subfolder (should be ~0 after zero net rotation correction)
+    const netRotationGui = tectonicGui.addFolder('Net Rotation');
+    netRotationGui.add(this.netRotationParams, 'x').name('X').listen();
+    netRotationGui.add(this.netRotationParams, 'y').name('Y').listen();
+    netRotationGui.add(this.netRotationParams, 'z').name('Z').listen();
+    netRotationGui.add(this.netRotationParams, 'magnitude').name('Magnitude').listen();
 
     // Plate subfolder with category display
     const plateGui = tectonicGui.addFolder('Plate');
@@ -184,6 +193,17 @@ export class GUIManager {
     }
 
     boundaryGui.open();
+  }
+
+  /**
+   * Updates the net rotation display from the tectonic manager.
+   */
+  private updateNetRotationDisplay(): void {
+    const netRotation = this.tectonicManager.getNetRotation();
+    this.netRotationParams.x = netRotation.x;
+    this.netRotationParams.y = netRotation.y;
+    this.netRotationParams.z = netRotation.z;
+    this.netRotationParams.magnitude = netRotation.length();
   }
 
   /**

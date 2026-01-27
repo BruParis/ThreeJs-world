@@ -4,6 +4,7 @@ import { Halfedge } from '@core/Halfedge';
 import {
   buildTectonicSystem,
   computeTectonicMotion,
+  computeNetRotation,
   computePlateBoundaries,
   caracterizePlateBoundaries,
   logTileTransferEligibility,
@@ -28,6 +29,7 @@ export class TectonicManager {
   private sceneManager: SceneManager;
   private tectonicSystem: TectonicSystem | null = null;
   private plateDisplayMode: PlateDisplayMode = PlateDisplayMode.NONE;
+  private netRotation: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
 
   constructor(visualizationManager: VisualizationManager, sceneManager: SceneManager) {
     this.visualizationManager = visualizationManager;
@@ -85,6 +87,10 @@ export class TectonicManager {
 
     categorizePlates(this.tectonicSystem);
     computeTectonicMotion(this.tectonicSystem);
+
+    // Compute net rotation after motion to verify zero net rotation
+    const { netRotation } = computeNetRotation(this.tectonicSystem.plates);
+    this.netRotation = netRotation;
 
     computePlateBoundaries(this.tectonicSystem);
     caracterizePlateBoundaries(this.tectonicSystem);
@@ -361,6 +367,13 @@ export class TectonicManager {
    */
   public getTectonicSystem(): TectonicSystem | null {
     return this.tectonicSystem;
+  }
+
+  /**
+   * Gets the net rotation vector (should be near zero after correction).
+   */
+  public getNetRotation(): THREE.Vector3 {
+    return this.netRotation;
   }
 
   /**

@@ -1,5 +1,23 @@
 import * as THREE from 'three';
-import { BoundaryEdge, BoundaryType, TectonicSystem, Tile } from '../data/Plate';
+import { BoundaryEdge, BoundaryType, Plate, TectonicSystem, Tile } from '../data/Plate';
+
+/**
+ * Computes the net rotation vector of all plates in the tectonic system.
+ * Net rotation = Σ(axis_i * ω_i * area_i)
+ * Returns both the net rotation vector and the total area.
+ */
+function computeNetRotation(plates: Iterable<Plate>): { netRotation: THREE.Vector3; totalArea: number } {
+  const netRotation = new THREE.Vector3(0, 0, 0);
+  let totalArea = 0;
+
+  for (const plate of plates) {
+    const rotationVec = plate.rotationAxis.clone().multiplyScalar(plate.rotationSpeed * plate.area);
+    netRotation.add(rotationVec);
+    totalArea += plate.area;
+  }
+
+  return { netRotation, totalArea };
+}
 
 function computeTileMotionSpeed(tile: Tile): THREE.Vector3 {
   const plate = tile.plate;
@@ -25,15 +43,16 @@ function computeTileMotionSpeed(tile: Tile): THREE.Vector3 {
 
 function computeTectonicDynamics(tectonicSystem: TectonicSystem): void {
 
-  // Ensure the plate centroids are computed
+  // Ensure the plate centroids and areas are computed
   for (const plate of tectonicSystem.plates) {
     plate.updateCentroid();
+    plate.computeArea();
   }
 
   // Randomly assign for each plate a rotation speed (-1, and 1)
   // and a rotation axis (random unit vector)
   for (const plate of tectonicSystem.plates) {
-    const rotationSpeed = Math.random() * 2 - 1; // (-1, 1)
+    const rotationSpeed = Math.random() * 2;
 
     const rotationAxis = new THREE.Vector3(
       Math.random() * 2 - 1,
@@ -41,9 +60,34 @@ function computeTectonicDynamics(tectonicSystem: TectonicSystem): void {
       Math.random() * 2 - 1
     ).normalize();
 
-
     plate.rotationAxis = rotationAxis;
     plate.rotationSpeed = rotationSpeed;
+  }
+
+  // Enforce zero net rotation:
+  // Net rotation = Σ(axis_i * ω_i * area_i)
+  // We subtract the area-weighted average from each plate's rotation vector
+  const { netRotation, totalArea } = computeNetRotation(tectonicSystem.plates);
+
+  if (totalArea > 0) {
+    // Compute the average rotation vector (to be subtracted)
+    const avgRotation = netRotation.divideScalar(totalArea);
+
+    // Subtract from each plate's rotation vector and update axis/speed
+    for (const plate of tectonicSystem.plates) {
+      const rotationVec = plate.rotationAxis.clone().multiplyScalar(plate.rotationSpeed);
+      const correctedVec = rotationVec.sub(avgRotation);
+
+      const newSpeed = correctedVec.length();
+      if (newSpeed > 1e-10) {
+        plate.rotationAxis = correctedVec.normalize();
+        plate.rotationSpeed = newSpeed;
+      } else {
+        // Plate effectively has no rotation after correction
+        plate.rotationAxis = new THREE.Vector3(0, 1, 0);
+        plate.rotationSpeed = 0;
+      }
+    }
   }
 
   // Compute motion vector for each tile
@@ -117,6 +161,7 @@ function caracterizeBoundaryEdge(tectonicSystem: TectonicSystem, bEdge: Boundary
 }
 
 export {
+  computeNetRotation,
   computeTectonicDynamics,
   caracterizeBoundaryEdge
 };

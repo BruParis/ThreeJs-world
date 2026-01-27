@@ -10,7 +10,7 @@ import {
   splitPlateFromTile,
   refineBoundaryType
 } from '../data/PlateOperations';
-import { computeTectonicDynamics, caracterizeBoundaryEdge } from '../dynamics/dynamics';
+import { computeNetRotation, computeTectonicDynamics, caracterizeBoundaryEdge } from '../dynamics/dynamics';
 
 function _splitPlateAtBridgeTiles(tectonicSystem: TectonicSystem): void {
 
@@ -525,4 +525,4 @@ function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: numb
   console.log(`Plate categorization: target=${(continentalRatio * 100).toFixed(1)}%, actual=${(actualRatio * 100).toFixed(1)}%`);
 }
 
-export { buildTectonicSystem, computeTectonicMotion, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility, categorizePlates };
+export { buildTectonicSystem, computeTectonicMotion, computeNetRotation, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility, categorizePlates };
