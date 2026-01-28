@@ -485,8 +485,9 @@ function caracterizePlateBoundaries(tectonicSystem: TectonicSystem): void {
 }
 
 /**
- * Computes the divergent edge ratio for a plate.
- * Returns the number of divergent boundary edges divided by total boundary edges.
+ * Computes the divergent edge ratio for a plate, weighted by plate area.
+ * Returns the ratio of divergent boundary edges to total boundary edges,
+ * multiplied by the plate's area for area-weighted sorting.
  */
 function computePlateDivergentRatio(plate: Plate, tectonicSystem: TectonicSystem): number {
   let divergentCount = 0;
@@ -505,7 +506,8 @@ function computePlateDivergentRatio(plate: Plate, tectonicSystem: TectonicSystem
     }
   }
 
-  return totalCount > 0 ? divergentCount / totalCount : 0;
+  const ratio = totalCount > 0 ? divergentCount / totalCount : 0;
+  return ratio * plate.area;
 }
 
 /**
@@ -515,7 +517,7 @@ function computePlateDivergentRatio(plate: Plate, tectonicSystem: TectonicSystem
  * @param tectonicSystem The tectonic system to categorize
  * @param continentalRatio Target ratio of continental area (default 0.3 = 30%)
  */
-function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: number = 0.3): void {
+function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: number = 0.5): void {
   // Compute total area
   let totalArea = 0;
   for (const plate of tectonicSystem.plates) {

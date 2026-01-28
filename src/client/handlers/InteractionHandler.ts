@@ -17,7 +17,7 @@ export class InteractionHandler {
   private visualizationManager: VisualizationManager;
   private tectonicManager: TectonicManager;
   private selectionMode: boolean = true;
-  private boundaryDisplayMode: BoundaryDisplayMode = BoundaryDisplayMode.RAW_TYPE;
+  private boundaryDisplayMode: BoundaryDisplayMode = BoundaryDisplayMode.REFINED_TYPE;
 
   // Bound event handlers
   private boundOnMouseClick: (event: MouseEvent) => void;
