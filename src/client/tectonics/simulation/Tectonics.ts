@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Vertex } from '@core/Vertex';
 import { Halfedge } from '@core/Halfedge';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
-import { Tile, Plate, PlateCategory, BoundaryEdge, BoundaryType, TectonicSystem, makePlateBoundary } from '../data/Plate';
+import { Tile, Plate, PlateCategory, BoundaryEdge, BoundaryType, GeologicalType, GeologicalIntensity, TectonicSystem, makePlateBoundary } from '../data/Plate';
 import {
   floodFill,
   plateAbsorbedByPlate,
@@ -561,4 +561,242 @@ function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: numb
   console.log(`Plate categorization: target=${(continentalRatio * 100).toFixed(1)}%, actual=${(actualRatio * 100).toFixed(1)}%`);
 }
 
-export { buildTectonicSystem, computeTectonicMotion, computeNetRotation, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility, categorizePlates };
+/**
+ * Gets the decile index (0-9) for a motion amplitude based on motion statistics.
+ * Returns 0 for lowest motion, 9 for highest.
+ */
+function getMotionDecile(amplitude: number, tectonicSystem: TectonicSystem): number {
+  const stats = tectonicSystem.motionStatistics;
+  if (!stats || stats.deciles.length === 0) {
+    return 5; // Default to middle if no stats
+  }
+
+  for (let i = 0; i < stats.deciles.length; i++) {
+    if (amplitude <= stats.deciles[i]) {
+      return i;
+    }
+  }
+  return 9; // Above 90th percentile
+}
+
+/**
+ * Finds neighbor tiles within the same plate.
+ */
+function getNeighborTilesInPlate(tile: Tile, tectonicSystem: TectonicSystem): Tile[] {
+  const neighbors: Tile[] = [];
+  const plate = tile.plate;
+
+  for (const he of tile.loop()) {
+    const twinTile = tectonicSystem.edge2TileMap.get(he.twin);
+    if (twinTile && twinTile.plate === plate && twinTile !== tile) {
+      neighbors.push(twinTile);
+    }
+  }
+
+  return neighbors;
+}
+
+/**
+ * Computes relative motion direction from smaller plate towards larger plate.
+ * Returns normalized vector pointing "into" the larger plate.
+ */
+function computeConvergenceDirection(
+  boundaryTile: Tile,
+  smallerPlate: Plate,
+  tectonicSystem: TectonicSystem
+): THREE.Vector3 {
+  // Find neighboring tile in smaller plate to compute relative motion
+  let smallerPlateTile: Tile | null = null;
+  for (const he of boundaryTile.loop()) {
+    const twinTile = tectonicSystem.edge2TileMap.get(he.twin);
+    if (twinTile && twinTile.plate === smallerPlate) {
+      smallerPlateTile = twinTile;
+      break;
+    }
+  }
+
+  if (!smallerPlateTile) {
+    // Fallback: use direction from smaller plate centroid to tile
+    return boundaryTile.centroid.clone().sub(smallerPlate.centroid).normalize();
+  }
+
+  // Relative motion: smaller plate motion relative to larger plate at this point
+  const relativeMotion = smallerPlateTile.motionVec.clone().sub(boundaryTile.motionVec);
+
+  if (relativeMotion.length() < 1e-10) {
+    // Fallback if motion is negligible
+    return boundaryTile.centroid.clone().sub(smallerPlateTile.centroid).normalize();
+  }
+
+  return relativeMotion.normalize();
+}
+
+/**
+ * Assigns geological types to tiles based on plate boundaries.
+ * For convergent boundaries involving at least one continental plate:
+ * - Starts at boundary tiles with VERY_HIGH intensity
+ * - Propagates inward following convergence direction
+ * - Probability of propagation based on motion decile
+ * - Intensity decays with distance from boundary
+ */
+function assignGeologicalTypes(tectonicSystem: TectonicSystem): void {
+  // Reset all tiles
+  for (const plate of tectonicSystem.plates) {
+    for (const tile of plate.tiles) {
+      tile.geologicalType = GeologicalType.UNKNOWN;
+      tile.geologicalIntensity = GeologicalIntensity.NONE;
+    }
+  }
+
+  // Collect all boundary tiles with their convergence info
+  interface BoundaryTileInfo {
+    tile: Tile;
+    convergenceDir: THREE.Vector3;
+    largerPlate: Plate;
+  }
+
+  const boundaryTileInfos: BoundaryTileInfo[] = [];
+
+  // Process each boundary
+  for (const boundary of tectonicSystem.boundaries) {
+    const plateA = boundary.plateA;
+    const plateB = boundary.plateB;
+
+    // Check if at least one plate is continental
+    const hasContinent =
+      plateA.category === PlateCategory.CONTINENTAL ||
+      plateB.category === PlateCategory.CONTINENTAL;
+
+    if (!hasContinent) {
+      continue;
+    }
+
+    // Check if boundary has convergent edges
+    let hasConvergent = false;
+    for (const bEdge of boundary.boundaryEdges) {
+      if (bEdge.refinedType === BoundaryType.CONVERGENT) {
+        hasConvergent = true;
+        break;
+      }
+    }
+
+    if (!hasConvergent) {
+      continue;
+    }
+
+    // Identify larger and smaller plates
+    const largerPlate = plateA.area >= plateB.area ? plateA : plateB;
+    const smallerPlate = plateA.area >= plateB.area ? plateB : plateA;
+
+    // Collect boundary tiles of larger plate
+    for (const bEdge of boundary.boundaryEdges) {
+      if (bEdge.refinedType !== BoundaryType.CONVERGENT) {
+        continue;
+      }
+
+      const he = bEdge.halfedge;
+      const tile = tectonicSystem.edge2TileMap.get(he);
+      const twinTile = tectonicSystem.edge2TileMap.get(he.twin);
+
+      const targetTile = tile?.plate === largerPlate ? tile :
+                         twinTile?.plate === largerPlate ? twinTile : null;
+
+      if (targetTile) {
+        const convergenceDir = computeConvergenceDirection(targetTile, smallerPlate, tectonicSystem);
+        boundaryTileInfos.push({ tile: targetTile, convergenceDir, largerPlate });
+      }
+    }
+  }
+
+  // Assign VERY_HIGH intensity to boundary tiles
+  for (const info of boundaryTileInfos) {
+    info.tile.geologicalType = GeologicalType.OROGEN;
+    if (info.tile.geologicalIntensity < GeologicalIntensity.VERY_HIGH) {
+      info.tile.geologicalIntensity = GeologicalIntensity.VERY_HIGH;
+    }
+  }
+
+  // Propagate orogeny inward using BFS
+  // Queue: [tile, currentIntensity, convergenceDirection]
+  const queue: Array<{ tile: Tile; intensity: GeologicalIntensity; dir: THREE.Vector3 }> = [];
+  const processed = new Set<Tile>();
+
+  // Initialize queue with boundary tiles
+  for (const info of boundaryTileInfos) {
+    if (!processed.has(info.tile)) {
+      queue.push({ tile: info.tile, intensity: GeologicalIntensity.VERY_HIGH, dir: info.convergenceDir });
+      processed.add(info.tile);
+    }
+  }
+
+  // Propagation parameters
+  const BASE_PROPAGATION_PROB = 0.2;  // Base probability to propagate
+  const DECILE_BONUS = 0.07;          // Additional prob per decile (0-9)
+  const DECAY_PROBABILITY = 0.5;      // Probability of intensity decay per step
+
+  while (queue.length > 0) {
+    const { tile, intensity, dir } = queue.shift()!;
+
+    // Stop if intensity is too low
+    if (intensity <= GeologicalIntensity.ANCIENT) {
+      continue;
+    }
+
+    // Get neighbors in the same plate
+    const neighbors = getNeighborTilesInPlate(tile, tectonicSystem);
+
+    for (const neighbor of neighbors) {
+      // Check if neighbor is "downstream" (in convergence direction)
+      const toNeighbor = neighbor.centroid.clone().sub(tile.centroid).normalize();
+      const alignment = toNeighbor.dot(dir);
+
+      // Only propagate to tiles roughly in the convergence direction
+      if (alignment < 0.1) {
+        continue;
+      }
+
+      // Calculate propagation probability based on motion decile
+      const motionAmplitude = neighbor.motionVec.length();
+      const decile = getMotionDecile(motionAmplitude, tectonicSystem);
+      const propagationProb = BASE_PROPAGATION_PROB + decile * DECILE_BONUS;
+
+      // Random check for propagation
+      if (Math.random() > propagationProb) {
+        continue;
+      }
+
+      // Calculate new intensity (may decay)
+      let newIntensity = intensity;
+      if (Math.random() < DECAY_PROBABILITY) {
+        newIntensity = intensity - 1;
+      }
+
+      // Only update if new intensity is higher than existing
+      if (newIntensity > neighbor.geologicalIntensity) {
+        neighbor.geologicalType = GeologicalType.OROGEN;
+        neighbor.geologicalIntensity = newIntensity;
+
+        // Add to queue if not already processed at this or higher intensity
+        if (!processed.has(neighbor)) {
+          queue.push({ tile: neighbor, intensity: newIntensity, dir });
+          processed.add(neighbor);
+        }
+      }
+    }
+  }
+
+  // Count orogen tiles by intensity for logging
+  const intensityCounts: Record<number, number> = {};
+  for (const plate of tectonicSystem.plates) {
+    for (const tile of plate.tiles) {
+      if (tile.geologicalType === GeologicalType.OROGEN) {
+        intensityCounts[tile.geologicalIntensity] = (intensityCounts[tile.geologicalIntensity] || 0) + 1;
+      }
+    }
+  }
+
+  const total = Object.values(intensityCounts).reduce((a, b) => a + b, 0);
+  console.log(`Assigned OROGEN to ${total} tiles:`, intensityCounts);
+}
+
+export { buildTectonicSystem, computeTectonicMotion, computeNetRotation, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility, categorizePlates, assignGeologicalTypes };

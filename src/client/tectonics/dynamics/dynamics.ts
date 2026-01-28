@@ -96,6 +96,48 @@ function computeTectonicDynamics(tectonicSystem: TectonicSystem): void {
       tile.motionVec = computeTileMotionSpeed(tile);
     }
   }
+
+  // Compute motion statistics (deciles)
+  computeMotionStatistics(tectonicSystem);
+}
+
+/**
+ * Computes statistics about tile motion vector amplitudes.
+ * Calculates min, max, mean, and deciles (10th, 20th, ..., 90th percentiles).
+ */
+function computeMotionStatistics(tectonicSystem: TectonicSystem): void {
+  // Collect all motion amplitudes
+  const amplitudes: number[] = [];
+  for (const plate of tectonicSystem.plates) {
+    for (const tile of plate.tiles) {
+      amplitudes.push(tile.motionVec.length());
+    }
+  }
+
+  if (amplitudes.length === 0) {
+    tectonicSystem.motionStatistics = null;
+    return;
+  }
+
+  // Sort for percentile computation
+  amplitudes.sort((a, b) => a - b);
+
+  const n = amplitudes.length;
+  const min = amplitudes[0];
+  const max = amplitudes[n - 1];
+  const mean = amplitudes.reduce((sum, val) => sum + val, 0) / n;
+
+  // Compute deciles (10th, 20th, ..., 90th percentiles)
+  const deciles: number[] = [];
+  for (let p = 10; p <= 90; p += 10) {
+    const index = Math.floor((p / 100) * n);
+    deciles.push(amplitudes[Math.min(index, n - 1)]);
+  }
+
+  tectonicSystem.motionStatistics = { min, max, mean, deciles };
+
+  console.log(`Motion statistics: min=${min.toFixed(4)}, max=${max.toFixed(4)}, mean=${mean.toFixed(4)}`);
+  console.log(`Deciles: ${deciles.map(d => d.toFixed(4)).join(', ')}`);
 }
 
 function caracterizeBoundaryEdge(tectonicSystem: TectonicSystem, bEdge: BoundaryEdge): void {

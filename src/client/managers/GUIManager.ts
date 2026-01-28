@@ -5,6 +5,8 @@ import { TectonicManager } from './TectonicManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
 import { BOUNDARY_LEGEND, boundaryColorToHex } from '../visualization/BoundaryColors';
 import { PLATE_CATEGORY_LEGEND, plateCategoryColorToHex, PlateDisplayMode } from '../visualization/PlateColors';
+import { GEOLOGICAL_INTENSITY_LEGEND, geologicalIntensityColorToHex } from '../visualization/GeologyColors';
+import { GeologicalType } from '../tectonics/data/Plate';
 
 const MIN_DEGREE = 0;
 const MAX_DEGREE = 6;
@@ -194,6 +196,34 @@ export class GUIManager {
     }
 
     boundaryGui.open();
+
+    // Geology subfolder with toggle and color legend
+    const geologyGui = tectonicGui.addFolder('Geology');
+
+    // Add geology display toggle
+    geologyGui
+      .add({ showGeology: this.tectonicManager.isGeologyDisplayEnabled() }, 'showGeology')
+      .name('Show Types')
+      .onChange((value: boolean) => {
+        this.tectonicManager.setGeologyDisplayEnabled(value);
+      });
+
+    // Add geological intensity color legend (for Orogen)
+    const geoLegendColors: Record<string, number> = {};
+    for (const entry of GEOLOGICAL_INTENSITY_LEGEND) {
+      geoLegendColors[entry.label] = geologicalIntensityColorToHex(GeologicalType.OROGEN, entry.intensity);
+    }
+
+    for (const entry of GEOLOGICAL_INTENSITY_LEGEND) {
+      const controller = geologyGui.addColor(geoLegendColors, entry.label);
+      // Make the color read-only by resetting on change
+      controller.onChange(() => {
+        geoLegendColors[entry.label] = geologicalIntensityColorToHex(GeologicalType.OROGEN, entry.intensity);
+        controller.updateDisplay();
+      });
+    }
+
+    geologyGui.open();
   }
 
   /**

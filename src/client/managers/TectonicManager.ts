@@ -8,9 +8,11 @@ import {
   computePlateBoundaries,
   caracterizePlateBoundaries,
   logTileTransferEligibility,
-  categorizePlates
+  categorizePlates,
+  assignGeologicalTypes
 } from '../tectonics/simulation/Tectonics';
 import { PLATE_CATEGORY_COLORS, PlateDisplayMode } from '../visualization/PlateColors';
+import { getGeologicalColor } from '../visualization/GeologyColors';
 import {
   splitPlateFromTile,
   transferTileToPlate,
@@ -30,6 +32,7 @@ export class TectonicManager {
   private tectonicSystem: TectonicSystem | null = null;
   private plateDisplayMode: PlateDisplayMode = PlateDisplayMode.NONE;
   private netRotation: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
+  private geologyDisplayEnabled: boolean = false;
 
   constructor(visualizationManager: VisualizationManager, sceneManager: SceneManager) {
     this.visualizationManager = visualizationManager;
@@ -55,11 +58,32 @@ export class TectonicManager {
    * Refreshes the plate visualization based on the current display mode.
    */
   public refreshPlateDisplay(): void {
+    // Geology display takes priority when enabled
+    if (this.geologyDisplayEnabled) {
+      this.colorTectonicSystemByGeology();
+      return;
+    }
+
     if (this.plateDisplayMode === PlateDisplayMode.CATEGORY) {
       this.colorTectonicSystemByCategory();
     } else {
       this.colorTectonicSystem(false);
     }
+  }
+
+  /**
+   * Sets whether geology display is enabled and refreshes visualization.
+   */
+  public setGeologyDisplayEnabled(enabled: boolean): void {
+    this.geologyDisplayEnabled = enabled;
+    this.refreshPlateDisplay();
+  }
+
+  /**
+   * Gets whether geology display is enabled.
+   */
+  public isGeologyDisplayEnabled(): boolean {
+    return this.geologyDisplayEnabled;
   }
 
   /**
@@ -98,6 +122,9 @@ export class TectonicManager {
 
     // Categorize plates after boundaries are known (uses divergent edge info)
     categorizePlates(this.tectonicSystem);
+
+    // Assign geological types based on boundaries
+    assignGeologicalTypes(this.tectonicSystem);
 
     console.log('Generated tectonic network with', this.tectonicSystem.plates.size, 'plates.');
     this.refreshPlateDisplay();
@@ -199,6 +226,40 @@ export class TectonicManager {
           const origFaceIdx = dualMesh.geometry.userData.halfedge2FaceMap.get(auxHe.id);
           if (origFaceIdx !== undefined) {
             assignColorToTriangle(dualMesh.geometry, origFaceIdx, categoryColor);
+          } else {
+            console.warn('No face found for halfedge id:', auxHe.id);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Colors the tectonic system by geological type and intensity.
+   * Uses intensity-based alpha blending for visual distinction.
+   */
+  public colorTectonicSystemByGeology(): void {
+    const dualMesh = this.visualizationManager.getDualMesh();
+
+    if (!dualMesh) {
+      console.warn('No dual mesh available for coloring geological types.');
+      return;
+    }
+
+    if (!this.tectonicSystem) {
+      console.warn('No tectonic plate system available.');
+      return;
+    }
+
+    for (const plate of this.tectonicSystem.plates) {
+      for (const tile of plate.tiles) {
+        const [r, g, b] = getGeologicalColor(tile.geologicalType, tile.geologicalIntensity);
+        const geoColor = new THREE.Color(r, g, b);
+
+        for (const auxHe of tile.loop()) {
+          const origFaceIdx = dualMesh.geometry.userData.halfedge2FaceMap.get(auxHe.id);
+          if (origFaceIdx !== undefined) {
+            assignColorToTriangle(dualMesh.geometry, origFaceIdx, geoColor);
           } else {
             console.warn('No face found for halfedge id:', auxHe.id);
           }

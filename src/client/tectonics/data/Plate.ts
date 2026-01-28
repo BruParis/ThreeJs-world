@@ -9,6 +9,16 @@ export enum PlateCategory {
   UNKNOWN = 'unknown'
 }
 
+export enum GeologicalIntensity {
+  NONE = 0,
+  ANCIENT = 1,
+  VERY_LOW = 2,
+  LOW = 3,
+  MODERATE = 4,
+  HIGH = 5,
+  VERY_HIGH = 6
+}
+
 let _idTileCount = 0;
 let _idPlateCount = 0;
 let _idBoundaryCount = 0;
@@ -20,6 +30,8 @@ export class Tile {
   centroid: THREE.Vector3;
   motionVec: THREE.Vector3 = new THREE.Vector3();
   readonly area: number;
+  geologicalType: GeologicalType = GeologicalType.UNKNOWN;
+  geologicalIntensity: GeologicalIntensity = GeologicalIntensity.NONE;
 
   *loop(): IterableIterator<Halfedge> {
     for (const he of this.edge.nextLoop()) {
@@ -238,6 +250,20 @@ export enum BoundaryType {
   TRANSFORM = 'transform'
 }
 
+export enum GeologicalType {
+  UNKNOWN = 'unknown',
+  SHIELD = 'shield',
+  PLATFORM = 'platform',
+  OROGEN = 'orogen',
+  BASIN = 'basin',
+  MAGMATIC = 'magmatic',
+  EXTENDED_CRUST = 'extended_crust',
+  // Oceanic Types
+  OCEANIC_CRUST = 'oceanic_crust',
+  OCEANIC_RIDGE = 'oceanic_ridge',
+  OCEANIC_PLATEAU = 'oceanic_plateau',
+}
+
 export class BoundaryEdge {
   halfedge: Halfedge;
   private _rawType: BoundaryType;
@@ -443,11 +469,23 @@ function makePlateBoundary(tectonicSystem: TectonicSystem, borderEdges: Set<Half
   return boundary;
 }
 
+/**
+ * Statistics about tile motion vector amplitudes.
+ * Deciles divide the distribution into 10 equal parts.
+ */
+export interface MotionStatistics {
+  min: number;
+  max: number;
+  mean: number;
+  deciles: number[];  // 9 values: 10th, 20th, ..., 90th percentiles
+}
+
 export class TectonicSystem {
   plates: Set<Plate>;
   edge2TileMap: Map<Halfedge, Tile>;
   boundaries: Set<PlateBoundary>;
   edge2BoundaryMap: Map<Halfedge, PlateBoundary>;
+  motionStatistics: MotionStatistics | null = null;
 
   constructor() {
     this.plates = new Set<Plate>();

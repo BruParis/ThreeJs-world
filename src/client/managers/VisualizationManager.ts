@@ -68,7 +68,7 @@ export class VisualizationManager {
 
   // Parameters
   private icoParams = {
-    degree: 3,
+    degree: 4,
     numVertices: 0,
     numFaces: 0,
     numHalfedges: 0
