@@ -95,6 +95,9 @@ export class InteractionHandler {
       this.visualizationManager.displayTileLines(clickedHe, tectonicSystem);
       this.visualizationManager.displayPlateLines(clickedHe, tectonicSystem);
 
+      // Display neighbor tiles on same plate (debug visualization)
+      this.visualizationManager.displayNeighborTilesLines(clickedHe, tectonicSystem);
+
       // Display tile and plate labels
       const tile = tectonicSystem.findTileFromEdge(clickedHe);
       if (tile) {
@@ -109,6 +112,9 @@ export class InteractionHandler {
 
       // Handle boundary display mode
       this.handleBoundaryDisplayClick(clickedHe, intersect.point);
+
+      // Try to recompute orogeny if mode is enabled and tile is on a convergent boundary
+      this.tectonicManager.recomputeOrogenyAtBoundary(clickedHe);
 
       // Uncomment these to enable plate operations on click:
       // this.tectonicManager.splitPlateAtEdge(clickedHe);

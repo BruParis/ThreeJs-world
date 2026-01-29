@@ -480,12 +480,24 @@ export interface MotionStatistics {
   deciles: number[];  // 9 values: 10th, 20th, ..., 90th percentiles
 }
 
+/**
+ * Statistics about plate areas.
+ * Deciles divide the distribution into 10 equal parts.
+ */
+export interface PlateAreaStatistics {
+  min: number;
+  max: number;
+  mean: number;
+  deciles: number[];  // 9 values: 10th, 20th, ..., 90th percentiles
+}
+
 export class TectonicSystem {
   plates: Set<Plate>;
   edge2TileMap: Map<Halfedge, Tile>;
   boundaries: Set<PlateBoundary>;
   edge2BoundaryMap: Map<Halfedge, PlateBoundary>;
   motionStatistics: MotionStatistics | null = null;
+  plateAreaStatistics: PlateAreaStatistics | null = null;
 
   constructor() {
     this.plates = new Set<Plate>();
@@ -574,6 +586,43 @@ export class TectonicSystem {
 
   clear(): void {
     this.plates.clear();
+  }
+
+  /**
+   * Computes statistics about plate areas.
+   * Calculates min, max, mean, and deciles (10th, 20th, ..., 90th percentiles).
+   * Must be called after all plate areas have been computed via plate.computeArea().
+   */
+  computePlateAreaStatistics(): void {
+    const areas: number[] = [];
+    for (const plate of this.plates) {
+      areas.push(plate.area);
+    }
+
+    if (areas.length === 0) {
+      this.plateAreaStatistics = null;
+      return;
+    }
+
+    // Sort for percentile computation
+    areas.sort((a, b) => a - b);
+
+    const n = areas.length;
+    const min = areas[0];
+    const max = areas[n - 1];
+    const mean = areas.reduce((sum, val) => sum + val, 0) / n;
+
+    // Compute deciles (10th, 20th, ..., 90th percentiles)
+    const deciles: number[] = [];
+    for (let p = 10; p <= 90; p += 10) {
+      const index = Math.floor((p / 100) * n);
+      deciles.push(areas[Math.min(index, n - 1)]);
+    }
+
+    this.plateAreaStatistics = { min, max, mean, deciles };
+
+    console.log(`Plate area statistics: min=${min.toFixed(4)}, max=${max.toFixed(4)}, mean=${mean.toFixed(4)}`);
+    console.log(`Deciles: ${deciles.map(d => d.toFixed(4)).join(', ')}`);
   }
 }
 

@@ -150,14 +150,21 @@ export class GUIManager {
 
     plateGui.open();
 
+    // Tiles subfolder for debug visualization
+    const tilesGui = tectonicGui.addFolder('Tiles');
+    const neighborTilesLinesMaterial = this.visualizationManager.getNeighborTilesLinesMaterial();
+
+    tilesGui
+      .add(neighborTilesLinesMaterial, 'visible')
+      .name('Show neighbour plate tiles');
+
+
     // Net Rotation subfolder (should be ~0 after zero net rotation correction)
     const netRotationGui = plateGui.addFolder('Net Rotation');
     netRotationGui.add(this.netRotationParams, 'x').name('X').listen();
     netRotationGui.add(this.netRotationParams, 'y').name('Y').listen();
     netRotationGui.add(this.netRotationParams, 'z').name('Z').listen();
     netRotationGui.add(this.netRotationParams, 'magnitude').name('Magnitude').listen();
-
-    tectonicGui.open();
 
     // Boundary Display subfolder with legend
     const boundaryGui = tectonicGui.addFolder('Boundary');
@@ -195,10 +202,8 @@ export class GUIManager {
       });
     }
 
-    boundaryGui.open();
-
     // Geology subfolder with toggle and color legend
-    const geologyGui = tectonicGui.addFolder('Geology');
+    const geologyGui = this.gui.addFolder("Geology");
 
     // Add geology display toggle
     geologyGui
@@ -208,14 +213,22 @@ export class GUIManager {
         this.tectonicManager.setGeologyDisplayEnabled(value);
       });
 
+    geologyGui
+      .add({ recomputeOrogeny: this.tectonicManager.isRecomputeOrogenyMode() }, 'recomputeOrogeny')
+      .name('Reset orogeny')
+      .onChange((value: boolean) => {
+        this.tectonicManager.setRecomputeOrogenyMode(value);
+      });
+
     // Add geological intensity color legend (for Orogen)
+    const orogenLegendGui = geologyGui.addFolder('Orogen Intensity');
     const geoLegendColors: Record<string, number> = {};
     for (const entry of GEOLOGICAL_INTENSITY_LEGEND) {
       geoLegendColors[entry.label] = geologicalIntensityColorToHex(GeologicalType.OROGEN, entry.intensity);
     }
 
     for (const entry of GEOLOGICAL_INTENSITY_LEGEND) {
-      const controller = geologyGui.addColor(geoLegendColors, entry.label);
+      const controller = orogenLegendGui.addColor(geoLegendColors, entry.label);
       // Make the color read-only by resetting on change
       controller.onChange(() => {
         geoLegendColors[entry.label] = geologicalIntensityColorToHex(GeologicalType.OROGEN, entry.intensity);

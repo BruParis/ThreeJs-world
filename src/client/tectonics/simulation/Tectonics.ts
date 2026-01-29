@@ -371,10 +371,16 @@ function buildTectonicSystem(halfedgeGraph: HalfedgeGraph, numPlates: number): T
   // 4) Each small tile plate gets absorbed by the neighboring plate
   _absorbSmallPlates(tectonicSystem, 5);
 
-  // 5) Compute plate areas now that all modifications are complete
+  // 5) Update edge2TileMap after all tile modifications
+  tectonicSystem.update();
+
+  // 6) Compute plate areas now that all modifications are complete
   for (const plate of tectonicSystem.plates) {
     plate.computeArea();
   }
+
+  // 7) Compute plate area statistics
+  tectonicSystem.computePlateAreaStatistics();
 
   return tectonicSystem;
 }

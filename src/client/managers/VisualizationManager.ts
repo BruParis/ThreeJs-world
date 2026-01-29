@@ -21,7 +21,8 @@ import {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
   makeLineSegments2FromBoundary,
-  makeLineSegments2FromBoundaryGradient
+  makeLineSegments2FromBoundaryGradient,
+  makeLineSegments2ForNeighborTilesInPlate
 } from '../visualization/TectonicsDrawingUtils';
 import { SceneManager } from './SceneManager';
 
@@ -44,6 +45,7 @@ export class VisualizationManager {
   private motionVecLinesMaterial: LineMaterial;
   private boundaryLinesMaterial: LineMaterial;
   private allBoundariesLinesMaterial: LineMaterial;
+  private neighborTilesLinesMaterial: LineMaterial;
 
   // Line segments
   private halfedgeGraphLines: LineSegments2;
@@ -52,6 +54,7 @@ export class VisualizationManager {
   private motionVecLines: LineSegments2;
   private boundaryLines: LineSegments2;
   private allBoundariesLines: LineSegments2;
+  private neighborTilesLines: LineSegments2;
 
   // Halfedge graphs
   private icoHalfedgeGraph: HalfedgeGraph;
@@ -150,6 +153,14 @@ export class VisualizationManager {
       visible: true,
     });
 
+    this.neighborTilesLinesMaterial = new LineMaterial({
+      linewidth: 5,
+      depthTest: true,
+      depthWrite: true,
+      vertexColors: true,
+      visible: false,
+    });
+
     // Initialize line segments
     this.halfedgeGraphLines = new LineSegments2(new LineSegmentsGeometry(), this.graphLinesMaterial);
     this.tileLines = new LineSegments2(new LineSegmentsGeometry(), this.tileLinesMaterial);
@@ -157,6 +168,7 @@ export class VisualizationManager {
     this.motionVecLines = new LineSegments2(new LineSegmentsGeometry(), this.motionVecLinesMaterial);
     this.boundaryLines = new LineSegments2(new LineSegmentsGeometry(), this.boundaryLinesMaterial);
     this.allBoundariesLines = new LineSegments2(new LineSegmentsGeometry(), this.allBoundariesLinesMaterial);
+    this.neighborTilesLines = new LineSegments2(new LineSegmentsGeometry(), this.neighborTilesLinesMaterial);
   }
 
   /**
@@ -327,6 +339,41 @@ export class VisualizationManager {
   }
 
   /**
+   * Displays edges of neighbor tiles that are on the same plate as the clicked tile.
+   * Used for debugging getNeighborTilesInPlate function.
+   */
+  public displayNeighborTilesLines(he: Halfedge, tectonicSystem: TectonicSystem): void {
+    if (!tectonicSystem) {
+      console.warn('No tectonic plates available.');
+      return;
+    }
+
+    const scene = this.sceneManager.getScene();
+
+    if (this.neighborTilesLines) {
+      scene.remove(this.neighborTilesLines);
+    }
+
+    const tile = tectonicSystem.findTileFromEdge(he);
+
+    if (!tile) {
+      console.warn('No tile found for the clicked halfedge.');
+      return;
+    }
+
+    console.log(`[DEBUG] Displaying neighbor tiles for tile ${tile.id} in plate ${tile.plate.id} (${tile.plate.category})`);
+
+    makeLineSegments2ForNeighborTilesInPlate(tile, tectonicSystem, this.neighborTilesLines);
+
+    // Copy rotation from dual mesh
+    if (this.dualMesh) {
+      this.neighborTilesLines.rotation.copy(this.dualMesh.rotation);
+    }
+
+    scene.add(this.neighborTilesLines);
+  }
+
+  /**
    * Displays boundary lines for a given halfedge.
    */
   public displayBoundaryLines(he: Halfedge, tectonicSystem: TectonicSystem): void {
@@ -344,7 +391,6 @@ export class VisualizationManager {
       return;
     }
 
-    const plate = tile.plate;
 
     // Find the boundary corresponding to the clicked halfedge
     const boundary = tectonicSystem.edge2BoundaryMap.get(he);
@@ -626,6 +672,14 @@ export class VisualizationManager {
 
   public getAllBoundariesLinesMaterial(): LineMaterial {
     return this.allBoundariesLinesMaterial;
+  }
+
+  public getNeighborTilesLines(): LineSegments2 {
+    return this.neighborTilesLines;
+  }
+
+  public getNeighborTilesLinesMaterial(): LineMaterial {
+    return this.neighborTilesLinesMaterial;
   }
 
   public getIcoHalfedgeGraph(): HalfedgeGraph {

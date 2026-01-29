@@ -288,11 +288,106 @@ function makeLineSegments2ForAllBoundaries(
   lines.computeLineDistances();
 }
 
+/**
+ * Creates line segments for neighbor tiles on the same plate.
+ * Each neighbor tile's edges are displayed in a distinct color.
+ * @param tile The source tile
+ * @param tectonicSystem The tectonic system to find neighbors
+ * @param lines The LineSegments2 object to populate
+ */
+function makeLineSegments2ForNeighborTilesInPlate(
+  tile: Tile,
+  tectonicSystem: TectonicSystem,
+  lines: LineSegments2
+): void {
+  const positions = new Array<number>();
+  const colors = new Array<number>();
+
+  const plate = tile.plate;
+
+  // Distinct colors for each neighbor
+  const neighborColors = [
+    [0, 1, 0],    // Green
+    [0, 0, 1],    // Blue
+    [1, 1, 0],    // Yellow
+    [1, 0, 1],    // Magenta
+    [0, 1, 1],    // Cyan
+    [1, 0.5, 0],  // Orange
+    [0.5, 0, 1],  // Purple
+    [0, 0.5, 1],  // Light blue
+  ];
+
+  // Offset factor to render slightly above the mesh
+  const offsetFactor = 0.002;
+
+  let neighborIndex = 0;
+  const visitedNeighbors = new Set<Tile>();
+
+  console.log(`[DEBUG] Finding neighbors for tile ${tile.id} in plate ${plate.id}`);
+
+  for (const he of tile.loop()) {
+    const twinTile = tectonicSystem.edge2TileMap.get(he.twin);
+
+    if (!twinTile) {
+      console.log(`[DEBUG] Edge ${he.id}: no twin tile found`);
+      continue;
+    }
+
+    if (twinTile === tile) {
+      console.log(`[DEBUG] Edge ${he.id}: twin tile is same as source tile`);
+      continue;
+    }
+
+    if (visitedNeighbors.has(twinTile)) {
+      continue;
+    }
+
+    const isSamePlate = twinTile.plate === plate;
+    console.log(`[DEBUG] Edge ${he.id}: twin tile ${twinTile.id} in plate ${twinTile.plate.id}, same plate: ${isSamePlate}`);
+
+    if (!isSamePlate) {
+      continue;
+    }
+
+    visitedNeighbors.add(twinTile);
+
+    const color = neighborColors[neighborIndex % neighborColors.length];
+    neighborIndex++;
+
+    console.log(`[DEBUG] Neighbor tile ${twinTile.id} (color index ${neighborIndex - 1})`);
+
+    // Draw all edges of this neighbor tile
+    for (const neighborHe of twinTile.loop()) {
+      const vStart = neighborHe.vertex.position.clone();
+      const vEnd = neighborHe.next.vertex.position.clone();
+
+      // Offset slightly outward
+      vStart.multiplyScalar(1 + offsetFactor);
+      vEnd.multiplyScalar(1 + offsetFactor);
+
+      positions.push(vStart.x, vStart.y, vStart.z);
+      positions.push(vEnd.x, vEnd.y, vEnd.z);
+
+      colors.push(color[0], color[1], color[2]);
+      colors.push(color[0], color[1], color[2]);
+    }
+  }
+
+  console.log(`[DEBUG] Total neighbors found on same plate: ${visitedNeighbors.size}`);
+
+  lines.geometry.dispose();
+  lines.geometry = new LineSegmentsGeometry();
+  lines.geometry.setPositions(positions);
+  lines.geometry.setColors(colors);
+  lines.computeLineDistances();
+}
+
 export {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
   makeLineSegments2FromBoundary,
   makeLineSegments2ForTileMotionVec,
   makeLineSegments2FromBoundaryGradient,
-  makeLineSegments2ForAllBoundaries
+  makeLineSegments2ForAllBoundaries,
+  makeLineSegments2ForNeighborTilesInPlate
 };

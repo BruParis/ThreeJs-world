@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TectonicSystem } from '../tectonics/data/Plate';
+import { TectonicSystem, BoundaryType, GeologicalType, GeologicalIntensity } from '../tectonics/data/Plate';
 import { Halfedge } from '@core/Halfedge';
 import {
   buildTectonicSystem,
@@ -11,6 +11,10 @@ import {
   categorizePlates,
   assignGeologicalTypes
 } from '../tectonics/simulation/Tectonics';
+import {
+  initOrogenyAtBoundary,
+  runOrogenyPropagation
+} from '../tectonics/simulation/Geology';
 import { PLATE_CATEGORY_COLORS, PlateDisplayMode } from '../visualization/PlateColors';
 import { getGeologicalColor } from '../visualization/GeologyColors';
 import {
@@ -33,6 +37,7 @@ export class TectonicManager {
   private plateDisplayMode: PlateDisplayMode = PlateDisplayMode.NONE;
   private netRotation: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
   private geologyDisplayEnabled: boolean = false;
+  private recomputeOrogenyMode: boolean = false;
 
   constructor(visualizationManager: VisualizationManager, sceneManager: SceneManager) {
     this.visualizationManager = visualizationManager;
@@ -457,5 +462,89 @@ export class TectonicManager {
     }
 
     logTileTransferEligibility(tile, this.tectonicSystem);
+  }
+
+  /**
+   * Sets the recompute orogeny mode.
+   */
+  public setRecomputeOrogenyMode(enabled: boolean): void {
+    this.recomputeOrogenyMode = enabled;
+  }
+
+  /**
+   * Gets the recompute orogeny mode.
+   */
+  public isRecomputeOrogenyMode(): boolean {
+    return this.recomputeOrogenyMode;
+  }
+
+  /**
+   * Recomputes orogeny for a specific boundary when clicked.
+   * Resets geology for both plates and recomputes orogeny propagation.
+   * Returns true if orogeny was recomputed, false otherwise.
+   */
+  public recomputeOrogenyAtBoundary(he: Halfedge): boolean {
+    if (!this.recomputeOrogenyMode) {
+      return false;
+    }
+
+    if (!this.tectonicSystem) {
+      console.warn('[Recompute Orogeny] No tectonic plates available.');
+      return false;
+    }
+
+    // Find the boundary for this halfedge
+    const boundary = this.tectonicSystem.edge2BoundaryMap.get(he);
+    if (!boundary) {
+      console.log('[Recompute Orogeny] Clicked tile is not on a boundary.');
+      return false;
+    }
+
+    // Check if boundary has convergent edges
+    let hasConvergent = false;
+    for (const bEdge of boundary.boundaryEdges) {
+      if (bEdge.refinedType === BoundaryType.CONVERGENT) {
+        hasConvergent = true;
+        break;
+      }
+    }
+
+    if (!hasConvergent) {
+      console.log('[Recompute Orogeny] Boundary is not convergent.');
+      return false;
+    }
+
+    const plateA = boundary.plateA;
+    const plateB = boundary.plateB;
+
+    console.log(`[Recompute Orogeny] Recomputing orogeny for boundary between plate ${plateA.id} (${plateA.category}) and plate ${plateB.id} (${plateB.category})`);
+
+    // Reset geology for all tiles in both plates
+    for (const tile of plateA.tiles) {
+      tile.geologicalType = GeologicalType.UNKNOWN;
+      tile.geologicalIntensity = GeologicalIntensity.NONE;
+    }
+    for (const tile of plateB.tiles) {
+      tile.geologicalType = GeologicalType.UNKNOWN;
+      tile.geologicalIntensity = GeologicalIntensity.NONE;
+    }
+
+    // Recompute orogeny for this boundary
+    const boundaryTiles = initOrogenyAtBoundary(boundary, this.tectonicSystem);
+
+    console.log(`[Recompute Orogeny] Found ${boundaryTiles.length} boundary tiles for propagation`);
+
+    // Log details about boundary tiles
+    for (const info of boundaryTiles) {
+      console.log(`[Recompute Orogeny] Boundary tile ${info.tile.id} in plate ${info.tile.plate.id} (${info.tile.plate.category}), amplitudeScale: ${info.amplitudeScale}`);
+    }
+
+    // Run propagation from these boundary tiles
+    runOrogenyPropagation(boundaryTiles, this.tectonicSystem);
+
+    // Refresh display
+    this.refreshPlateDisplay();
+
+    return true;
   }
 }
