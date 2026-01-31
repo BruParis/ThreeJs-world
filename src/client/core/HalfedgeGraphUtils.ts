@@ -749,7 +749,7 @@ function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: Half
 
       const edge1 = verticesPair2EdgeMap.get(pairKey1);
       if (edge1) {
-        // This edge was created when its twin cas added
+        // This edge was created along with its twin's own addEdge call
         // -> it needs to be added to the halfedge2DualBiMap
         // and dualHalfedges array
         halfedge2DualBiMap.set(he.id, edge1.twin.id);
