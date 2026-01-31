@@ -20,7 +20,7 @@ import { Vector3 } from 'three';
 import { Face } from './Face';
 import { Vertex } from './Vertex';
 import { Halfedge } from './Halfedge';
-import { addEdge } from './operations/addEdge';
+import { addEdge, addEdgeUnsafe } from './operations/addEdge';
 import { addFace } from './operations/addFace';
 import { addVertex } from './operations/addVertex';
 import { removeVertex } from './operations/removeVertex';
@@ -88,9 +88,9 @@ export class HalfedgeGraph {
    * @returns 
    */
   addVertex(
-      position: Vector3,
-      checkDuplicates = false,
-      tolerance = 1e-10) {
+    position: Vector3,
+    checkDuplicates = false,
+    tolerance = 1e-10) {
     return addVertex(this, position, checkDuplicates, tolerance);
   }
 
@@ -101,11 +101,15 @@ export class HalfedgeGraph {
    * 
    * @param v1 First vertex to link
    * @param v2 Second vertex to link
-   * @param allowParallels Allows multiple pair of halfedges between vertices, default false
+   * @param checkAlreadyConnected If true, returns existing halfedge if v1 and v2 are already connected. Default false
    * @returns Existing or new halfedge
    */
-  addEdge(v1: Vertex, v2: Vertex, allowParallels = false) {
-    return addEdge(this, v1, v2, allowParallels)
+  addEdge(v1: Vertex, v2: Vertex, checkAlreadyConnected = true) {
+    return addEdge(this, v1, v2, checkAlreadyConnected)
+  }
+
+  addEdgeUnsafe(v1: Vertex, v2: Vertex) {
+    return addEdgeUnsafe(this, v1, v2)
   }
 
   /**
@@ -186,6 +190,6 @@ export class HalfedgeGraph {
    */
   flipEdge(halfedge: Halfedge) {
     return flipEdge(this, halfedge);
-  } 
+  }
 
 }

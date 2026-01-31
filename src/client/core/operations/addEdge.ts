@@ -17,16 +17,16 @@ import { HalfedgeGraph } from "../HalfedgeGraph";
 import { Vertex } from "../Vertex";
 
 export function addEdge(
-    struct: HalfedgeGraph,
-    v1: Vertex,
-    v2: Vertex,
-    allowParallels = false) {
-  
+  struct: HalfedgeGraph,
+  v1: Vertex,
+  v2: Vertex,
+  checkAlreadyConnected = true) {
+
   if (v1 === v2) {
     throw new Error('Vertices v1 and v2 should be different');
   }
 
-  if (!allowParallels) {
+  if (checkAlreadyConnected) {
     // Check if v1 and v2 are already connected
     const currentHalfEdge = v1.getHalfedgeToVertex(v2);
     if (currentHalfEdge) {
@@ -36,7 +36,7 @@ export function addEdge(
 
   if (!v1.isFree() || !v2.isFree()) {
     throw new Error('Vertices v1 and v2 are not free');
-  } 
+  }
 
   // Create new halfedges, by default twin halfedges are connected together
   // as prev/next in case vertices are isolated
@@ -87,7 +87,7 @@ export function addEdge(
     in2.next = h2;
 
     h1.next = out2;
-    out2.prev = h1;  
+    out2.prev = h1;
   } else {
     v2.halfedge = h2;
   }
@@ -98,3 +98,29 @@ export function addEdge(
   return h1;
 }
 
+export function addEdgeUnsafe(
+  struct: HalfedgeGraph,
+  v1: Vertex,
+  v2: Vertex
+) {
+
+  if (v1 === v2) {
+    throw new Error('Vertices v1 and v2 should be different');
+  }
+
+  // Create new halfedges, by default twin halfedges are connected together
+  // as prev/next in case vertices are isolated
+  const h1 = new Halfedge(v1);
+  const h2 = new Halfedge(v2);
+  h1.twin = h2;
+  h1.next = h2;
+  h1.prev = h2;
+  h2.twin = h1;
+  h2.next = h1;
+  h2.prev = h1;
+
+  struct.halfedges.set(h1.id, h1);
+  struct.halfedges.set(h2.id, h2);
+
+  return h1;
+}

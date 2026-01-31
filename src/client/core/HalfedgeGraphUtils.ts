@@ -721,6 +721,7 @@ function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: Half
   // Build a new dual halfegde for each original halfedge, using the 
   // previously stored dual vertices at centroids
   const dualLoopsHalfedges = new Array<Array<Halfedge>>();
+  const verticesPair2EdgeMap = new Map<string, Halfedge>();
   for (const vertex of halfedgeGraph.vertices.values()) {
     const dualHalfedges = new Array<Halfedge>();
 
@@ -736,15 +737,39 @@ function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: Half
         continue;
       }
 
-      // If this halfedge or its twin was already created, addEdge will
-      // recreate it while keeping the whole halfedge structure consistent
-      // This makes a fraction of useless instanciation, but it is simpler
-      const dualHalfedge = halfedgeDualGraph.addEdge(dualVertexA, dualVertexB);
+      const pairKey0 = `${dualVertexA.id}-${dualVertexB.id}`;
+      const pairKey1 = `${dualVertexB.id}-${dualVertexA.id}`;
+
+      const edge0 = verticesPair2EdgeMap.get(pairKey0);
+      if (edge0) {
+        // should not happen
+        console.warn("Edge already exists in dual graph for vertex pair ", pairKey0);
+        continue;
+      }
+
+      const edge1 = verticesPair2EdgeMap.get(pairKey1);
+      if (edge1) {
+        // This edge was created when its twin cas added
+        // -> it needs to be added to the halfedge2DualBiMap
+        // and dualHalfedges array
+        halfedge2DualBiMap.set(he.id, edge1.twin.id);
+        halfedge2DualBiMap.set(he.twin.id, edge1.id);
+        
+        dualHalfedges.push(edge1.twin);
+        continue;
+      }
+
+      // Do not check if already connected, as the verticesPair2EdgeMap
+      // already tracks this (this inner check in addEdge involves a loop
+      // around the vertex, which is inefficient here)
+      const dualHalfedge = halfedgeDualGraph.addEdgeUnsafe(dualVertexA, dualVertexB);
 
       halfedge2DualBiMap.set(he.id, dualHalfedge.id);
       halfedge2DualBiMap.set(he.twin.id, dualHalfedge.twin.id);
 
       dualHalfedges.push(dualHalfedge);
+
+      verticesPair2EdgeMap.set(pairKey0, dualHalfedge);
     }
     dualLoopsHalfedges.push(dualHalfedges);
 
