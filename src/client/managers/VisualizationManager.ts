@@ -9,6 +9,7 @@ import { TectonicSystem, PlateBoundary, BoundaryEdge, Tile, Plate } from '../tec
 import {
   makeBufferGeometryFromHalfedgeGraph,
   makeBufferGeometryFromLoops,
+  collectOriginalVertices,
   subdivideTrianglesLoop,
   normalizeVertices,
   populateDualGraph,
@@ -71,7 +72,7 @@ export class VisualizationManager {
 
   // Parameters
   private icoParams = {
-    degree: 4,
+    degree: 2,
     numVertices: 0,
     numFaces: 0,
     numHalfedges: 0
@@ -176,6 +177,7 @@ export class VisualizationManager {
    */
   public rebuildIcosahedronHalfedgeDS(): void {
     console.log("Rebuilding Icosahedron Halfedge DS");
+    const start_time = performance.now();
 
     const scene = this.sceneManager.getScene();
 
@@ -193,13 +195,18 @@ export class VisualizationManager {
 
     populateIcosahedronHalfedgeGraph(this.icoHalfedgeGraph);
 
+    const initialIcoVerticesIds = collectOriginalVertices(this.icoHalfedgeGraph);
+    // all the original vertices have 5 edges
+    const verticesEdgeCountIdMap = new Map(
+      Array.from(initialIcoVerticesIds, id => [id, 5]) 
+    );
     subdivideTrianglesLoop(this.icoHalfedgeGraph, this.icoParams.degree);
 
-    distortGraphLoop(this.icoHalfedgeGraph, 3, 0.5);
+    distortGraphLoop(this.icoHalfedgeGraph, verticesEdgeCountIdMap, 3, 0.5);
     normalizeVertices(this.icoHalfedgeGraph);
 
     // Generate dual graph
-    const icoHalfedge2DualBiMap = populateDualGraph(this.icoHalfedgeGraph, this.icoHalfedgeDualGraph);
+    populateDualGraph(this.icoHalfedgeGraph, this.icoHalfedgeDualGraph);
     normalizeVertices(this.icoHalfedgeDualGraph);
 
     const geometry = makeBufferGeometryFromHalfedgeGraph(this.icoHalfedgeGraph, true);
@@ -269,7 +276,8 @@ export class VisualizationManager {
 
     scene.add(this.dualMesh);
 
-    console.log("Mesh Rebuilt");
+    console.log("Mesh Rebuilt in", (performance.now() - start_time).toFixed(2), "ms");
+
   }
 
   /**

@@ -155,7 +155,7 @@ function makeLineSegments2FromHalfedgeGraph(halfedgeGraph: HalfedgeGraph, lines:
   lines.computeLineDistances();
 }
 
-function validForDistortion(he: Halfedge): boolean {
+function validForDistortion(he: Halfedge, initialIcoVerticesIds: Map<number, number>): boolean {
   /* 
    *            vB
    *         ↗     ↘ 
@@ -179,17 +179,33 @@ function validForDistortion(he: Halfedge): boolean {
   // 1) The resulting dual graph should have only
   // pentagons, hexagons, and heptagons.
 
+
+  // The initial graph is an icosahedron-based triangulation,
+  // all the initial vertices have 5 egdes, (all other vertices have 6 edges).
+  // In distort graph, if an edge is flipped, all the vertices edge count
+  // will be updated and stored in initialIcoVerticesIds map.
+  // Therefor, the default value for a vertex not in the map is 6 edges.
+  // (not an initial icosahedron vertex, and has not been affected by any flip yet
+  // -> still has 6 edges).
+  const numEdgesA = initialIcoVerticesIds.get(vertexA.id) || 6;
+  const numEdgesB = initialIcoVerticesIds.get(vertexB.id) || 6;
+  const numEdgesC = initialIcoVerticesIds.get(vertexC.id) || 6;
+  const numEdgesD = initialIcoVerticesIds.get(vertexD.id) || 6;
+
+  // countEdges makes a whole loop around the vertex
+  // it is more efficient to just keep track of the number of edges
   // The dual faces centered on vertexA and vertexC
   // will loose one edge each
   // -> check there are least(excl.) 6 edges for each vertex
-  const numEdgesA = vertexA.countEdges();
-  const numEdgesC = vertexC.countEdges();
+  // Keep these calls to countEdges for reference
+  // const numEdgesA = vertexA.countEdges();
+  // const numEdgesC = vertexC.countEdges();
 
   // The dual faces centered on vertexB and vertexD
   // will gain one edge each
   // -> check there are at most(excl.) 6 edges for each vertex
-  const numEdgesB = vertexB.countEdges();
-  const numEdgesD = vertexD.countEdges();
+  // const numEdgesB = vertexB.countEdges();
+  // const numEdgesD = vertexD.countEdges();
 
   if (numEdgesA < 6 || numEdgesC < 6) {
     return false;
@@ -347,7 +363,7 @@ function relaxGraph(halfedgeGraph: HalfedgeGraph, shiftDampening: number = 0.7) 
   // apply position shifts
   for (const vertex of halfedgeGraph.vertices.values()) {
     let posShift = verticesPosShift.get(vertex.id);
-    
+
     if (!posShift) {
       console.error("No posShift found for vertex id ", vertex.id);
       continue;
@@ -367,7 +383,42 @@ function relaxGraph(halfedgeGraph: HalfedgeGraph, shiftDampening: number = 0.7) 
   // console.log("Relaxation stddev distDiff: ", Math.sqrt(variance));
 }
 
-function distortGraph(halfedgeGraph: HalfedgeGraph, probability: number = 1.0) {
+function updateVertexEdgeCountMapForFlip(he: Halfedge, initialIcoVerticesIds: Map<number, number>) {
+  /* 
+   *            vB
+   *         ↗  |^ ↘ 
+   *       ↗    ||   ↘
+   *     ↗      ||     ↘
+   *     <-X-X-X||-X-X-X vC
+   *  vA -X-heX-||X-X-X->
+   *      ↖     ||    ↙
+   *        ↖   ||  ↙
+   *          ↖ V|↙
+   *            vD 
+   */
+
+  // After the flip of edge he:
+  // Va, Vc loses one edge
+  // Vb, Vd gains one edge
+
+  const vertexA = he.vertex;
+  const vertexC = he.twin.vertex;
+  const vertexD = he.prev.vertex;
+  const vertexB = he.twin.prev.vertex;
+
+  const oldNumEdgesA = initialIcoVerticesIds.get(vertexA.id) || 6;
+  const oldNumEdgesB = initialIcoVerticesIds.get(vertexB.id) || 6;
+  const oldNumEdgesC = initialIcoVerticesIds.get(vertexC.id) || 6;
+  const oldNumEdgesD = initialIcoVerticesIds.get(vertexD.id) || 6;
+
+  initialIcoVerticesIds.set(vertexA.id, oldNumEdgesA - 1);
+  initialIcoVerticesIds.set(vertexC.id, oldNumEdgesC - 1);
+  initialIcoVerticesIds.set(vertexB.id, oldNumEdgesB + 1);
+  initialIcoVerticesIds.set(vertexD.id, oldNumEdgesD + 1);
+}
+
+
+function distortGraph(halfedgeGraph: HalfedgeGraph, initialIcoVerticesIds: Map<number, number>, probability: number = 1.0) {
 
   const initKeys = Array.from(halfedgeGraph.halfedges.keys());
   for (const key of initKeys) {
@@ -381,9 +432,12 @@ function distortGraph(halfedgeGraph: HalfedgeGraph, probability: number = 1.0) {
       continue;
     }
 
-    if (!validForDistortion(he)) {
+    if (!validForDistortion(he, initialIcoVerticesIds)) {
       continue;
     }
+
+    // update the vertices edge count map
+    updateVertexEdgeCountMapForFlip(he, initialIcoVerticesIds);
 
     const newHe = halfedgeGraph.flipEdge(he);
 
@@ -468,10 +522,11 @@ function makeFaceDistribution(halfedgeGraph: HalfedgeGraph): FaceDistribution {
   return result;
 }
 
-function distortGraphLoop(halfedgeGraph: HalfedgeGraph, iterations: number = 1, probability: number = 0.1) {
+function distortGraphLoop(halfedgeGraph: HalfedgeGraph, verticesEdgeCountIdMap: Map<number, number>, iterations: number = 1, probability: number = 0.1) {
+
   for (let i = 0; i < iterations; i++) {
     console.log("Distortion iteration ", i + 1);
-    distortGraph(halfedgeGraph, probability);
+    distortGraph(halfedgeGraph, verticesEdgeCountIdMap, probability);
   }
 }
 
@@ -716,6 +771,16 @@ function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: Half
   return halfedge2DualBiMap;
 }
 
+function collectOriginalVertices(halfedgeGraph: HalfedgeGraph): Set<number> {
+  const originalVerticesSet: Set<number> = new Set<number>();
+
+  for (const vertex of halfedgeGraph.vertices.values()) {
+    originalVerticesSet.add(vertex.id);
+  }
+
+  return originalVerticesSet;
+}
+
 function subdivideTrianglesLoop(halfedgeGraph: HalfedgeGraph, degree: number = 1) {
   for (let i = 0; i < degree; i++) {
     subdivideTrianglesHalfedgeGraph(halfedgeGraph);
@@ -731,6 +796,7 @@ function normalizeVertices(halfedgeGraph: HalfedgeGraph) {
 export {
   makeBufferGeometryFromHalfedgeGraph,
   makeBufferGeometryFromLoops,
+  collectOriginalVertices,
   subdivideTrianglesLoop,
   removeAllFaces,
   normalizeVertices,
