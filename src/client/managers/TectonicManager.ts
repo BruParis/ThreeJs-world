@@ -128,7 +128,7 @@ export class TectonicManager {
     // Categorize plates after boundaries are known (uses divergent edge info)
     categorizePlates(this.tectonicSystem);
 
-    // Assign geological types based on boundaries
+    // Assign geological types to tiles (orogeny at convergent boundaries)
     assignGeologicalTypes(this.tectonicSystem);
 
     console.log('Generated tectonic network with', this.tectonicSystem.plates.size, 'plates.');

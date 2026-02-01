@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Tile, Plate, PlateCategory, BoundaryType, GeologicalType, GeologicalIntensity, TectonicSystem, PlateBoundary } from '../data/Plate';
+import { kmToDistance } from '../../world/World';
 
 // ============================================================================
 // Propagation Parameters
@@ -13,6 +14,163 @@ const PROPAGATION_CONFIG = {
   SIMILAR_AREA_RATIO: 2.0,  // Plates with area ratio below this are considered similar
   OCEANIC_OCEANIC_DAMPING: 0.2,  // Severe damping for oceanic/oceanic collisions
 };
+
+// ============================================================================
+// Orogeny Expansion Limits (in km)
+// ============================================================================
+
+/**
+ * Maximum orogeny expansion distances based on boundary type and intensity.
+ * Values are [min, max] ranges in kilometers.
+ */
+const OROGENY_EXPANSION_KM = {
+  // Continental-Continental collisions
+  CONTINENTAL_CONTINENTAL_INTENSIVE: [1000, 1500] as [number, number],
+  CONTINENTAL_CONTINENTAL_SLOW: [500, 800] as [number, number],
+
+  // Oceanic-Continental collisions (subduction)
+  OCEANIC_CONTINENTAL_INTENSIVE: [200, 400] as [number, number],
+  OCEANIC_CONTINENTAL_SLOW: [150, 300] as [number, number],
+
+  // Oceanic-Oceanic collisions
+  OCEANIC_OCEANIC: [100, 200] as [number, number],
+};
+
+/**
+ * Threshold for determining "intensive" vs "slow" collisions.
+ * Based on combined score of motion and plate area deciles.
+ * Score ranges from 0 (slowest/smallest) to 1 (fastest/largest).
+ */
+const INTENSIVE_THRESHOLD = 0.5;
+
+// ============================================================================
+// Orogeny Expansion Category
+// ============================================================================
+
+enum OrogenyExpansionCategory {
+  CONTINENTAL_CONTINENTAL_INTENSIVE = 'CONTINENTAL_CONTINENTAL_INTENSIVE',
+  CONTINENTAL_CONTINENTAL_SLOW = 'CONTINENTAL_CONTINENTAL_SLOW',
+  OCEANIC_CONTINENTAL_INTENSIVE = 'OCEANIC_CONTINENTAL_INTENSIVE',
+  OCEANIC_CONTINENTAL_SLOW = 'OCEANIC_CONTINENTAL_SLOW',
+  OCEANIC_OCEANIC = 'OCEANIC_OCEANIC',
+}
+
+interface BoundaryOrogenyConfig {
+  category: OrogenyExpansionCategory;
+  maxExpansionDistance: number;  // In unit sphere distance (converted from km)
+  maxExpansionKm: number;        // Original km value for reference
+}
+
+/**
+ * Computes the intensity score for a boundary based on motion and plate sizes.
+ * Returns a value between 0 (slow/small) and 1 (fast/large).
+ */
+function computeBoundaryIntensityScore(
+  boundary: PlateBoundary,
+  tectonicSystem: TectonicSystem
+): number {
+  const plateA = boundary.plateA;
+  const plateB = boundary.plateB;
+
+  // Compute average relative motion at convergent edges
+  let totalRelativeMotion = 0;
+  let convergentEdgeCount = 0;
+
+  for (const bEdge of boundary.boundaryEdges) {
+    if (bEdge.refinedType !== BoundaryType.CONVERGENT) {
+      continue;
+    }
+
+    const he = bEdge.halfedge;
+    const tileA = tectonicSystem.edge2TileMap.get(he);
+    const tileB = tectonicSystem.edge2TileMap.get(he.twin);
+
+    if (tileA && tileB) {
+      const relativeMotion = tileA.motionVec.clone().sub(tileB.motionVec).length();
+      totalRelativeMotion += relativeMotion;
+      convergentEdgeCount++;
+    }
+  }
+
+  const avgRelativeMotion = convergentEdgeCount > 0
+    ? totalRelativeMotion / convergentEdgeCount
+    : 0;
+
+  // Get motion decile
+  const motionDecile = getMotionDecile(avgRelativeMotion, tectonicSystem);
+  const motionFactor = motionDecile / 9; // 0 to 1
+
+  // Get area deciles
+  const areaDecileA = getAreaDecile(plateA.area, tectonicSystem);
+  const areaDecileB = getAreaDecile(plateB.area, tectonicSystem);
+  const avgAreaDecile = (areaDecileA + areaDecileB) / 2;
+  const areaFactor = avgAreaDecile / 9; // 0 to 1
+
+  // Combined score: both factors contribute equally
+  return (motionFactor + areaFactor) / 2;
+}
+
+/**
+ * Determines the orogeny expansion category and maximum distance for a boundary.
+ */
+function categorizeBoundaryOrogeny(
+  boundary: PlateBoundary,
+  tectonicSystem: TectonicSystem
+): BoundaryOrogenyConfig {
+  const plateA = boundary.plateA;
+  const plateB = boundary.plateB;
+
+  const plateAisContinental = plateA.category === PlateCategory.CONTINENTAL;
+  const plateBisContinental = plateB.category === PlateCategory.CONTINENTAL;
+
+  const bothContinental = plateAisContinental && plateBisContinental;
+  const bothOceanic = !plateAisContinental && !plateBisContinental;
+
+  // Compute intensity score
+  const intensityScore = computeBoundaryIntensityScore(boundary, tectonicSystem);
+  const isIntensive = intensityScore >= INTENSIVE_THRESHOLD;
+
+  // Determine category and get expansion range
+  let category: OrogenyExpansionCategory;
+  let expansionRange: [number, number];
+
+  if (bothContinental) {
+    if (isIntensive) {
+      category = OrogenyExpansionCategory.CONTINENTAL_CONTINENTAL_INTENSIVE;
+      expansionRange = OROGENY_EXPANSION_KM.CONTINENTAL_CONTINENTAL_INTENSIVE;
+    } else {
+      category = OrogenyExpansionCategory.CONTINENTAL_CONTINENTAL_SLOW;
+      expansionRange = OROGENY_EXPANSION_KM.CONTINENTAL_CONTINENTAL_SLOW;
+    }
+  } else if (bothOceanic) {
+    category = OrogenyExpansionCategory.OCEANIC_OCEANIC;
+    expansionRange = OROGENY_EXPANSION_KM.OCEANIC_OCEANIC;
+  } else {
+    // Mixed: Oceanic-Continental
+    if (isIntensive) {
+      category = OrogenyExpansionCategory.OCEANIC_CONTINENTAL_INTENSIVE;
+      expansionRange = OROGENY_EXPANSION_KM.OCEANIC_CONTINENTAL_INTENSIVE;
+    } else {
+      category = OrogenyExpansionCategory.OCEANIC_CONTINENTAL_SLOW;
+      expansionRange = OROGENY_EXPANSION_KM.OCEANIC_CONTINENTAL_SLOW;
+    }
+  }
+
+  // Interpolate within range based on intensity score
+  const [minKm, maxKm] = expansionRange;
+  const maxExpansionKm = minKm + (maxKm - minKm) * intensityScore;
+
+  // Convert to unit sphere distance
+  const maxExpansionDistance = kmToDistance(maxExpansionKm);
+
+  console.log(`[Orogeny] Boundary ${boundary.id}: category=${category}, intensity=${intensityScore.toFixed(2)}, maxExpansion=${maxExpansionKm.toFixed(0)}km`);
+
+  return {
+    category,
+    maxExpansionDistance,
+    maxExpansionKm,
+  };
+}
 
 // ============================================================================
 // Helper Functions
@@ -128,41 +286,6 @@ function computeInitialOrogenyIntensity(
 }
 
 /**
- * Computes relative motion direction from smaller plate towards larger plate.
- * Returns normalized vector pointing "into" the larger plate.
- */
-function computeConvergenceDirection(
-  boundaryTile: Tile,
-  smallerPlate: Plate,
-  tectonicSystem: TectonicSystem
-): THREE.Vector3 {
-  // Find neighboring tile in smaller plate to compute relative motion
-  let smallerPlateTile: Tile | null = null;
-  for (const he of boundaryTile.loop()) {
-    const twinTile = tectonicSystem.edge2TileMap.get(he.twin);
-    if (twinTile && twinTile.plate === smallerPlate) {
-      smallerPlateTile = twinTile;
-      break;
-    }
-  }
-
-  if (!smallerPlateTile) {
-    // Fallback: use direction from smaller plate centroid to tile
-    return boundaryTile.centroid.clone().sub(smallerPlate.centroid).normalize();
-  }
-
-  // Relative motion: smaller plate motion relative to larger plate at this point
-  const relativeMotion = smallerPlateTile.motionVec.clone().sub(boundaryTile.motionVec);
-
-  if (relativeMotion.length() < 1e-10) {
-    // Fallback if motion is negligible
-    return boundaryTile.centroid.clone().sub(smallerPlateTile.centroid).normalize();
-  }
-
-  return relativeMotion.normalize();
-}
-
-/**
  * Collects convergent neighbor motions for each tile from the boundary.
  * Returns a map from tile to the list of motion vectors of its convergent neighbors.
  */
@@ -200,6 +323,73 @@ function collectConvergentNeighborMotions(
 }
 
 /**
+ * Collects convergent edge midpoints for each tile from the boundary.
+ * Returns a map from tile to the list of edge midpoints on convergent boundary edges.
+ */
+function collectConvergentEdgeMidpoints(
+  boundary: PlateBoundary,
+  tectonicSystem: TectonicSystem
+): Map<Tile, THREE.Vector3[]> {
+  const tileEdgeMidpoints = new Map<Tile, THREE.Vector3[]>();
+
+  for (const bEdge of boundary.boundaryEdges) {
+    if (bEdge.refinedType !== BoundaryType.CONVERGENT) {
+      continue;
+    }
+
+    const he = bEdge.halfedge;
+    const tileA = tectonicSystem.edge2TileMap.get(he);
+    const tileB = tectonicSystem.edge2TileMap.get(he.twin);
+
+    // Compute edge midpoint
+    const midpoint = he.vertex.position.clone().add(he.twin.vertex.position).multiplyScalar(0.5);
+
+    if (tileA) {
+      if (!tileEdgeMidpoints.has(tileA)) {
+        tileEdgeMidpoints.set(tileA, []);
+      }
+      tileEdgeMidpoints.get(tileA)!.push(midpoint.clone());
+    }
+
+    if (tileB) {
+      if (!tileEdgeMidpoints.has(tileB)) {
+        tileEdgeMidpoints.set(tileB, []);
+      }
+      tileEdgeMidpoints.get(tileB)!.push(midpoint.clone());
+    }
+  }
+
+  return tileEdgeMidpoints;
+}
+
+/**
+ * Computes the average direction from edge midpoints to tile center.
+ * This gives the direction from boundary into the plate interior.
+ */
+function computeBoundaryToTileDirection(
+  tile: Tile,
+  edgeMidpoints: THREE.Vector3[]
+): THREE.Vector3 {
+  if (edgeMidpoints.length === 0) {
+    return new THREE.Vector3(0, 0, 1); // Fallback
+  }
+
+  const avgDir = new THREE.Vector3();
+  for (const midpoint of edgeMidpoints) {
+    // Vector from edge midpoint to tile center
+    const dir = tile.centroid.clone().sub(midpoint);
+    avgDir.add(dir);
+  }
+  avgDir.divideScalar(edgeMidpoints.length);
+
+  if (avgDir.length() < 1e-10) {
+    return new THREE.Vector3(0, 0, 1); // Fallback
+  }
+
+  return avgDir.normalize();
+}
+
+/**
  * Computes the relative motion amplitude for a tile given its convergent neighbor motions.
  */
 function computeTileRelativeMotion(
@@ -230,6 +420,8 @@ interface PropagatingTileState {
   intensity: GeologicalIntensity;
   dir: THREE.Vector3;
   amplitudeScale: number;
+  distanceFromBoundary: number;  // Cumulative distance from boundary (unit sphere)
+  maxExpansionDistance: number;  // Maximum allowed distance (unit sphere)
 }
 
 interface NeighborContribution {
@@ -237,6 +429,8 @@ interface NeighborContribution {
   dir: THREE.Vector3;
   amplitudeScale: number;
   alignment: number;
+  distanceFromBoundary: number;  // Distance to this neighbor from boundary
+  maxExpansionDistance: number;  // Max expansion distance for this contribution
 }
 
 /**
@@ -248,15 +442,17 @@ function getContributionToNeighbor(
   neighbor: Tile,
   tectonicSystem: TectonicSystem
 ): NeighborContribution | null {
-  const { tile, intensity, dir, amplitudeScale } = propagatingState;
+  const { tile, intensity, dir, amplitudeScale, distanceFromBoundary, maxExpansionDistance } = propagatingState;
 
-  // Stop if intensity is too low
-  if (intensity <= GeologicalIntensity.ANCIENT) {
+  // Stop if intensity is too low (LOW tiles cannot propagate)
+  if (intensity <= GeologicalIntensity.LOW) {
     return null;
   }
 
   // Check if neighbor is "downstream" (in convergence direction)
-  const toNeighbor = neighbor.centroid.clone().sub(tile.centroid).normalize();
+  const toNeighborVec = neighbor.centroid.clone().sub(tile.centroid);
+  const stepDistance = toNeighborVec.length();
+  const toNeighbor = toNeighborVec.normalize();
   const alignment = toNeighbor.dot(dir);
 
   // Only propagate to tiles roughly in the convergence direction
@@ -264,13 +460,11 @@ function getContributionToNeighbor(
     return null;
   }
 
-  // Calculate propagation probability based on motion decile
-  const motionAmplitude = neighbor.motionVec.length() * amplitudeScale;
-  const decile = getMotionDecile(motionAmplitude, tectonicSystem);
-  const propagationProb = PROPAGATION_CONFIG.BASE_PROBABILITY + decile * PROPAGATION_CONFIG.DECILE_BONUS;
+  // Compute new distance from boundary
+  const newDistanceFromBoundary = distanceFromBoundary + stepDistance;
 
-  // Random check for propagation
-  if (Math.random() > propagationProb) {
+  // Stop if we've exceeded the maximum expansion distance
+  if (newDistanceFromBoundary > maxExpansionDistance) {
     return null;
   }
 
@@ -280,11 +474,14 @@ function getContributionToNeighbor(
     newIntensity = intensity - 1;
   }
 
+  // Direction for the neighbor: vector from propagating tile (boundary) to neighbor
   return {
     intensity: newIntensity,
-    dir: dir.clone(),
+    dir: toNeighbor.clone(),
     amplitudeScale,
-    alignment
+    alignment,
+    distanceFromBoundary: newDistanceFromBoundary,
+    maxExpansionDistance,
   };
 }
 
@@ -294,7 +491,13 @@ function getContributionToNeighbor(
  */
 function computeAverageContribution(
   contributions: NeighborContribution[]
-): { intensity: GeologicalIntensity; dir: THREE.Vector3; amplitudeScale: number } | null {
+): {
+  intensity: GeologicalIntensity;
+  dir: THREE.Vector3;
+  amplitudeScale: number;
+  distanceFromBoundary: number;
+  maxExpansionDistance: number;
+} | null {
   if (contributions.length === 0) {
     return null;
   }
@@ -319,10 +522,18 @@ function computeAverageContribution(
   // Average amplitude scale
   const avgAmplitudeScale = contributions.reduce((sum, c) => sum + c.amplitudeScale, 0) / contributions.length;
 
+  // Average distance from boundary
+  const avgDistanceFromBoundary = contributions.reduce((sum, c) => sum + c.distanceFromBoundary, 0) / contributions.length;
+
+  // Use minimum max expansion distance (most restrictive)
+  const minMaxExpansionDistance = Math.min(...contributions.map(c => c.maxExpansionDistance));
+
   return {
     intensity: avgIntensity,
     dir: avgDir,
-    amplitudeScale: avgAmplitudeScale
+    amplitudeScale: avgAmplitudeScale,
+    distanceFromBoundary: avgDistanceFromBoundary,
+    maxExpansionDistance: minMaxExpansionDistance,
   };
 }
 
@@ -333,13 +544,13 @@ function computeAverageContribution(
  * computes average contribution per neighbor, and updates their orogeny.
  *
  * @param propagatingTiles - Current set of tiles propagating orogeny
- * @param visited - Set of already visited tiles (modified in place)
+ * @param assigned - Set of already assigned tiles (modified in place)
  * @param tectonicSystem - The tectonic system
  * @returns The next set of propagating tiles
  */
 function orogenyPropagationStep(
   propagatingTiles: PropagatingTileState[],
-  visited: Set<Tile>,
+  assigned: Set<Tile>,
   tectonicSystem: TectonicSystem
 ): PropagatingTileState[] {
   // Map to collect contributions for each neighbor tile
@@ -354,8 +565,8 @@ function orogenyPropagationStep(
     const neighbors = getNeighborTilesInPlate(tile, tectonicSystem);
 
     for (const neighbor of neighbors) {
-      // Skip already visited tiles
-      if (visited.has(neighbor)) {
+      // Skip already assigned tiles
+      if (assigned.has(neighbor)) {
         continue;
       }
 
@@ -390,11 +601,13 @@ function orogenyPropagationStep(
         tile: neighbor,
         intensity: avgContribution.intensity,
         dir: avgContribution.dir,
-        amplitudeScale: avgContribution.amplitudeScale
+        amplitudeScale: avgContribution.amplitudeScale,
+        distanceFromBoundary: avgContribution.distanceFromBoundary,
+        maxExpansionDistance: avgContribution.maxExpansionDistance,
       });
 
-      // Mark as visited
-      visited.add(neighbor);
+      // Mark as assigned
+      assigned.add(neighbor);
     }
   }
 
@@ -410,39 +623,41 @@ function orogenyPropagationStep(
  * 3. Compute the average contribution for each neighbor
  * 4. Update neighbor's orogeny based on averaged values
  * 5. Use updated neighbors as new propagating tiles
- * 6. Track visited tiles to avoid re-processing
+ * 6. Track assigned tiles to avoid re-processing
  */
 function runOrogenyPropagation(
   initialTiles: BoundaryTileInfo[],
   tectonicSystem: TectonicSystem
 ): void {
-  const visited = new Set<Tile>();
+  const assigned = new Set<Tile>();
 
   console.log(`[Orogeny Propagation] Starting with ${initialTiles.length} initial tiles`);
 
   // Initialize propagating tiles from boundary tiles
   let propagatingTiles: PropagatingTileState[] = [];
   for (const info of initialTiles) {
-    if (!visited.has(info.tile)) {
+    if (!assigned.has(info.tile)) {
       console.log(`[Orogeny Propagation] Initial tile ${info.tile.id} in plate ${info.tile.plate.id} (${info.tile.plate.category}), intensity=${info.initialIntensity}`);
       propagatingTiles.push({
         tile: info.tile,
         intensity: info.initialIntensity,
         dir: info.convergenceDir,
-        amplitudeScale: info.amplitudeScale
+        amplitudeScale: info.amplitudeScale,
+        distanceFromBoundary: 0,  // Initial tiles are at the boundary
+        maxExpansionDistance: info.maxExpansionDistance,
       });
-      visited.add(info.tile);
+      assigned.add(info.tile);
     }
   }
 
   let step = 0;
 
   // Step-by-step propagation
-  // while (propagatingTiles.length > 0) {
-  //   step++;
-  //   propagatingTiles = orogenyPropagationStep(propagatingTiles, visited, tectonicSystem);
-  //   break;
-  // }
+  while (propagatingTiles.length > 0) {
+    step++;
+    propagatingTiles = orogenyPropagationStep(propagatingTiles, assigned, tectonicSystem);
+    // break;
+  }
 
   console.log(`[Orogeny Propagation] Completed in ${step} steps`);
 }
@@ -456,6 +671,7 @@ interface BoundaryTileInfo {
   convergenceDir: THREE.Vector3;
   amplitudeScale: number;  // 1.0 normally, 0.5 for symmetric continental collision
   initialIntensity: GeologicalIntensity;  // Computed from motion and plate sizes
+  maxExpansionDistance: number;  // Maximum expansion distance (unit sphere)
 }
 
 /**
@@ -470,14 +686,16 @@ interface BoundaryTileInfo {
 function initSymmetricOrogeny(
   boundary: PlateBoundary,
   tectonicSystem: TectonicSystem,
-  amplitudeScale: number
+  amplitudeScale: number,
+  maxExpansionDistance: number
 ): BoundaryTileInfo[] {
   const boundaryTileInfos: BoundaryTileInfo[] = [];
   const symmetricAmplitudeScale = amplitudeScale * 0.5;
   const processedTiles = new Set<Tile>();
 
-  // Collect convergent neighbor motions for each tile
+  // Collect convergent neighbor motions and edge midpoints for each tile
   const tileNeighborMotions = collectConvergentNeighborMotions(boundary, tectonicSystem);
+  const tileEdgeMidpoints = collectConvergentEdgeMidpoints(boundary, tectonicSystem);
 
   // Process each tile with convergent neighbors
   for (const [tile, neighborMotions] of tileNeighborMotions) {
@@ -495,15 +713,16 @@ function initSymmetricOrogeny(
       tectonicSystem
     );
 
-    // Determine the other plate for convergence direction
-    const otherPlate = tile.plate === boundary.plateA ? boundary.plateB : boundary.plateA;
-    const convergenceDir = computeConvergenceDirection(tile, otherPlate, tectonicSystem);
+    // Compute direction from edge midpoints to tile center
+    const edgeMidpoints = tileEdgeMidpoints.get(tile) || [];
+    const convergenceDir = computeBoundaryToTileDirection(tile, edgeMidpoints);
 
     boundaryTileInfos.push({
       tile,
       convergenceDir,
       amplitudeScale: symmetricAmplitudeScale,
-      initialIntensity
+      initialIntensity,
+      maxExpansionDistance,
     });
 
     tile.geologicalType = GeologicalType.OROGEN;
@@ -527,7 +746,8 @@ function initSymmetricOrogeny(
 function initAsymmetricOrogeny(
   boundary: PlateBoundary,
   tectonicSystem: TectonicSystem,
-  amplitudeScale: number
+  amplitudeScale: number,
+  maxExpansionDistance: number
 ): BoundaryTileInfo[] {
   const plateA = boundary.plateA;
   const plateB = boundary.plateB;
@@ -552,12 +772,12 @@ function initAsymmetricOrogeny(
     console.log(`[Orogeny] Same type asymmetric: overriding plate ${overridingPlate.id} (${overridingPlate.category})`);
   }
 
-  const subductingPlate = (overridingPlate === plateA) ? plateB : plateA;
   const boundaryTileInfos: BoundaryTileInfo[] = [];
   const processedTiles = new Set<Tile>();
 
-  // Collect convergent neighbor motions for tiles on the overriding plate only
+  // Collect convergent neighbor motions and edge midpoints for tiles on the overriding plate only
   const tileNeighborMotions = collectConvergentNeighborMotions(boundary, tectonicSystem);
+  const tileEdgeMidpoints = collectConvergentEdgeMidpoints(boundary, tectonicSystem);
 
   // Process only tiles from the overriding plate
   for (const [tile, neighborMotions] of tileNeighborMotions) {
@@ -580,8 +800,10 @@ function initAsymmetricOrogeny(
 
     console.log(`[Orogeny] Adding boundary tile ${tile.id} from plate ${tile.plate.id} (${tile.plate.category})`);
 
-    const convergenceDir = computeConvergenceDirection(tile, subductingPlate, tectonicSystem);
-    boundaryTileInfos.push({ tile, convergenceDir, amplitudeScale, initialIntensity });
+    // Compute direction from edge midpoints to tile center
+    const edgeMidpoints = tileEdgeMidpoints.get(tile) || [];
+    const convergenceDir = computeBoundaryToTileDirection(tile, edgeMidpoints);
+    boundaryTileInfos.push({ tile, convergenceDir, amplitudeScale, initialIntensity, maxExpansionDistance });
 
     tile.geologicalType = GeologicalType.OROGEN;
     if (tile.geologicalIntensity < initialIntensity) {
@@ -628,6 +850,9 @@ function initOrogenyAtBoundary(
     return [];
   }
 
+  // Categorize boundary to determine max expansion distance
+  const boundaryConfig = categorizeBoundaryOrogeny(boundary, tectonicSystem);
+
   // Check plate categories
   const bothContinental =
     plateA.category === PlateCategory.CONTINENTAL &&
@@ -650,9 +875,9 @@ function initOrogenyAtBoundary(
   // Each function computes per-tile intensity based on the tile's own relative motion
   let boundaryTileInfos: BoundaryTileInfo[];
   if (useSymmetricPropagation) {
-    boundaryTileInfos = initSymmetricOrogeny(boundary, tectonicSystem, baseAmplitudeScale);
+    boundaryTileInfos = initSymmetricOrogeny(boundary, tectonicSystem, baseAmplitudeScale, boundaryConfig.maxExpansionDistance);
   } else {
-    boundaryTileInfos = initAsymmetricOrogeny(boundary, tectonicSystem, baseAmplitudeScale);
+    boundaryTileInfos = initAsymmetricOrogeny(boundary, tectonicSystem, baseAmplitudeScale, boundaryConfig.maxExpansionDistance);
   }
 
   console.log(`[Orogeny] Boundary ${boundary.id}: added ${boundaryTileInfos.length} tiles for propagation`);
