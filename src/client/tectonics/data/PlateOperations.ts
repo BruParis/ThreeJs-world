@@ -1,26 +1,76 @@
 import { Halfedge } from '@core/Halfedge';
+import { HalfedgeGraph } from '@core/HalfedgeGraph';
 import { Tile, Plate, TectonicSystem, PlateBoundary, BoundaryEdge, BoundaryType } from './Plate';
 
-function floodFill(seeds: Halfedge[], selectedSet: Set<Halfedge>): Plate[] {
+/**
+ * Builds all tiles from a halfedge graph.
+ * Each unique face loop in the graph becomes a Tile.
+ * @param halfedgeGraph The halfedge graph representing the dual mesh
+ * @returns A Map from Halfedge to its containing Tile
+ */
+function buildAllTiles(halfedgeGraph: HalfedgeGraph): Map<Halfedge, Tile> {
+  const edge2TileMap = new Map<Halfedge, Tile>();
+  const processedEdges = new Set<Halfedge>();
 
-  // All new halfedge corresponds to a new plate (Set<Halfedge> -> Plate)
-  const plates: Plate[] = seeds.map(he => new Plate(he));
+  for (const he of halfedgeGraph.halfedges.values()) {
+    if (processedEdges.has(he)) {
+      continue;
+    }
 
-  const plateUnclaimedBorderEdgeMap = new Map<number, Set<Halfedge>>();
+    // Create a tile for this face loop (without plate assignment)
+    const tile = new Tile(he);
+
+    // Mark all halfedges in this loop and map them to the tile
+    for (const loopHe of tile.loop()) {
+      processedEdges.add(loopHe);
+      edge2TileMap.set(loopHe, tile);
+    }
+  }
+
+  console.log(`Built ${edge2TileMap.size / 6} tiles from halfedge graph`); // Approximate: assumes hexagonal tiles on average
+  return edge2TileMap;
+}
+
+/**
+ * Performs flood fill starting from seed tiles to create plates.
+ * @param seeds Array of seed tiles, one for each plate
+ * @param edge2TileMap Map from halfedges to tiles (built by buildAllTiles)
+ * @returns Array of created plates
+ */
+function floodFill(seeds: Tile[], edge2TileMap: Map<Halfedge, Tile>): Plate[] {
+  // Track which tiles have been claimed
+  const claimedTiles = new Set<Tile>();
+
+  // Create a plate for each seed tile
+  const plates: Plate[] = seeds.map(seedTile => {
+    claimedTiles.add(seedTile);
+    return new Plate(seedTile);
+  });
+
+  // Track unclaimed border tiles for each plate
+  // (border tiles whose twin tiles are not yet claimed)
+  const plateUnclaimedBorderTilesMap = new Map<number, Set<Tile>>();
   for (const plate of plates) {
-    plateUnclaimedBorderEdgeMap.set(plate.id, new Set<Halfedge>(plate.borderEdge2TileMap.keys()));
+    const unclaimedBorderTiles = new Set<Tile>();
+
+    // Find neighboring tiles of the seed tile that are not yet claimed
+    for (const he of plate.borderEdge2TileMap.keys()) {
+      const twinTile = edge2TileMap.get(he.twin);
+      if (twinTile && !claimedTiles.has(twinTile)) {
+        unclaimedBorderTiles.add(twinTile);
+      }
+    }
+
+    plateUnclaimedBorderTilesMap.set(plate.id, unclaimedBorderTiles);
   }
 
   const kPlates = Math.ceil(plates.length / 3);
   do {
-    // Order plates by decreasing ratio of unclaimed border edges
+    // Order plates by decreasing ratio of unclaimed border tiles
     // -> select the top-k plates
-    // (Plates with less unclaimed border edges will likely sample
-    // frequently the same border halfedges, resulting in intertwined pattern of plates)
-    // + it adds more variability in the process
     const sortedPlates = plates.sort((a, b) => {
-      const aUnclaimedSize = plateUnclaimedBorderEdgeMap.get(a.id)?.size || 0;
-      const bUnclaimedSize = plateUnclaimedBorderEdgeMap.get(b.id)?.size || 0;
+      const aUnclaimedSize = plateUnclaimedBorderTilesMap.get(a.id)?.size || 0;
+      const bUnclaimedSize = plateUnclaimedBorderTilesMap.get(b.id)?.size || 0;
       const aRatio = aUnclaimedSize / a.tiles.size;
       const bRatio = bUnclaimedSize / b.tiles.size;
       return bRatio - aRatio;
@@ -28,53 +78,44 @@ function floodFill(seeds: Halfedge[], selectedSet: Set<Halfedge>): Plate[] {
     const topkPlates = sortedPlates.slice(0, kPlates);
 
     for (const plate of topkPlates) {
-      const unclaimedBorderEdges = plateUnclaimedBorderEdgeMap.get(plate.id);
-      if (!unclaimedBorderEdges || unclaimedBorderEdges.size === 0) {
+      const unclaimedBorderTiles = plateUnclaimedBorderTilesMap.get(plate.id);
+      if (!unclaimedBorderTiles || unclaimedBorderTiles.size === 0) {
         continue;
       }
 
-      // Select a random border halfedge
-      // Inefficient since this requires converting the set to an array
-      const randomIndex = Math.floor(Math.random() * unclaimedBorderEdges.size);
-      const borderEdges = Array.from(unclaimedBorderEdges);
-      const borderHe = borderEdges[randomIndex];
-      const twinHe = borderHe.twin;
+      // Select a random unclaimed border tile
+      const randomIndex = Math.floor(Math.random() * unclaimedBorderTiles.size);
+      const borderTilesArray = Array.from(unclaimedBorderTiles);
+      const targetTile = borderTilesArray[randomIndex];
 
-      if (selectedSet.has(twinHe)) {
-        // Already claimed by another plate
-        unclaimedBorderEdges.delete(borderHe);
+      // Check if this tile was claimed by another plate since we last checked
+      if (claimedTiles.has(targetTile)) {
+        unclaimedBorderTiles.delete(targetTile);
         continue;
       }
 
       // Claim the tile
-      const tile = plate.addTileFromEdge(twinHe);
-      if (!tile) {
-        // Tile was already present in the plate
+      claimedTiles.add(targetTile);
+      const added = plate.addTile(targetTile);
+      if (!added) {
         console.log("Tile was already present in the plate", plate.id);
-        unclaimedBorderEdges.delete(borderHe);
+        unclaimedBorderTiles.delete(targetTile);
         continue;
       }
 
-      // update selectedSet
-      for (const he of tile.loop()) {
-        selectedSet.add(he);
-      }
+      // Remove this tile from unclaimed set
+      unclaimedBorderTiles.delete(targetTile);
 
-      // update unclaimedBorderEdges from this tile
-      // twin halfedges not already belonging to any plate
-      for (const he of tile.loop()) {
-        const twin = he.twin;
-
-        if (selectedSet.has(twin)) {
-          // already claimed
-          continue;
+      // Add neighboring unclaimed tiles to the border set
+      for (const he of targetTile.loop()) {
+        const twinTile = edge2TileMap.get(he.twin);
+        if (twinTile && !claimedTiles.has(twinTile)) {
+          unclaimedBorderTiles.add(twinTile);
         }
-
-        unclaimedBorderEdges.add(he);
       }
     }
 
-  } while (Array.from(plateUnclaimedBorderEdgeMap.values()).some(set => set.size > 0));
+  } while (Array.from(plateUnclaimedBorderTilesMap.values()).some(set => set.size > 0));
 
   return plates;
 }
@@ -205,55 +246,68 @@ function transferTileToPlate(tile: Tile, targetPlate: Plate): void {
 
 }
 
-function splitPlateFromTile(tectonicSystem: TectonicSystem, tile: Tile): void {
-  const currentPlate = tile.plate;
+/**
+ * Splits a plate at a bridge tile into two separate plates.
+ * A bridge tile connects multiple regions of the same plate.
+ * @param tectonicSystem The tectonic system containing the plate
+ * @param bridgeTile The bridge tile where the split occurs
+ */
+function splitPlateFromTile(tectonicSystem: TectonicSystem, bridgeTile: Tile): void {
+  const currentPlate = bridgeTile.plate;
 
-  // Take the Full edge2TileMap as base
-  const edgesSet = Array.from(tectonicSystem.edge2TileMap.keys());
+  if (currentPlate.tiles.size <= 2) {
+    console.warn("Cannot split plate with only 2 or fewer tiles.");
+    return;
+  }
 
-  // collect edges for each tile of the old plate in a set
-  // to subtract selectedSet from
-  const auxSelectedSet = new Set<Halfedge>(edgesSet);
-  currentPlate.tiles.forEach(t => {
-    for (const he of t.loop()) {
-      auxSelectedSet.delete(he);
-    }
-  });
-
-  // select 2 seeds from the old plate edges, both belonging
-  // to the current plate (do not take as seed a border edge)
-  const auxSeeds: Halfedge[] = [];
-  for (const he of tile.loop()) {
-    const twinHe = he.twin;
-
-    if (currentPlate.borderEdge2TileMap.has(he)) {
-      continue;
-    }
-
-    if (!currentPlate.borderEdge2TileMap.has(twinHe)) {
-      auxSeeds.push(twinHe);
-      auxSeeds.push(he);
-      break;
+  // Build edge2TileMap for just this plate's tiles
+  const plateTileEdge2TileMap = new Map<Halfedge, Tile>();
+  for (const tile of currentPlate.tiles) {
+    for (const he of tile.loop()) {
+      plateTileEdge2TileMap.set(he, tile);
     }
   }
 
-  if (auxSeeds.length < 2) {
+  // Find seed tiles from different regions connected by the bridge tile.
+  // A bridge tile has multiple "runs" of internal edges (non-border edges),
+  // each run connecting to a different region of the plate.
+  const halfedges = Array.from(bridgeTile.loop());
+  const n = halfedges.length;
+
+  // Check if we start inside an internal run (handle wrap-around)
+  const firstIsBorder = currentPlate.borderEdge2TileMap.has(halfedges[0]);
+  const lastIsBorder = currentPlate.borderEdge2TileMap.has(halfedges[n - 1]);
+  const startsMidRun = !firstIsBorder && !lastIsBorder;
+
+  const seeds: Tile[] = [];
+  let inInternalRun = startsMidRun;
+
+  for (const he of halfedges) {
+    const isBorder = currentPlate.borderEdge2TileMap.has(he);
+
+    if (!isBorder && !inInternalRun) {
+      // Starting a new run of internal edges - get one neighbor from this region
+      inInternalRun = true;
+
+      const neighborTile = plateTileEdge2TileMap.get(he.twin);
+      if (neighborTile && neighborTile !== bridgeTile && !seeds.includes(neighborTile)) {
+        seeds.push(neighborTile);
+      }
+    } else if (isBorder) {
+      inInternalRun = false;
+    }
+  }
+
+  if (seeds.length < 2) {
     console.warn("Could not find suitable seeds to split the plate at the given tile.");
     return;
   }
 
-  // At this point: the split is valid, remove the current plate and
-  // proceed with flood fill from the 2 seeds
+  // Remove the current plate from the system
   tectonicSystem.removePlate(currentPlate);
 
-  for (const seed of auxSeeds) {
-    // Mark all halfedges in the loop as selected
-    for (const auxHe of seed.nextLoop()) {
-      auxSelectedSet.add(auxHe);
-    }
-  }
-
-  const newPlates = floodFill(auxSeeds, auxSelectedSet);
+  // Perform flood fill with the first 2 seed tiles (split into 2 plates)
+  const newPlates = floodFill(seeds.slice(0, 2), plateTileEdge2TileMap);
   newPlates.forEach(plate => tectonicSystem.plates.add(plate));
 
   tectonicSystem.update();
@@ -358,6 +412,7 @@ function refineBoundaryType(boundary: PlateBoundary): void {
 }
 
 export {
+  buildAllTiles,
   floodFill,
   plateAbsorbedByPlate,
   splitPlateFromTile,

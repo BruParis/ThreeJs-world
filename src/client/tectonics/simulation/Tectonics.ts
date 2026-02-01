@@ -4,10 +4,11 @@ import { Halfedge } from '@core/Halfedge';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
 import { Tile, Plate, PlateCategory, BoundaryEdge, BoundaryType, GeologicalType, GeologicalIntensity, TectonicSystem, makePlateBoundary } from '../data/Plate';
 import {
+  buildAllTiles,
   floodFill,
   plateAbsorbedByPlate,
-  transferTileToPlate,
   splitPlateFromTile,
+  transferTileToPlate,
   refineBoundaryType
 } from '../data/PlateOperations';
 import { computeNetRotation, computeTectonicDynamics, caracterizeBoundaryEdge } from '../dynamics/dynamics';
@@ -329,57 +330,45 @@ function _transferBorderTilesToDominantPlateLoop(tectonicSystem: TectonicSystem,
 function buildTectonicSystem(halfedgeGraph: HalfedgeGraph, numPlates: number): TectonicSystem {
   console.log("Building tectonic system with", numPlates, "plates.");
 
-  // Select numPlates random halfedges as seeds
-  const halfedgesArray = Array.from(halfedgeGraph.halfedges.values());
-  const shuffled = halfedgesArray.sort(() => 0.5 - Math.random());
-  const selectedSet = new Set<Halfedge>();
+  // 1) Build all tiles from the halfedge graph
+  const edge2TileMap = buildAllTiles(halfedgeGraph);
+  const allTiles = Array.from(new Set(edge2TileMap.values()));
+  console.log(`Total tiles created: ${allTiles.length}`);
 
-  const seeds: Halfedge[] = [];
+  // 2) Select numPlates random tiles as seeds
+  const shuffled = allTiles.sort(() => 0.5 - Math.random());
+  const seeds: Tile[] = shuffled.slice(0, numPlates);
 
-  for (const he of shuffled) {
-    if (seeds.length >= numPlates) break;
-
-    if (selectedSet.has(he)) {
-      continue;
-    }
-
-    seeds.push(he);
-
-    // Mark all halfedges in the loop as selected
-    for (const auxHe of he.nextLoop()) {
-      selectedSet.add(auxHe);
-    }
-  }
-
-  const plates = floodFill(seeds, selectedSet);
+  // 3) Perform flood fill to assign tiles to plates
+  const plates = floodFill(seeds, edge2TileMap);
 
   const tectonicSystem = new TectonicSystem();
   plates.forEach(plate => tectonicSystem.plates.add(plate));
 
   tectonicSystem.update();
 
-  // 1) Tiles that are only linked to a plate by a single edge are transferred
+  // 4) Tiles that are only linked to a plate by a single edge are transferred
   // to the neighboring plate
   _transferBorderTilesToDominantPlateLoop(tectonicSystem, 50);
 
-  // 2) Plates with narrow shape (1 tile large, bridge tile) are split into plates
+  // 5) Plates with narrow shape (1 tile large, bridge tile) are split into plates
   _splitPlateAtBridgeTiles(tectonicSystem);
 
-  // 3) Each plate completely surrounded by the same plate gets absorbed
+  // 6) Each plate completely surrounded by the same plate gets absorbed
   _absorbEnclavedPlates(tectonicSystem);
 
-  // 4) Each small tile plate gets absorbed by the neighboring plate
+  // 7) Each small tile plate gets absorbed by the neighboring plate
   _absorbSmallPlates(tectonicSystem, 5);
 
-  // 5) Update edge2TileMap after all tile modifications
+  // 8) Update edge2TileMap after all tile modifications
   tectonicSystem.update();
 
-  // 6) Compute plate areas now that all modifications are complete
+  // 9) Compute plate areas now that all modifications are complete
   for (const plate of tectonicSystem.plates) {
     plate.computeArea();
   }
 
-  // 7) Compute plate area statistics
+  // 10) Compute plate area statistics
   tectonicSystem.computePlateAreaStatistics();
 
   return tectonicSystem;

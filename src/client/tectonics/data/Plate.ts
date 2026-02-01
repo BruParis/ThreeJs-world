@@ -26,7 +26,7 @@ let _idBoundaryCount = 0;
 export class Tile {
   id: number = _idTileCount++;
   edge: Halfedge;
-  plate: Plate;
+  private _plate: Plate | null;
   centroid: THREE.Vector3;
   motionVec: THREE.Vector3 = new THREE.Vector3();
   readonly area: number;
@@ -39,9 +39,24 @@ export class Tile {
     }
   }
 
-  constructor(halfedge: Halfedge, plate: Plate) {
+  get plate(): Plate {
+    if (!this._plate) {
+      throw new Error(`Tile ${this.id} has no plate assigned`);
+    }
+    return this._plate;
+  }
+
+  set plate(p: Plate) {
+    this._plate = p;
+  }
+
+  get hasPlate(): boolean {
+    return this._plate !== null;
+  }
+
+  constructor(halfedge: Halfedge, plate: Plate | null = null) {
     this.edge = halfedge;
-    this.plate = plate;
+    this._plate = plate;
 
     // Collect vertices
     const vertices: THREE.Vector3[] = [];
@@ -159,43 +174,47 @@ export class Plate {
 
 
 
-  constructor(tileEdge: Halfedge, category: PlateCategory = PlateCategory.UNKNOWN) {
+  constructor(seedTile: Tile, category: PlateCategory = PlateCategory.UNKNOWN) {
 
     this.tiles = new Set<Tile>();
     this.system = new TectonicSystem();
 
-    const newTile = new Tile(tileEdge, this);
-    this.tiles.add(newTile);
+    seedTile.plate = this;
+    this.tiles.add(seedTile);
     this.category = category;
 
     this.borderEdge2TileMap = new Map<Halfedge, Tile>();
-    for (const he of newTile.loop()) {
-      this.borderEdge2TileMap.set(he, newTile);
+    for (const he of seedTile.loop()) {
+      this.borderEdge2TileMap.set(he, seedTile);
     }
 
     this.centroid = new THREE.Vector3();
   }
 
-  addTileFromEdge(edge: Halfedge): Tile | null {
-    const newTile = new Tile(edge, this);
-
-    if (this.tiles.has(newTile)) {
-      console.warn(`Tile already present in plate ${this.id}`);
-      return null;
+  /**
+   * Adds an existing tile to this plate.
+   * The tile must not already belong to another plate.
+   * Updates the border edge map accordingly.
+   */
+  addTile(tile: Tile): boolean {
+    if (this.tiles.has(tile)) {
+      console.warn(`Tile ${tile.id} already present in plate ${this.id}`);
+      return false;
     }
 
-    this.tiles.add(newTile);
+    tile.plate = this;
+    this.tiles.add(tile);
 
-    for (const he of newTile.loop()) {
+    for (const he of tile.loop()) {
       const twin = he.twin;
       if (this.borderEdge2TileMap.has(twin)) {
         this.borderEdge2TileMap.delete(twin);
       } else {
-        this.borderEdge2TileMap.set(he, newTile);
+        this.borderEdge2TileMap.set(he, tile);
       }
     }
 
-    return newTile;
+    return true;
   }
 
   updateCentroid(): void {
