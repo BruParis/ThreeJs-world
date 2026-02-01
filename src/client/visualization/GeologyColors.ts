@@ -8,7 +8,8 @@ export const GEOLOGICAL_TYPE_BASE_COLORS: Record<GeologicalType, [number, number
   [GeologicalType.UNKNOWN]: [0.5, 0.5, 0.5],           // Grey
   [GeologicalType.SHIELD]: [0.5, 0.5, 0.5],            // Grey (default)
   [GeologicalType.PLATFORM]: [0.5, 0.5, 0.5],          // Grey (default)
-  [GeologicalType.OROGEN]: [0.0, 1.0, 1.0],            // Cyan
+  [GeologicalType.OROGEN]: [0.0, 1.0, 1.0],            // Cyan (active mountains)
+  [GeologicalType.ANCIENT_OROGEN]: [0.8, 0.6, 0.4],    // Tan/brown (old eroded mountains)
   [GeologicalType.BASIN]: [0.5, 0.5, 0.5],             // Grey (default)
   [GeologicalType.MAGMATIC]: [0.5, 0.5, 0.5],          // Grey (default)
   [GeologicalType.EXTENDED_CRUST]: [0.5, 0.5, 0.5],    // Grey (default)
@@ -54,12 +55,19 @@ export function blendColorWithAlpha(
 /**
  * Gets the final blended color for a geological type with intensity.
  * Uses intensity to determine alpha, then blends with background.
+ * Ancient orogeny ignores intensity and uses base color directly.
  */
 export function getGeologicalColor(
   type: GeologicalType,
   intensity: GeologicalIntensity
 ): [number, number, number] {
   const baseColor = GEOLOGICAL_TYPE_BASE_COLORS[type];
+
+  // Ancient orogeny does not use intensity - return base color directly
+  if (type === GeologicalType.ANCIENT_OROGEN) {
+    return baseColor;
+  }
+
   const alpha = GEOLOGICAL_INTENSITY_ALPHA[intensity];
   return blendColorWithAlpha(baseColor, alpha);
 }
@@ -69,12 +77,16 @@ export function getGeologicalColor(
  * For types without intensity, uses full opacity.
  */
 export function getGeologicalTypeColor(type: GeologicalType): [number, number, number] {
-  // For non-OROGEN types, return the base color directly
-  if (type !== GeologicalType.OROGEN) {
+  // Ancient orogeny uses base color directly (no intensity)
+  if (type === GeologicalType.ANCIENT_OROGEN) {
     return GEOLOGICAL_TYPE_BASE_COLORS[type];
   }
-  // For OROGEN without intensity specified, use MODERATE as default
-  return getGeologicalColor(type, GeologicalIntensity.MODERATE);
+  // For active orogen, use intensity-based blending
+  if (type === GeologicalType.OROGEN) {
+    return getGeologicalColor(type, GeologicalIntensity.MODERATE);
+  }
+  // For other types, return the base color directly
+  return GEOLOGICAL_TYPE_BASE_COLORS[type];
 }
 
 /**

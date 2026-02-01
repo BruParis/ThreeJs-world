@@ -274,6 +274,7 @@ export enum GeologicalType {
   SHIELD = 'shield',
   PLATFORM = 'platform',
   OROGEN = 'orogen',
+  ANCIENT_OROGEN = 'ancient_orogen',
   BASIN = 'basin',
   MAGMATIC = 'magmatic',
   EXTENDED_CRUST = 'extended_crust',

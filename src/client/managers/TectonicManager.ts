@@ -34,7 +34,7 @@ export class TectonicManager {
   private visualizationManager: VisualizationManager;
   private sceneManager: SceneManager;
   private tectonicSystem: TectonicSystem | null = null;
-  private plateDisplayMode: PlateDisplayMode = PlateDisplayMode.NONE;
+  private plateDisplayMode: PlateDisplayMode = PlateDisplayMode.CATEGORY;
   private netRotation: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
   private geologyDisplayEnabled: boolean = false;
   private recomputeOrogenyMode: boolean = false;
