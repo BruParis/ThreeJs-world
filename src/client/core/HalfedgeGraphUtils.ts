@@ -681,9 +681,7 @@ function subdivideTrianglesHalfedgeGraph(halfedgeGraph: HalfedgeGraph) {
 }
 
 
-function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: HalfedgeGraph): BiMap<string> {
-  const halfedge2DualBiMap = new BiMap<string>();
-  const halfedgeFacePositionsMap = new Map<string, THREE.Vector3>();
+function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: HalfedgeGraph): void {
   const halfedge2DualVertexMap = new Map<string, Vertex>();
 
   halfedgeDualGraph.clear();
@@ -710,9 +708,8 @@ function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: Half
     // Create dual vertex at centroid
     const dualVertex = halfedgeDualGraph.addVertex(centroidPos);
 
-    // Store in map the centroid position for all halfedges of this face
+    // Map all face halfedges to this dual vertex
     for (const auxHe of he.nextLoop()) {
-      halfedgeFacePositionsMap.set(auxHe.id, centroidPos);
       halfedge2DualVertexMap.set(auxHe.id, dualVertex);
     }
   }
@@ -749,12 +746,6 @@ function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: Half
 
       const edge1 = verticesPair2EdgeMap.get(pairKey1);
       if (edge1) {
-        // This edge was created along with its twin's own addEdge call
-        // -> it needs to be added to the halfedge2DualBiMap
-        // and dualHalfedges array
-        halfedge2DualBiMap.set(he.id, edge1.twin.id);
-        halfedge2DualBiMap.set(he.twin.id, edge1.id);
-        
         dualHalfedges.push(edge1.twin);
         continue;
       }
@@ -764,13 +755,11 @@ function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: Half
       // around the vertex, which is inefficient here)
       const dualHalfedge = halfedgeDualGraph.addEdgeUnsafe(dualVertexA, dualVertexB);
 
-      halfedge2DualBiMap.set(he.id, dualHalfedge.id);
-      halfedge2DualBiMap.set(he.twin.id, dualHalfedge.twin.id);
-
       dualHalfedges.push(dualHalfedge);
 
       verticesPair2EdgeMap.set(pairKey0, dualHalfedge);
     }
+
     dualLoopsHalfedges.push(dualHalfedges);
 
   }
@@ -792,8 +781,6 @@ function populateDualGraph(halfedgeGraph: HalfedgeGraph, halfedgeDualGraph: Half
       he.prev = hePrev;
     }
   }
-
-  return halfedge2DualBiMap;
 }
 
 function collectOriginalVertices(halfedgeGraph: HalfedgeGraph): Set<number> {

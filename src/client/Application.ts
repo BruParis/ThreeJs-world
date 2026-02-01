@@ -4,12 +4,14 @@ import { TectonicManager } from './managers/TectonicManager';
 import { GUIManager } from './managers/GUIManager';
 import { InteractionHandler } from './handlers/InteractionHandler';
 import { AnimationController } from './controllers/AnimationController';
+import { GeometryBuilder } from './builders/GeometryBuilder';
 
 /**
  * Main application orchestrator that manages all components and their lifecycle.
  */
 export class Application {
   private sceneManager: SceneManager;
+  private geometryBuilder: GeometryBuilder;
   private visualizationManager: VisualizationManager;
   private tectonicManager: TectonicManager;
   private interactionHandler: InteractionHandler;
@@ -19,6 +21,7 @@ export class Application {
   constructor() {
     // Create managers in dependency order
     this.sceneManager = new SceneManager();
+    this.geometryBuilder = new GeometryBuilder();
     this.visualizationManager = new VisualizationManager(this.sceneManager);
     this.tectonicManager = new TectonicManager(this.visualizationManager, this.sceneManager);
     this.interactionHandler = new InteractionHandler(
@@ -57,11 +60,32 @@ export class Application {
    * Also rebuilds the tectonic plates since they depend on the underlying geometry.
    */
   public reset(degree?: number): void {
-    if (degree !== undefined) {
-      this.visualizationManager.getIcoParams().degree = degree;
-    }
-    this.visualizationManager.rebuildIcosahedronHalfedgeDS();
+    const currentDegree = degree ?? this.visualizationManager.getIcoParams().degree;
+
+    const start_time = performance.now();
+
+    // 1. Build graphs (GeometryBuilder)
+    const result = this.geometryBuilder.buildIcosahedronGraphs(currentDegree);
+    const ico_build_time = performance.now();
+
+    // 2. Set graphs and stats on VisualizationManager
+    this.visualizationManager.setGraphs(result.primalGraph, result.dualGraph);
+    this.visualizationManager.setStats(result.stats);
+    this.visualizationManager.getIcoParams().degree = currentDegree;
+
+    // 3. Rebuild meshes (visualization)
+    this.visualizationManager.rebuildVisualMeshesFromGraphs();
+    const meshes_build_time = performance.now();
+
+    // 4. Rebuild tectonics
     this.tectonicManager.rebuildTectonicPlates();
+    const end_time = performance.now();
+
+    console.log("Ico build time:", (ico_build_time - start_time).toFixed(2), "ms");
+    console.log("Meshes build time:", (meshes_build_time - ico_build_time).toFixed(2), "ms");
+    console.log("Tectonic build time:", (end_time - meshes_build_time).toFixed(2), "ms");
+    console.log("Total time:", (end_time - start_time).toFixed(2), "ms");
+
   }
 
   /**

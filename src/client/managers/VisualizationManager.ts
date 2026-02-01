@@ -9,15 +9,8 @@ import { TectonicSystem, PlateBoundary, BoundaryEdge, Tile, Plate } from '../tec
 import {
   makeBufferGeometryFromHalfedgeGraph,
   makeBufferGeometryFromLoops,
-  collectOriginalVertices,
-  subdivideTrianglesLoop,
-  normalizeVertices,
-  populateDualGraph,
-  makeLineSegments2FromHalfedgeGraph,
-  distortGraphLoop,
-  makeFaceDistribution
+  makeLineSegments2FromHalfedgeGraph
 } from '@core/HalfedgeGraphUtils';
-import { populateIcosahedronHalfedgeGraph } from '@core/geometry/IcosahedronMesh';
 import {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
@@ -173,46 +166,54 @@ export class VisualizationManager {
   }
 
   /**
-   * Rebuilds the icosahedron halfedge data structure with the current degree.
+   * Sets the primal and dual halfedge graphs from an external builder.
    */
-  public rebuildIcosahedronHalfedgeDS(): void {
-    console.log("Rebuilding Icosahedron Halfedge DS");
+  public setGraphs(primalGraph: HalfedgeGraph, dualGraph: HalfedgeGraph): void {
+    this.icoHalfedgeGraph = primalGraph;
+    this.icoHalfedgeDualGraph = dualGraph;
+  }
+
+  /**
+   * Sets the statistics for the primal and dual graphs.
+   */
+  public setStats(stats: {
+    numVertices: number;
+    numFaces: number;
+    numHalfedges: number;
+    pentagons: number;
+    hexagons: number;
+    heptagons: number;
+  }): void {
+    this.icoParams.numVertices = stats.numVertices;
+    this.icoParams.numFaces = stats.numFaces;
+    this.icoParams.numHalfedges = stats.numHalfedges;
+    this.icoDualParams.pentagons = stats.pentagons;
+    this.icoDualParams.hexagons = stats.hexagons;
+    this.icoDualParams.heptagons = stats.heptagons;
+  }
+
+  /**
+   * Rebuilds all meshes from the current graphs.
+   * This is pure visualization work: mesh creation, scene management, rotation preservation.
+   */
+  public rebuildVisualMeshesFromGraphs(): void {
+    console.log("Rebuilding meshes from graphs");
     const start_time = performance.now();
 
     const scene = this.sceneManager.getScene();
 
     let rotation: THREE.Euler | null = null;
-    // For smooth transitions, store the current rotation
-    // before removing the old icosahedron
+
+    // Rebuild icosahedron mesh
     if (this.icosahedron) {
       rotation = this.icosahedron.rotation.clone();
       scene.remove(this.icosahedron);
     }
 
-    // Clear graphs and repopulate
-    this.icoHalfedgeGraph = new HalfedgeGraph();
-    this.icoHalfedgeDualGraph = new HalfedgeGraph();
-
-    populateIcosahedronHalfedgeGraph(this.icoHalfedgeGraph);
-
-    const initialIcoVerticesIds = collectOriginalVertices(this.icoHalfedgeGraph);
-    // all the original vertices have 5 edges
-    const verticesEdgeCountIdMap = new Map(
-      Array.from(initialIcoVerticesIds, id => [id, 5]) 
-    );
-    subdivideTrianglesLoop(this.icoHalfedgeGraph, this.icoParams.degree);
-
-    distortGraphLoop(this.icoHalfedgeGraph, verticesEdgeCountIdMap, 3, 0.5);
-    normalizeVertices(this.icoHalfedgeGraph);
-
-    // Generate dual graph
-    populateDualGraph(this.icoHalfedgeGraph, this.icoHalfedgeDualGraph);
-    normalizeVertices(this.icoHalfedgeDualGraph);
-
     const geometry = makeBufferGeometryFromHalfedgeGraph(this.icoHalfedgeGraph, true);
     const positions = geometry.attributes.position;
 
-    // Add Color attribute to the geometry
+    // Add color attribute to the geometry
     const colors = new THREE.BufferAttribute(new Float32Array(positions.count * 3), 3);
     for (let i = 0; i < positions.count; i++) {
       colors.setXYZ(i, 1, 1, 1);
@@ -222,21 +223,11 @@ export class VisualizationManager {
 
     this.icosahedron = new THREE.Mesh(geometry, this.icosahedronMaterial);
 
-    this.icoParams.numVertices = this.icoHalfedgeGraph.vertices.size;
-    this.icoParams.numFaces = this.icoHalfedgeGraph.faces.size;
-    this.icoParams.numHalfedges = this.icoHalfedgeGraph.halfedges.size;
-
-    // Apply the stored rotation to the new icosahedron
     if (rotation) {
       this.icosahedron.rotation.copy(rotation);
     }
 
     scene.add(this.icosahedron);
-
-    let faceDistrib = makeFaceDistribution(this.icoHalfedgeDualGraph);
-    this.icoDualParams.pentagons = faceDistrib.pentagons;
-    this.icoDualParams.hexagons = faceDistrib.hexagons;
-    this.icoDualParams.heptagons = faceDistrib.heptagons;
 
     // Rebuild halfedge graph lines
     if (this.halfedgeGraphLines) {
@@ -276,8 +267,7 @@ export class VisualizationManager {
 
     scene.add(this.dualMesh);
 
-    console.log("Mesh Rebuilt in", (performance.now() - start_time).toFixed(2), "ms");
-
+    console.log("Meshes rebuilt in", (performance.now() - start_time).toFixed(2), "ms");
   }
 
   /**
