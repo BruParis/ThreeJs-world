@@ -11,12 +11,11 @@ export enum PlateCategory {
 
 export enum GeologicalIntensity {
   NONE = 0,
-  ANCIENT = 1,
-  VERY_LOW = 2,
-  LOW = 3,
-  MODERATE = 4,
-  HIGH = 5,
-  VERY_HIGH = 6
+  VERY_LOW = 1,
+  LOW = 2,
+  MODERATE = 3,
+  HIGH = 4,
+  VERY_HIGH = 5
 }
 
 let _idTileCount = 0;
@@ -171,8 +170,6 @@ export class Plate {
       yield borderTile;
     }
   }
-
-
 
   constructor(seedTile: Tile, category: PlateCategory = PlateCategory.UNKNOWN) {
 

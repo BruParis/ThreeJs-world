@@ -128,7 +128,7 @@ export class VisualizationManager {
       depthTest: true,
       depthWrite: true,
       vertexColors: true,
-      visible: true,
+      visible: false,
     });
 
     this.boundaryLinesMaterial = new LineMaterial({

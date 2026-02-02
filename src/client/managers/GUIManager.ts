@@ -5,8 +5,7 @@ import { TectonicManager } from './TectonicManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
 import { BOUNDARY_LEGEND, boundaryColorToHex } from '../visualization/BoundaryColors';
 import { PLATE_CATEGORY_LEGEND, plateCategoryColorToHex, PlateDisplayMode } from '../visualization/PlateColors';
-import { GEOLOGICAL_INTENSITY_LEGEND, geologicalIntensityColorToHex } from '../visualization/GeologyColors';
-import { GeologicalType } from '../tectonics/data/Plate';
+import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
 
 const MIN_DEGREE = 0;
 const MAX_DEGREE = 6;
@@ -221,18 +220,17 @@ export class GUIManager {
         this.tectonicManager.setRecomputeOrogenyMode(value);
       });
 
-    // Add geological intensity color legend (for Orogen)
-    const orogenLegendGui = geologyGui.addFolder('Orogen Intensity');
+    // Add geology type color legend (Orogen, Ancient Orogen, Shield)
     const geoLegendColors: Record<string, number> = {};
-    for (const entry of GEOLOGICAL_INTENSITY_LEGEND) {
-      geoLegendColors[entry.label] = geologicalIntensityColorToHex(GeologicalType.OROGEN, entry.intensity);
+    for (const entry of GEOLOGY_TYPE_LEGEND) {
+      geoLegendColors[entry.label] = geologyTypeColorToHex(entry.type);
     }
 
-    for (const entry of GEOLOGICAL_INTENSITY_LEGEND) {
-      const controller = orogenLegendGui.addColor(geoLegendColors, entry.label);
+    for (const entry of GEOLOGY_TYPE_LEGEND) {
+      const controller = geologyGui.addColor(geoLegendColors, entry.label);
       // Make the color read-only by resetting on change
       controller.onChange(() => {
-        geoLegendColors[entry.label] = geologicalIntensityColorToHex(GeologicalType.OROGEN, entry.intensity);
+        geoLegendColors[entry.label] = geologyTypeColorToHex(entry.type);
         controller.updateDisplay();
       });
     }

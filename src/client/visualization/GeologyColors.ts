@@ -6,14 +6,14 @@ import { GeologicalType, GeologicalIntensity } from '../tectonics/data/Plate';
  */
 export const GEOLOGICAL_TYPE_BASE_COLORS: Record<GeologicalType, [number, number, number]> = {
   [GeologicalType.UNKNOWN]: [0.5, 0.5, 0.5],           // Grey
-  [GeologicalType.SHIELD]: [0.5, 0.5, 0.5],            // Grey (default)
-  [GeologicalType.PLATFORM]: [0.5, 0.5, 0.5],          // Grey (default)
+  [GeologicalType.SHIELD]: [1.0, 0.6, 0.2],            // Orange (ancient stable cores)
+  [GeologicalType.PLATFORM]: [1.0, 0.6, 0.8],          // Pink (sedimentary cover on shield)
   [GeologicalType.OROGEN]: [0.0, 1.0, 1.0],            // Cyan (active mountains)
-  [GeologicalType.ANCIENT_OROGEN]: [0.8, 0.6, 0.4],    // Tan/brown (old eroded mountains)
-  [GeologicalType.BASIN]: [0.5, 0.5, 0.5],             // Grey (default)
+  [GeologicalType.ANCIENT_OROGEN]: [0.1, 0.5, 0.5],    // Tan/brown (old eroded mountains)
+  [GeologicalType.BASIN]: [0.6, 0.6, 0.9],             // Light blue (sedimentary basins)
   [GeologicalType.MAGMATIC]: [0.5, 0.5, 0.5],          // Grey (default)
-  [GeologicalType.EXTENDED_CRUST]: [0.5, 0.5, 0.5],    // Grey (default)
-  [GeologicalType.OCEANIC_CRUST]: [0.5, 0.5, 0.5],     // Grey (default)
+  [GeologicalType.EXTENDED_CRUST]: [0.6, 0.4, 0.6],    // Purple (rifted/thinned continental crust)
+  [GeologicalType.OCEANIC_CRUST]: [0.1, 0.2, 0.6],     // Blue (oceanic floor)
   [GeologicalType.OCEANIC_RIDGE]: [0.5, 0.5, 0.5],     // Grey (default)
   [GeologicalType.OCEANIC_PLATEAU]: [0.5, 0.5, 0.5],   // Grey (default)
 };
@@ -25,7 +25,6 @@ export const GEOLOGICAL_TYPE_BASE_COLORS: Record<GeologicalType, [number, number
  */
 export const GEOLOGICAL_INTENSITY_ALPHA: Record<GeologicalIntensity, number> = {
   [GeologicalIntensity.NONE]: 0.0,
-  [GeologicalIntensity.ANCIENT]: 0.15,
   [GeologicalIntensity.VERY_LOW]: 0.25,
   [GeologicalIntensity.LOW]: 0.4,
   [GeologicalIntensity.MODERATE]: 0.55,
@@ -55,7 +54,7 @@ export function blendColorWithAlpha(
 /**
  * Gets the final blended color for a geological type with intensity.
  * Uses intensity to determine alpha, then blends with background.
- * Ancient orogeny ignores intensity and uses base color directly.
+ * Ancient orogeny, Shield, and Platform ignore intensity and use base color directly.
  */
 export function getGeologicalColor(
   type: GeologicalType,
@@ -63,8 +62,8 @@ export function getGeologicalColor(
 ): [number, number, number] {
   const baseColor = GEOLOGICAL_TYPE_BASE_COLORS[type];
 
-  // Ancient orogeny does not use intensity - return base color directly
-  if (type === GeologicalType.ANCIENT_OROGEN) {
+  // Types that do not use intensity - return base color directly
+  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN) {
     return baseColor;
   }
 
@@ -77,8 +76,8 @@ export function getGeologicalColor(
  * For types without intensity, uses full opacity.
  */
 export function getGeologicalTypeColor(type: GeologicalType): [number, number, number] {
-  // Ancient orogeny uses base color directly (no intensity)
-  if (type === GeologicalType.ANCIENT_OROGEN) {
+  // Types that use base color directly (no intensity)
+  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN) {
     return GEOLOGICAL_TYPE_BASE_COLORS[type];
   }
   // For active orogen, use intensity-based blending
@@ -110,6 +109,27 @@ export const GEOLOGICAL_INTENSITY_LEGEND: { label: string; intensity: Geological
   { label: 'Moderate', intensity: GeologicalIntensity.MODERATE },
   { label: 'Low', intensity: GeologicalIntensity.LOW },
   { label: 'Very Low', intensity: GeologicalIntensity.VERY_LOW },
-  { label: 'Ancient', intensity: GeologicalIntensity.ANCIENT },
   { label: 'None', intensity: GeologicalIntensity.NONE },
 ];
+
+/**
+ * Legend entries for geology type display in dat.gui.
+ * Shows the main geology types: Orogen, Ancient Orogen, Shield, Platform.
+ */
+export const GEOLOGY_TYPE_LEGEND: { label: string; type: GeologicalType }[] = [
+  { label: 'Orogen', type: GeologicalType.OROGEN },
+  { label: 'Ancient Orogen', type: GeologicalType.ANCIENT_OROGEN },
+  { label: 'Shield', type: GeologicalType.SHIELD },
+  { label: 'Platform', type: GeologicalType.PLATFORM },
+  { label: 'Oceanic Crust', type: GeologicalType.OCEANIC_CRUST },
+  { label: 'Basin', type: GeologicalType.BASIN },
+];
+
+/**
+ * Converts geological type to hex color for dat.gui.
+ * Uses moderate intensity for orogen, base color for others.
+ */
+export function geologyTypeColorToHex(type: GeologicalType): number {
+  const [r, g, b] = getGeologicalTypeColor(type);
+  return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
+}
