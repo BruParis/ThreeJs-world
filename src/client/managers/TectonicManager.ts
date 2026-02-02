@@ -22,7 +22,7 @@ import {
   transferTileToPlate,
   plateAbsorbedByPlate,
 } from '../tectonics/data/PlateOperations';
-import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundaries } from '../visualization/TectonicsDrawingUtils';
+import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType } from '../visualization/TectonicsDrawingUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
 import { idToHSLColor, assignColorToTriangle } from '../utils/ColorUtils';
@@ -152,7 +152,7 @@ export class TectonicManager {
 
     scene.add(motionVecLines);
 
-    // Update all boundaries visualization (light gray)
+    // Update all boundaries visualization (colored by type)
     const allBoundariesLines = this.visualizationManager.getAllBoundariesLines();
 
     if (allBoundariesLines) {
@@ -160,7 +160,36 @@ export class TectonicManager {
       scene.remove(allBoundariesLines);
     }
 
-    makeLineSegments2ForAllBoundaries(this.tectonicSystem, allBoundariesLines);
+    makeLineSegments2ForAllBoundariesByType(this.tectonicSystem, allBoundariesLines, false);
+
+    if (rotation) {
+      allBoundariesLines.rotation.copy(rotation);
+    }
+
+    scene.add(allBoundariesLines);
+  }
+
+  /**
+   * Refreshes all boundaries visualization with the specified display mode.
+   * @param mode The display mode: 'rawType', 'refinedType', or 'iteration'
+   */
+  public refreshAllBoundariesDisplay(mode: string): void {
+    if (!this.tectonicSystem) {
+      return;
+    }
+
+    const scene = this.sceneManager.getScene();
+    const allBoundariesLines = this.visualizationManager.getAllBoundariesLines();
+
+    let rotation: THREE.Euler | null = null;
+    if (allBoundariesLines) {
+      rotation = allBoundariesLines.rotation.clone();
+      scene.remove(allBoundariesLines);
+    }
+
+    // For 'iteration' mode, fall back to refined type since gradient only applies to selected boundary
+    const useRawType = mode === 'rawType';
+    makeLineSegments2ForAllBoundariesByType(this.tectonicSystem, allBoundariesLines, useRawType);
 
     if (rotation) {
       allBoundariesLines.rotation.copy(rotation);

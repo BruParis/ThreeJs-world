@@ -163,8 +163,6 @@ function categorizeBoundaryOrogeny(
   // Convert to unit sphere distance
   const maxExpansionDistance = kmToDistance(maxExpansionKm);
 
-  console.log(`[Orogeny] Boundary ${boundary.id}: category=${category}, intensity=${intensityScore.toFixed(2)}, maxExpansion=${maxExpansionKm.toFixed(0)}km`);
-
   return {
     category,
     maxExpansionDistance,
@@ -631,13 +629,10 @@ function runOrogenyPropagation(
 ): void {
   const assigned = new Set<Tile>();
 
-  console.log(`[Orogeny Propagation] Starting with ${initialTiles.length} initial tiles`);
-
   // Initialize propagating tiles from boundary tiles
   let propagatingTiles: PropagatingTileState[] = [];
   for (const info of initialTiles) {
     if (!assigned.has(info.tile)) {
-      console.log(`[Orogeny Propagation] Initial tile ${info.tile.id} in plate ${info.tile.plate.id} (${info.tile.plate.category}), intensity=${info.initialIntensity}`);
       propagatingTiles.push({
         tile: info.tile,
         intensity: info.initialIntensity,
@@ -659,7 +654,6 @@ function runOrogenyPropagation(
     // break;
   }
 
-  console.log(`[Orogeny Propagation] Completed in ${step} steps`);
 }
 
 // ============================================================================
@@ -763,13 +757,10 @@ function initAsymmetricOrogeny(
 
   if (plateAisContinental && !plateBisContinental) {
     overridingPlate = plateA;
-    console.log(`[Orogeny] Continental/Oceanic: overriding plate ${overridingPlate.id} (${overridingPlate.category})`);
   } else if (!plateAisContinental && plateBisContinental) {
     overridingPlate = plateB;
-    console.log(`[Orogeny] Oceanic/Continental: overriding plate ${overridingPlate.id} (${overridingPlate.category})`);
   } else {
     overridingPlate = largerPlate;
-    console.log(`[Orogeny] Same type asymmetric: overriding plate ${overridingPlate.id} (${overridingPlate.category})`);
   }
 
   const boundaryTileInfos: BoundaryTileInfo[] = [];
@@ -797,8 +788,6 @@ function initAsymmetricOrogeny(
       plateB,
       tectonicSystem
     );
-
-    console.log(`[Orogeny] Adding boundary tile ${tile.id} from plate ${tile.plate.id} (${tile.plate.category})`);
 
     // Compute direction from edge midpoints to tile center
     const edgeMidpoints = tileEdgeMidpoints.get(tile) || [];
@@ -834,8 +823,6 @@ function initOrogenyAtBoundary(
 ): BoundaryTileInfo[] {
   const plateA = boundary.plateA;
   const plateB = boundary.plateB;
-
-  console.log(`[Orogeny] Processing boundary ${boundary.id}: plate ${plateA.id} (${plateA.category}) vs plate ${plateB.id} (${plateB.category})`);
 
   // Check if boundary has convergent edges
   let hasConvergent = false;
@@ -879,8 +866,6 @@ function initOrogenyAtBoundary(
   } else {
     boundaryTileInfos = initAsymmetricOrogeny(boundary, tectonicSystem, baseAmplitudeScale, boundaryConfig.maxExpansionDistance);
   }
-
-  console.log(`[Orogeny] Boundary ${boundary.id}: added ${boundaryTileInfos.length} tiles for propagation`);
 
   return boundaryTileInfos;
 }
@@ -1200,20 +1185,16 @@ function createAncientOrogenyZone(
   // Compute dimensions based on plate size
   const { lengthKm, widthKm } = computeAncientOrogenyDimensions(plate, tectonicSystem);
 
-  console.log(`[Ancient Orogeny] Creating zone on plate ${plate.id}: length=${lengthKm.toFixed(0)}km, width=${widthKm.toFixed(0)}km`);
-
   // Create jagged ridge
   const ridgeTiles = createAncientOrogenyRidge(seed, lengthKm, tectonicSystem);
 
   if (ridgeTiles.length < 3) {
-    console.log(`[Ancient Orogeny] Ridge too short (${ridgeTiles.length} tiles), skipping`);
     return false;
   }
 
   // Propagate outward from ridge
   propagateAncientOrogenyFromRidge(ridgeTiles, widthKm, tectonicSystem);
 
-  console.log(`[Ancient Orogeny] Created zone with ${ridgeTiles.length} ridge tiles`);
   return true;
 }
 
@@ -1236,8 +1217,6 @@ function assignAncientOrogenyZones(tectonicSystem: TectonicSystem): void {
       continue;
     }
 
-    console.log(`[Ancient Orogeny] Plate ${plate.id} (decile=${getAreaDecile(plate.area, tectonicSystem)}): ${zoneCount} zones`);
-
     for (let i = 0; i < zoneCount; i++) {
       if (createAncientOrogenyZone(plate, tectonicSystem)) {
         totalZones++;
@@ -1255,7 +1234,6 @@ function assignAncientOrogenyZones(tectonicSystem: TectonicSystem): void {
     }
   }
 
-  console.log(`[Ancient Orogeny] Created ${totalZones} zones, ${ancientCount} tiles assigned`);
 }
 
 // ============================================================================

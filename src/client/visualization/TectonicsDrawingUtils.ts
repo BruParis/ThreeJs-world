@@ -289,6 +289,47 @@ function makeLineSegments2ForAllBoundaries(
 }
 
 /**
+ * Creates line segments for all boundaries in the tectonic system colored by their type.
+ * @param tectonicSystem The tectonic system containing all boundaries
+ * @param lines The LineSegments2 object to populate
+ * @param useRawType If true, use rawType; otherwise use refinedType
+ */
+function makeLineSegments2ForAllBoundariesByType(
+  tectonicSystem: TectonicSystem,
+  lines: LineSegments2,
+  useRawType: boolean = false
+): void {
+  const positions = new Array<number>();
+  const colors = new Array<number>();
+
+  const offsetFactor = 0.001;
+
+  for (const boundary of tectonicSystem.boundaries) {
+    for (const bEdge of boundary.boundaryEdges) {
+      const vStart = bEdge.halfedge.vertex.position.clone();
+      const vEnd = bEdge.halfedge.next.vertex.position.clone();
+
+      vStart.multiplyScalar(1 + offsetFactor);
+      vEnd.multiplyScalar(1 + offsetFactor);
+
+      positions.push(vStart.x, vStart.y, vStart.z);
+      positions.push(vEnd.x, vEnd.y, vEnd.z);
+
+      const edgeType = useRawType ? bEdge.rawType : bEdge.refinedType;
+      const color = BOUNDARY_COLORS[edgeType];
+      colors.push(color[0], color[1], color[2]);
+      colors.push(color[0], color[1], color[2]);
+    }
+  }
+
+  lines.geometry.dispose();
+  lines.geometry = new LineSegmentsGeometry();
+  lines.geometry.setPositions(positions);
+  lines.geometry.setColors(colors);
+  lines.computeLineDistances();
+}
+
+/**
  * Creates line segments for neighbor tiles on the same plate.
  * Each neighbor tile's edges are displayed in a distinct color.
  * @param tile The source tile
@@ -389,5 +430,6 @@ export {
   makeLineSegments2ForTileMotionVec,
   makeLineSegments2FromBoundaryGradient,
   makeLineSegments2ForAllBoundaries,
+  makeLineSegments2ForAllBoundariesByType,
   makeLineSegments2ForNeighborTilesInPlate
 };

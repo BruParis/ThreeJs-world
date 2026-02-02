@@ -183,7 +183,8 @@ export class GUIManager {
       .name('Display Mode')
       .onChange((value: BoundaryDisplayMode) => {
         this.interactionHandler.setBoundaryDisplayMode(value);
-        // Refresh the boundary display with the new mode
+        // Refresh both all boundaries and selected boundary with the new mode
+        this.tectonicManager.refreshAllBoundariesDisplay(value);
         this.visualizationManager.refreshBoundaryDisplay(value);
       });
 

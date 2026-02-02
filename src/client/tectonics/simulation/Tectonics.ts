@@ -513,7 +513,7 @@ function computePlateDivergentRatio(plate: Plate, tectonicSystem: TectonicSystem
  * @param tectonicSystem The tectonic system to categorize
  * @param continentalRatio Target ratio of continental area (default 0.3 = 30%)
  */
-function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: number = 0.5): void {
+function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: number = 0.4): void {
   // Compute total area
   let totalArea = 0;
   for (const plate of tectonicSystem.plates) {
