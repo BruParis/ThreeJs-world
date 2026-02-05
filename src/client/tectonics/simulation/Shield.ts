@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Tile, Plate, PlateCategory, GeologicalType, TectonicSystem } from '../data/Plate';
+import { Tile, Plate, PlateCategory, GeologicalType, TectonicSystem, PlateBoundary, BoundaryEdge } from '../data/Plate';
 import { getAreaDecile, getNeighborTilesInPlate, getUnassignedTiles } from './GeologyUtils';
 
 // ============================================================================
@@ -22,7 +22,7 @@ const SHIELD_CONFIG = {
   // Diffusion - area-based limits (fraction of plate area)
   DIRECTION_WEIGHT: 0.1,           // How much direction affects probability
   DIRECTION_DRIFT: 0.2,            // How much direction can change per step
-  TARGET_AREA_RATIO: [0.4, 0.6] as [number, number],  // 40%-60% of plate area
+  TARGET_AREA_RATIO: [0.5, 0.7] as [number, number],  // 40%-60% of plate area
 
   // Area-based probability: probability decreases as we approach target area
   // P = BASE_PROB * (1 - (accumulatedArea / targetArea))^DECAY_EXPONENT
@@ -56,6 +56,271 @@ const PLATFORM_CONFIG = {
   // Minimum shield/platform neighbors for UNKNOWN tiles to be included
   MIN_CRATON_NEIGHBORS: 3,
 };
+
+// ============================================================================
+// Continental Margin Refinement Configuration
+// ============================================================================
+
+// Earth radius for distance conversions (km to unit sphere)
+const EARTH_RADIUS_KM = 6371;
+
+/**
+ * Configuration for refining Shield/Platform near oceanic boundaries.
+ * Cratons (Shield/Platform) rarely extend to continental margins.
+ * This refinement re-assigns Shield/Platform near oceanic boundaries to UNKNOWN.
+ */
+const MARGIN_REFINEMENT_CONFIG = {
+  // Probability to initiate a re-assignment zone when encountering Shield/Platform
+  REASSIGNMENT_PROBABILITY: 0.6,
+
+  // Along-boundary extent of re-assignment zone (km)
+  ALONG_BOUNDARY_MIN_KM: 700,
+  ALONG_BOUNDARY_MAX_KM: 2000,
+
+  // Inland extent of re-assignment zone (km)
+  INLAND_WIDTH_MIN_KM: 100,
+  INLAND_WIDTH_MAX_KM: 300,
+};
+
+/**
+ * Converts kilometers to unit sphere distance (arc length on radius 1 sphere).
+ */
+function kmToUnitSphere(km: number): number {
+  return km / EARTH_RADIUS_KM;
+}
+
+// ============================================================================
+// Continental Margin Refinement
+// ============================================================================
+
+/**
+ * Finds boundaries between a continental plate and oceanic plates.
+ */
+function findOceanicBoundaries(plate: Plate, tectonicSystem: TectonicSystem): PlateBoundary[] {
+  const oceanicBoundaries: PlateBoundary[] = [];
+
+  for (const boundary of tectonicSystem.boundaries) {
+    // Check if this boundary involves our plate and an oceanic plate
+    const isPlateInvolved = boundary.plateA === plate || boundary.plateB === plate;
+    if (!isPlateInvolved) continue;
+
+    const otherPlate = boundary.plateA === plate ? boundary.plateB : boundary.plateA;
+    if (otherPlate.category === PlateCategory.OCEANIC) {
+      oceanicBoundaries.push(boundary);
+    }
+  }
+
+  return oceanicBoundaries;
+}
+
+/**
+ * Gets the tile on the continental plate side of a boundary edge.
+ */
+function getTileOnPlateSide(boundaryEdge: BoundaryEdge, plate: Plate, tectonicSystem: TectonicSystem): Tile | null {
+  const tile = tectonicSystem.edge2TileMap.get(boundaryEdge.halfedge);
+  if (tile && tile.plate === plate) {
+    return tile;
+  }
+
+  const twinTile = tectonicSystem.edge2TileMap.get(boundaryEdge.halfedge.twin);
+  if (twinTile && twinTile.plate === plate) {
+    return twinTile;
+  }
+
+  return null;
+}
+
+/**
+ * Expands re-assignment inland from boundary tiles using BFS.
+ * Only re-assigns Shield and Platform tiles to UNKNOWN.
+ * @param startTiles - Tiles along the boundary to start from
+ * @param maxInlandDistance - Maximum inland distance (unit sphere)
+ * @param tectonicSystem - The tectonic system
+ * @returns Number of tiles re-assigned
+ */
+function expandReassignmentInland(
+  startTiles: Set<Tile>,
+  maxInlandDistance: number,
+  tectonicSystem: TectonicSystem
+): number {
+  let reassignedCount = 0;
+
+  // Track visited tiles and their distances
+  const visited = new Set<Tile>();
+  const tileDistances = new Map<Tile, number>();
+
+  // Initialize with boundary tiles (distance 0)
+  for (const tile of startTiles) {
+    visited.add(tile);
+    tileDistances.set(tile, 0);
+
+    // Re-assign if Shield or Platform
+    if (tile.geologicalType === GeologicalType.SHIELD ||
+        tile.geologicalType === GeologicalType.PLATFORM) {
+      tile.geologicalType = GeologicalType.UNKNOWN;
+      reassignedCount++;
+    }
+  }
+
+  // BFS to expand inland
+  let wave = Array.from(startTiles);
+
+  while (wave.length > 0) {
+    const nextWave: Tile[] = [];
+
+    for (const currentTile of wave) {
+      const currentDistance = tileDistances.get(currentTile) || 0;
+
+      // Get neighbors within the same plate
+      const neighbors = getNeighborTilesInPlate(currentTile, tectonicSystem);
+
+      for (const neighbor of neighbors) {
+        if (visited.has(neighbor)) continue;
+
+        // Calculate distance from current tile to neighbor
+        const stepDistance = currentTile.centroid.distanceTo(neighbor.centroid);
+        const neighborDistance = currentDistance + stepDistance;
+
+        // Check if within max inland distance
+        if (neighborDistance > maxInlandDistance) continue;
+
+        visited.add(neighbor);
+        tileDistances.set(neighbor, neighborDistance);
+
+        // Re-assign if Shield or Platform
+        if (neighbor.geologicalType === GeologicalType.SHIELD ||
+            neighbor.geologicalType === GeologicalType.PLATFORM) {
+          neighbor.geologicalType = GeologicalType.UNKNOWN;
+          reassignedCount++;
+        }
+
+        nextWave.push(neighbor);
+      }
+    }
+
+    wave = nextWave;
+  }
+
+  return reassignedCount;
+}
+
+/**
+ * Refines Shield and Platform assignments near oceanic boundaries.
+ * For each boundary with an oceanic plate, iterates along the boundary
+ * and probabilistically creates re-assignment zones that extend inland.
+ * When choosing NOT to re-assign, skips along the boundary for the same distance range.
+ */
+function refineMarginGeology(plate: Plate, tectonicSystem: TectonicSystem): number {
+  const oceanicBoundaries = findOceanicBoundaries(plate, tectonicSystem);
+  if (oceanicBoundaries.length === 0) {
+    return 0;
+  }
+
+  let totalReassigned = 0;
+
+  for (const boundary of oceanicBoundaries) {
+    // Track distance along boundary
+    let boundaryTraveledDistance = 0;
+    let lastEdgePosition: THREE.Vector3 | null = null;
+
+    // State for current re-assignment zone
+    let inReassignmentZone = false;
+    let zoneTargetAlongDistance = 0;
+    let zoneInlandWidth = 0;
+    let zoneBoundaryTiles = new Set<Tile>();
+    let zoneStartDistance = 0;
+
+    // State for skip zone (when we decided NOT to re-assign)
+    let inSkipZone = false;
+    let skipTargetDistance = 0;
+    let skipStartDistance = 0;
+
+    // Iterate along boundary from one end to the other
+    for (const boundaryEdge of boundary.iterateEdges()) {
+      // Compute edge midpoint for distance calculation
+      const edgeMidpoint = boundaryEdge.halfedge.vertex.position.clone()
+        .add(boundaryEdge.halfedge.twin.vertex.position)
+        .multiplyScalar(0.5)
+        .normalize();
+
+      // Update traveled distance
+      if (lastEdgePosition) {
+        boundaryTraveledDistance += lastEdgePosition.distanceTo(edgeMidpoint);
+      }
+      lastEdgePosition = edgeMidpoint;
+
+      // Get the tile on the continental plate side
+      const tile = getTileOnPlateSide(boundaryEdge, plate, tectonicSystem);
+      if (!tile) continue;
+
+      // Check if tile is Shield or Platform
+      const isCratonic = tile.geologicalType === GeologicalType.SHIELD ||
+                         tile.geologicalType === GeologicalType.PLATFORM;
+
+      if (inReassignmentZone) {
+        // Continue accumulating tiles in the zone
+        zoneBoundaryTiles.add(tile);
+
+        // Check if zone should end (exceeded target along-boundary distance)
+        const zoneDistance = boundaryTraveledDistance - zoneStartDistance;
+        if (zoneDistance >= zoneTargetAlongDistance) {
+          // Finalize zone: expand inland and re-assign
+          totalReassigned += expandReassignmentInland(
+            zoneBoundaryTiles,
+            zoneInlandWidth,
+            tectonicSystem
+          );
+
+          // Reset zone state
+          inReassignmentZone = false;
+          zoneBoundaryTiles = new Set<Tile>();
+        }
+      } else if (inSkipZone) {
+        // Check if skip zone should end
+        const skipDistance = boundaryTraveledDistance - skipStartDistance;
+        if (skipDistance >= skipTargetDistance) {
+          inSkipZone = false;
+        }
+        // Otherwise, just continue skipping (do nothing)
+      } else if (isCratonic) {
+        // Potentially start a new re-assignment zone or skip zone
+        const minAlong = kmToUnitSphere(MARGIN_REFINEMENT_CONFIG.ALONG_BOUNDARY_MIN_KM);
+        const maxAlong = kmToUnitSphere(MARGIN_REFINEMENT_CONFIG.ALONG_BOUNDARY_MAX_KM);
+        const alongDistance = minAlong + Math.random() * (maxAlong - minAlong);
+
+        if (Math.random() < MARGIN_REFINEMENT_CONFIG.REASSIGNMENT_PROBABILITY) {
+          // Start re-assignment zone
+          inReassignmentZone = true;
+          zoneStartDistance = boundaryTraveledDistance;
+          zoneTargetAlongDistance = alongDistance;
+
+          // Random inland width
+          const minInland = kmToUnitSphere(MARGIN_REFINEMENT_CONFIG.INLAND_WIDTH_MIN_KM);
+          const maxInland = kmToUnitSphere(MARGIN_REFINEMENT_CONFIG.INLAND_WIDTH_MAX_KM);
+          zoneInlandWidth = minInland + Math.random() * (maxInland - minInland);
+
+          zoneBoundaryTiles.add(tile);
+        } else {
+          // Start skip zone (same distance range as re-assignment)
+          inSkipZone = true;
+          skipStartDistance = boundaryTraveledDistance;
+          skipTargetDistance = alongDistance;
+        }
+      }
+    }
+
+    // Handle any remaining zone at the end of the boundary
+    if (inReassignmentZone && zoneBoundaryTiles.size > 0) {
+      totalReassigned += expandReassignmentInland(
+        zoneBoundaryTiles,
+        zoneInlandWidth,
+        tectonicSystem
+      );
+    }
+  }
+
+  return totalReassigned;
+}
 
 // ============================================================================
 // Shield Nuclei Count
@@ -502,7 +767,7 @@ export function assignShieldZones(tectonicSystem: TectonicSystem): void {
     createShieldZonesForPlate(plate, tectonicSystem);
   }
 
-  // Count shield and platform tiles
+  // Count shield and platform tiles before refinement
   let totalShieldTiles = 0;
   let totalPlatformTiles = 0;
   for (const plate of tectonicSystem.plates) {
@@ -516,4 +781,33 @@ export function assignShieldZones(tectonicSystem: TectonicSystem): void {
   }
 
   console.log(`Assigned SHIELD to ${totalShieldTiles} tiles, PLATFORM to ${totalPlatformTiles} tiles`);
+
+  // Refine margin geology: re-assign Shield/Platform near oceanic boundaries to UNKNOWN
+  // This reflects the geological reality that cratons rarely extend to continental margins
+  let totalMarginReassigned = 0;
+  for (const plate of tectonicSystem.plates) {
+    if (plate.category !== PlateCategory.CONTINENTAL) {
+      continue;
+    }
+
+    totalMarginReassigned += refineMarginGeology(plate, tectonicSystem);
+  }
+
+  if (totalMarginReassigned > 0) {
+    // Recount after refinement
+    let refinedShieldTiles = 0;
+    let refinedPlatformTiles = 0;
+    for (const plate of tectonicSystem.plates) {
+      for (const tile of plate.tiles) {
+        if (tile.geologicalType === GeologicalType.SHIELD) {
+          refinedShieldTiles++;
+        } else if (tile.geologicalType === GeologicalType.PLATFORM) {
+          refinedPlatformTiles++;
+        }
+      }
+    }
+
+    console.log(`Margin refinement: re-assigned ${totalMarginReassigned} tiles from Shield/Platform to UNKNOWN`);
+    console.log(`After refinement: SHIELD ${refinedShieldTiles} tiles, PLATFORM ${refinedPlatformTiles} tiles`);
+  }
 }
