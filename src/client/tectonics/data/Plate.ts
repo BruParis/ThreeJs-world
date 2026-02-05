@@ -171,10 +171,10 @@ export class Plate {
     }
   }
 
-  constructor(seedTile: Tile, category: PlateCategory = PlateCategory.UNKNOWN) {
+  constructor(system: TectonicSystem, seedTile: Tile, category: PlateCategory = PlateCategory.UNKNOWN) {
 
     this.tiles = new Set<Tile>();
-    this.system = new TectonicSystem();
+    this.system = system;
 
     seedTile.plate = this;
     this.tiles.add(seedTile);
@@ -562,8 +562,6 @@ export class TectonicSystem {
   removePlate(plate: Plate): void {
 
     this.plates.delete(plate);
-
-    plate.system = new TectonicSystem();
 
     for (const tile of plate.tiles) {
       for (const he of tile.loop()) {

@@ -33,18 +33,19 @@ function buildAllTiles(halfedgeGraph: HalfedgeGraph): Map<Halfedge, Tile> {
 
 /**
  * Performs flood fill starting from seed tiles to create plates.
+ * @param system The tectonic system to add plates to
  * @param seeds Array of seed tiles, one for each plate
  * @param edge2TileMap Map from halfedges to tiles (built by buildAllTiles)
  * @returns Array of created plates
  */
-function floodFill(seeds: Tile[], edge2TileMap: Map<Halfedge, Tile>): Plate[] {
+function floodFill(system: TectonicSystem, seeds: Tile[], edge2TileMap: Map<Halfedge, Tile>): Plate[] {
   // Track which tiles have been claimed
   const claimedTiles = new Set<Tile>();
 
   // Create a plate for each seed tile
   const plates: Plate[] = seeds.map(seedTile => {
     claimedTiles.add(seedTile);
-    return new Plate(seedTile);
+    return new Plate(system, seedTile);
   });
 
   // Track unclaimed border tiles for each plate
@@ -307,7 +308,7 @@ function splitPlateFromTile(tectonicSystem: TectonicSystem, bridgeTile: Tile): v
   tectonicSystem.removePlate(currentPlate);
 
   // Perform flood fill with the first 2 seed tiles (split into 2 plates)
-  const newPlates = floodFill(seeds.slice(0, 2), plateTileEdge2TileMap);
+  const newPlates = floodFill(tectonicSystem, seeds.slice(0, 2), plateTileEdge2TileMap);
   newPlates.forEach(plate => tectonicSystem.plates.add(plate));
 
   tectonicSystem.update();

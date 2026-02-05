@@ -331,19 +331,21 @@ function _transferBorderTilesToDominantPlateLoop(tectonicSystem: TectonicSystem,
 function buildTectonicSystem(halfedgeGraph: HalfedgeGraph, numPlates: number): TectonicSystem {
   console.log("Building tectonic system with", numPlates, "plates.");
 
-  // 1) Build all tiles from the halfedge graph
+  // 1) Create the tectonic system first
+  const tectonicSystem = new TectonicSystem();
+
+  // 2) Build all tiles from the halfedge graph
   const edge2TileMap = buildAllTiles(halfedgeGraph);
   const allTiles = Array.from(new Set(edge2TileMap.values()));
   console.log(`Total tiles created: ${allTiles.length}`);
 
-  // 2) Select numPlates random tiles as seeds
+  // 3) Select numPlates random tiles as seeds
   const shuffled = allTiles.sort(() => 0.5 - Math.random());
   const seeds: Tile[] = shuffled.slice(0, numPlates);
 
-  // 3) Perform flood fill to assign tiles to plates
-  const plates = floodFill(seeds, edge2TileMap);
+  // 4) Perform flood fill to assign tiles to plates
+  const plates = floodFill(tectonicSystem, seeds, edge2TileMap);
 
-  const tectonicSystem = new TectonicSystem();
   plates.forEach(plate => tectonicSystem.plates.add(plate));
 
   tectonicSystem.update();
