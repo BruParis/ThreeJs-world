@@ -3,9 +3,7 @@ import { debounce } from 'lodash';
 import { VisualizationManager } from './VisualizationManager';
 import { TectonicManager } from './TectonicManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
-import { BOUNDARY_LEGEND, boundaryColorToHex } from '../visualization/BoundaryColors';
-import { PLATE_CATEGORY_LEGEND, plateCategoryColorToHex, PlateDisplayMode } from '../visualization/PlateColors';
-import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
+import { PlateDisplayMode } from '../visualization/PlateColors';
 
 const MIN_DEGREE = 0;
 const MAX_DEGREE = 6;
@@ -41,57 +39,36 @@ export class GUIManager {
    */
   private setupGUI(): void {
     const icoParams = this.visualizationManager.getIcoParams();
-    const icoDualParams = this.visualizationManager.getIcoDualParams();
     const icosahedronMaterial = this.visualizationManager.getIcosahedronMaterial();
     const dualMaterial = this.visualizationManager.getDualMaterial();
     const graphLinesMaterial = this.visualizationManager.getGraphLinesMaterial();
     const motionVecLinesMaterial = this.visualizationManager.getMotionVecLinesMaterial();
+    const neighborTilesLinesMaterial = this.visualizationManager.getNeighborTilesLinesMaterial();
 
-    // Subdivision degree control with debounce
+    // Top-level controls
     this.gui
       .add(icoParams, 'degree', MIN_DEGREE, MAX_DEGREE)
       .step(1)
-      .name('Subdivision degree')
+      .name('Subdivision')
       .onChange(debounce((value: number) => this.onResetCallback(value), 300));
 
-    // Selection mode control
     this.gui
       .add({ selectionMode: this.interactionHandler.getSelectionMode() }, 'selectionMode')
-      .name('Selection Mode')
-      .onChange((value: boolean) => {
-        this.interactionHandler.setSelectionMode(value);
-      });
+      .name('Selection')
+      .onChange((value: boolean) => this.interactionHandler.setSelectionMode(value));
 
-    // Geometry folder (contains Icosahedron, Dual Graph, Dual Mesh)
-    const geometryGui = this.gui.addFolder('Geometry');
+    // View - consolidated visibility toggles
+    const viewGui = this.gui.addFolder('View');
+    viewGui.add(dualMaterial, 'visible').name('Dual Mesh');
+    viewGui.add(dualMaterial, 'wireframe').name('Wireframe');
+    viewGui.add(icosahedronMaterial, 'visible').name('Icosahedron');
+    viewGui.add(graphLinesMaterial, 'visible').name('Graph Lines');
+    viewGui.add(motionVecLinesMaterial, 'visible').name('Motion Vectors');
+    viewGui.add(neighborTilesLinesMaterial, 'visible').name('Neighbor Tiles');
 
-    // Icosahedron subfolder
-    const icoGui = geometryGui.addFolder('Icosahedron');
-    icoGui.add(icosahedronMaterial, 'visible').name('Visible');
-    icoGui.add(icosahedronMaterial, 'wireframe').name('Wireframe');
-    icoGui.add(icosahedronMaterial, 'vertexColors').name('Vertex Colors').onChange(() => {
-      icosahedronMaterial.needsUpdate = true;
-    });
-    icoGui.add(icoParams, 'numVertices').name('Num Vertices').listen();
-    icoGui.add(icoParams, 'numFaces').name('Num Faces').listen();
-    icoGui.add(icoParams, 'numHalfedges').name('Num Halfedges').listen();
-
-    // Dual Graph subfolder
-    const dualGui = geometryGui.addFolder('Dual Graph');
-    dualGui.add(graphLinesMaterial, 'visible').name('Visible');
-    dualGui.add(icoDualParams, 'pentagons').name('Num Pentagons').listen();
-    dualGui.add(icoDualParams, 'hexagons').name('Num Hexagons').listen();
-    dualGui.add(icoDualParams, 'heptagons').name('Num Heptagons').listen();
-
-    // Dual Mesh subfolder
-    const dualMeshGui = geometryGui.addFolder('Dual Mesh');
-    dualMeshGui.add(dualMaterial, 'visible').name('Visible');
-    dualMeshGui.add(dualMaterial, 'wireframe').name('Wireframe');
-    dualMeshGui.open();
-
-    // Perlin Noise subfolder
+    // Perlin Noise
     const noiseParams = { seed: 42, scale: 2.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
-    const perlinNoiseGui = geometryGui.addFolder('Perlin Noise');
+    const noiseGui = this.gui.addFolder('Perlin Noise');
 
     const regenerateNoise = debounce(() => {
       this.tectonicManager.generatePerlinNoise(
@@ -103,165 +80,60 @@ export class GUIManager {
       );
     }, 150);
 
-    perlinNoiseGui.add(noiseParams, 'seed', 0, 1000).step(1).name('Seed').onChange(regenerateNoise);
-    perlinNoiseGui.add(noiseParams, 'scale', 0.5, 10.0).step(0.1).name('Scale').onChange(regenerateNoise);
-    perlinNoiseGui.add(noiseParams, 'octaves', 1, 8).step(1).name('Octaves').onChange(regenerateNoise);
-    perlinNoiseGui.add(noiseParams, 'persistence', 0.1, 1.0).step(0.05).name('Persistence').onChange(regenerateNoise);
-    perlinNoiseGui.add(noiseParams, 'lacunarity', 1.0, 4.0).step(0.1).name('Lacunarity').onChange(regenerateNoise);
-    perlinNoiseGui
+    noiseGui
       .add({ visible: this.tectonicManager.isNoiseDisplayEnabled() }, 'visible')
-      .name('Visible')
-      .onChange((value: boolean) => {
-        this.tectonicManager.setNoiseDisplayEnabled(value);
-      });
+      .name('Show')
+      .onChange((value: boolean) => this.tectonicManager.setNoiseDisplayEnabled(value));
+    noiseGui.add(noiseParams, 'seed', 0, 1000).step(1).name('Seed').onChange(regenerateNoise);
+    noiseGui.add(noiseParams, 'scale', 0.5, 10.0).step(0.1).name('Scale').onChange(regenerateNoise);
+    noiseGui.add(noiseParams, 'octaves', 1, 8).step(1).name('Octaves').onChange(regenerateNoise);
+    noiseGui.add(noiseParams, 'persistence', 0.1, 1.0).step(0.05).name('Persist.').onChange(regenerateNoise);
+    noiseGui.add(noiseParams, 'lacunarity', 1.0, 4.0).step(0.1).name('Lacunar.').onChange(regenerateNoise);
 
-    // Tectonic Plates folder
-    const tectonicGui = this.gui.addFolder("Tectonic");
+    // Tectonic
+    const tectonicGui = this.gui.addFolder('Tectonic');
     tectonicGui
-      .add(
-        {
-          rebuild: () => {
-            this.tectonicManager.rebuildTectonicPlates();
-            this.updateNetRotationDisplay();
-          }
-        },
-        'rebuild'
-      )
-      .name('Rebuild Plates');
+      .add({ rebuild: () => { this.tectonicManager.rebuildTectonicPlates(); this.updateNetRotationDisplay(); } }, 'rebuild')
+      .name('Rebuild');
     tectonicGui
-      .add({ showBorderTiles: false }, 'showBorderTiles')
-      .name('Show Border Tiles')
-      .onChange((value: boolean) => {
-        if (value) {
-          this.tectonicManager.showBorderTiles();
-        } else {
-          this.tectonicManager.colorTectonicSystem(false);
-        }
-      });
-    tectonicGui.add(motionVecLinesMaterial, 'visible').name('Show Motion');
-
-    // Plate subfolder with category display
-    const plateGui = tectonicGui.addFolder('Plate');
-
-    // Add plate display mode selector
-    plateGui
-      .add(
-        { plateDisplay: this.tectonicManager.getPlateDisplayMode() },
-        'plateDisplay',
-        {
-          'None': PlateDisplayMode.NONE,
-          'Category': PlateDisplayMode.CATEGORY
-        }
-      )
-      .name('Display Mode')
-      .onChange((value: PlateDisplayMode) => {
-        this.tectonicManager.setPlateDisplayMode(value);
-      });
-
-    // Add plate category color legend
-    const plateLegendColors: Record<string, number> = {};
-    for (const entry of PLATE_CATEGORY_LEGEND) {
-      plateLegendColors[entry.label] = plateCategoryColorToHex(entry.category);
-    }
-
-    for (const entry of PLATE_CATEGORY_LEGEND) {
-      const controller = plateGui.addColor(plateLegendColors, entry.label);
-      // Make the color read-only by resetting on change
-      controller.onChange(() => {
-        plateLegendColors[entry.label] = plateCategoryColorToHex(entry.category);
-        controller.updateDisplay();
-      });
-    }
-
-    plateGui.open();
-
-    // Tiles subfolder for debug visualization
-    const tilesGui = tectonicGui.addFolder('Tiles');
-    const neighborTilesLinesMaterial = this.visualizationManager.getNeighborTilesLinesMaterial();
-
-    tilesGui
-      .add(neighborTilesLinesMaterial, 'visible')
-      .name('Show neighbour plate tiles');
-
-
-    // Net Rotation subfolder (should be ~0 after zero net rotation correction)
-    const netRotationGui = plateGui.addFolder('Net Rotation');
-    netRotationGui.add(this.netRotationParams, 'x').name('X').listen();
-    netRotationGui.add(this.netRotationParams, 'y').name('Y').listen();
-    netRotationGui.add(this.netRotationParams, 'z').name('Z').listen();
-    netRotationGui.add(this.netRotationParams, 'magnitude').name('Magnitude').listen();
-
-    // Boundary Display subfolder with legend
-    const boundaryGui = tectonicGui.addFolder('Boundary');
-
-    // Add boundary display mode selector
-    boundaryGui
-      .add(
-        { boundaryDisplay: this.interactionHandler.getBoundaryDisplayMode() },
-        'boundaryDisplay',
-        {
-          'Raw Type': BoundaryDisplayMode.RAW_TYPE,
-          'Refined Type': BoundaryDisplayMode.REFINED_TYPE,
-          'Iteration': BoundaryDisplayMode.ITERATION
-        }
-      )
-      .name('Display Mode')
+      .add({ plateDisplay: this.tectonicManager.getPlateDisplayMode() }, 'plateDisplay',
+        { 'None': PlateDisplayMode.NONE, 'Category': PlateDisplayMode.CATEGORY })
+      .name('Plate Display')
+      .onChange((value: PlateDisplayMode) => this.tectonicManager.setPlateDisplayMode(value));
+    tectonicGui
+      .add({ boundaryDisplay: this.interactionHandler.getBoundaryDisplayMode() }, 'boundaryDisplay',
+        { 'Raw': BoundaryDisplayMode.RAW_TYPE, 'Refined': BoundaryDisplayMode.REFINED_TYPE, 'Iteration': BoundaryDisplayMode.ITERATION })
+      .name('Boundary')
       .onChange((value: BoundaryDisplayMode) => {
         this.interactionHandler.setBoundaryDisplayMode(value);
-        // Refresh both all boundaries and selected boundary with the new mode
         this.tectonicManager.refreshAllBoundariesDisplay(value);
         this.visualizationManager.refreshBoundaryDisplay(value);
       });
-
-    // Add color legend entries
-    const legendColors: Record<string, number> = {};
-    for (const entry of BOUNDARY_LEGEND) {
-      legendColors[entry.label] = boundaryColorToHex(entry.type);
-    }
-
-    for (const entry of BOUNDARY_LEGEND) {
-      const controller = boundaryGui.addColor(legendColors, entry.label);
-      // Make the color read-only by resetting on change
-      controller.onChange(() => {
-        legendColors[entry.label] = boundaryColorToHex(entry.type);
-        controller.updateDisplay();
-      });
-    }
-
-    // Geology subfolder with toggle and color legend
-    const geologyGui = this.gui.addFolder("Geology");
-
-    // Add geology display toggle
-    geologyGui
-      .add({ showGeology: this.tectonicManager.isGeologyDisplayEnabled() }, 'showGeology')
-      .name('Show Types')
+    tectonicGui
+      .add({ showBorder: false }, 'showBorder')
+      .name('Border Tiles')
       .onChange((value: boolean) => {
-        this.tectonicManager.setGeologyDisplayEnabled(value);
+        if (value) this.tectonicManager.showBorderTiles();
+        else this.tectonicManager.colorTectonicSystem(false);
       });
+    tectonicGui.open();
 
+    // Geology
+    const geologyGui = this.gui.addFolder('Geology');
     geologyGui
-      .add({ recomputeOrogeny: this.tectonicManager.isRecomputeOrogenyMode() }, 'recomputeOrogeny')
-      .name('Reset orogeny')
-      .onChange((value: boolean) => {
-        this.tectonicManager.setRecomputeOrogenyMode(value);
-      });
+      .add({ show: this.tectonicManager.isGeologyDisplayEnabled() }, 'show')
+      .name('Show')
+      .onChange((value: boolean) => this.tectonicManager.setGeologyDisplayEnabled(value));
+    geologyGui
+      .add({ reset: this.tectonicManager.isRecomputeOrogenyMode() }, 'reset')
+      .name('Reset Orogeny')
+      .onChange((value: boolean) => this.tectonicManager.setRecomputeOrogenyMode(value));
 
-    // Add geology type color legend (Orogen, Ancient Orogen, Shield)
-    const geoLegendColors: Record<string, number> = {};
-    for (const entry of GEOLOGY_TYPE_LEGEND) {
-      geoLegendColors[entry.label] = geologyTypeColorToHex(entry.type);
-    }
-
-    for (const entry of GEOLOGY_TYPE_LEGEND) {
-      const controller = geologyGui.addColor(geoLegendColors, entry.label);
-      // Make the color read-only by resetting on change
-      controller.onChange(() => {
-        geoLegendColors[entry.label] = geologyTypeColorToHex(entry.type);
-        controller.updateDisplay();
-      });
-    }
-
-    geologyGui.open();
+    // Debug/Stats (collapsed by default)
+    const statsGui = this.gui.addFolder('Stats');
+    statsGui.add(icoParams, 'numVertices').name('Vertices').listen();
+    statsGui.add(icoParams, 'numFaces').name('Faces').listen();
+    statsGui.add(this.netRotationParams, 'magnitude').name('Net Rotation').listen();
   }
 
   /**
