@@ -2,6 +2,63 @@ import { Halfedge } from '@core/Halfedge';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
 import { Tile, Plate, TectonicSystem, PlateBoundary, BoundaryEdge, BoundaryType } from './Plate';
 
+// Helper class for managing a set of items with O(1) add, delete, and random access.
+class RandomSet<T> {
+  private items: T[] = [];
+  private indices: Map<T, number> = new Map();
+
+  add(item: T): boolean {
+    if (this.indices.has(item)) {
+      return false; // Already exists
+    }
+    this.indices.set(item, this.items.length);
+    this.items.push(item);
+    return true;
+  }
+
+  delete(item: T): boolean {
+    const index = this.indices.get(item);
+    if (index === undefined) {
+      return false; // Doesn't exist
+    }
+
+    // Swap with last element
+    const lastItem = this.items[this.items.length - 1];
+    this.items[index] = lastItem;
+    this.indices.set(lastItem, index);
+
+    // Remove last element
+    this.items.pop();
+    this.indices.delete(item);
+    return true;
+  }
+
+  has(item: T): boolean {
+    return this.indices.has(item);
+  }
+
+  random(): T | undefined {
+    if (this.items.length === 0) {
+      return undefined;
+    }
+    const randomIndex = Math.floor(Math.random() * this.items.length);
+    return this.items[randomIndex];
+  }
+
+  get size(): number {
+    return this.items.length;
+  }
+
+  clear(): void {
+    this.items = [];
+    this.indices.clear();
+  }
+
+  *[Symbol.iterator]() {
+    yield* this.items;
+  }
+}
+
 /**
  * Builds all tiles from a halfedge graph.
  * Each unique face loop in the graph becomes a Tile.
@@ -50,9 +107,9 @@ function floodFill(system: TectonicSystem, seeds: Tile[], edge2TileMap: Map<Half
 
   // Track unclaimed border tiles for each plate
   // (border tiles whose twin tiles are not yet claimed)
-  const plateUnclaimedBorderTilesMap = new Map<number, Set<Tile>>();
+  const plateUnclaimedBorderTilesMap = new Map<number, RandomSet<Tile>>();
   for (const plate of plates) {
-    const unclaimedBorderTiles = new Set<Tile>();
+    const unclaimedBorderTiles = new RandomSet<Tile>();
 
     // Find neighboring tiles of the seed tile that are not yet claimed
     for (const he of plate.borderEdge2TileMap.keys()) {
@@ -86,8 +143,11 @@ function floodFill(system: TectonicSystem, seeds: Tile[], edge2TileMap: Map<Half
 
       // Select a random unclaimed border tile
       const randomIndex = Math.floor(Math.random() * unclaimedBorderTiles.size);
-      const borderTilesArray = Array.from(unclaimedBorderTiles);
-      const targetTile = borderTilesArray[randomIndex];
+      const targetTile = unclaimedBorderTiles.random();
+      if (!targetTile) {
+        console.error("Unexpected empty unclaimed border tiles set for plate", plate.id);
+        continue;
+      }
 
       // Check if this tile was claimed by another plate since we last checked
       if (claimedTiles.has(targetTile)) {

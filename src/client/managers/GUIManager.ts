@@ -89,6 +89,32 @@ export class GUIManager {
     dualMeshGui.add(dualMaterial, 'wireframe').name('Wireframe');
     dualMeshGui.open();
 
+    // Perlin Noise subfolder
+    const noiseParams = { seed: 42, scale: 2.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
+    const perlinNoiseGui = geometryGui.addFolder('Perlin Noise');
+
+    const regenerateNoise = debounce(() => {
+      this.tectonicManager.generatePerlinNoise(
+        noiseParams.seed,
+        noiseParams.scale,
+        noiseParams.octaves,
+        noiseParams.persistence,
+        noiseParams.lacunarity
+      );
+    }, 150);
+
+    perlinNoiseGui.add(noiseParams, 'seed', 0, 1000).step(1).name('Seed').onChange(regenerateNoise);
+    perlinNoiseGui.add(noiseParams, 'scale', 0.5, 10.0).step(0.1).name('Scale').onChange(regenerateNoise);
+    perlinNoiseGui.add(noiseParams, 'octaves', 1, 8).step(1).name('Octaves').onChange(regenerateNoise);
+    perlinNoiseGui.add(noiseParams, 'persistence', 0.1, 1.0).step(0.05).name('Persistence').onChange(regenerateNoise);
+    perlinNoiseGui.add(noiseParams, 'lacunarity', 1.0, 4.0).step(0.1).name('Lacunarity').onChange(regenerateNoise);
+    perlinNoiseGui
+      .add({ visible: this.tectonicManager.isNoiseDisplayEnabled() }, 'visible')
+      .name('Visible')
+      .onChange((value: boolean) => {
+        this.tectonicManager.setNoiseDisplayEnabled(value);
+      });
+
     // Tectonic Plates folder
     const tectonicGui = this.gui.addFolder("Tectonic");
     tectonicGui
