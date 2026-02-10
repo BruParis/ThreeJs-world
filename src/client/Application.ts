@@ -1,6 +1,7 @@
 import { SceneManager } from './managers/SceneManager';
 import { VisualizationManager } from './managers/VisualizationManager';
 import { TectonicManager } from './managers/TectonicManager';
+import { NoiseManager } from './managers/NoiseManager';
 import { GUIManager } from './managers/GUIManager';
 import { InteractionHandler } from './handlers/InteractionHandler';
 import { AnimationController } from './controllers/AnimationController';
@@ -14,6 +15,7 @@ export class Application {
   private geometryBuilder: GeometryBuilder;
   private visualizationManager: VisualizationManager;
   private tectonicManager: TectonicManager;
+  private noiseManager: NoiseManager;
   private interactionHandler: InteractionHandler;
   private animationController: AnimationController;
   private guiManager: GUIManager;
@@ -24,6 +26,16 @@ export class Application {
     this.geometryBuilder = new GeometryBuilder();
     this.visualizationManager = new VisualizationManager(this.sceneManager);
     this.tectonicManager = new TectonicManager(this.visualizationManager, this.sceneManager);
+    this.noiseManager = new NoiseManager(this.visualizationManager, this.sceneManager);
+
+    // Wire up NoiseManager with TectonicManager
+    this.noiseManager.setOnNoiseDisplayChange(() => this.tectonicManager.refreshPlateDisplay());
+    this.noiseManager.setGetTiles(() => this.getAllTiles());
+    this.tectonicManager.setNoiseCallbacks(
+      () => this.noiseManager.isNoiseDisplayEnabled(),
+      () => this.noiseManager.colorByNoise()
+    );
+
     this.interactionHandler = new InteractionHandler(
       this.sceneManager,
       this.visualizationManager,
@@ -36,9 +48,23 @@ export class Application {
     this.guiManager = new GUIManager(
       this.visualizationManager,
       this.tectonicManager,
+      this.noiseManager,
       this.interactionHandler,
       (degree: number) => this.reset(degree)
     );
+  }
+
+  /**
+   * Returns an iterable of all tiles from the tectonic system.
+   */
+  private *getAllTiles() {
+    const tectonicSystem = this.tectonicManager.getTectonicSystem();
+    if (!tectonicSystem) return;
+    for (const plate of tectonicSystem.plates) {
+      for (const tile of plate.tiles) {
+        yield tile;
+      }
+    }
   }
 
   /**
@@ -95,6 +121,7 @@ export class Application {
     this.animationController.stop();
     this.interactionHandler.detachEventListeners();
     this.guiManager.dispose();
+    this.noiseManager.clear();
     this.tectonicManager.clear();
   }
 }

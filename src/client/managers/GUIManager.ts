@@ -2,6 +2,7 @@ import { GUI } from 'dat.gui';
 import { debounce } from 'lodash';
 import { VisualizationManager } from './VisualizationManager';
 import { TectonicManager } from './TectonicManager';
+import { NoiseManager } from './NoiseManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
 import { PlateDisplayMode } from '../visualization/PlateColors';
 
@@ -15,6 +16,7 @@ export class GUIManager {
   private gui: GUI;
   private visualizationManager: VisualizationManager;
   private tectonicManager: TectonicManager;
+  private noiseManager: NoiseManager;
   private interactionHandler: InteractionHandler;
   private onResetCallback: (degree: number) => void;
   private netRotationParams = { x: 0, y: 0, z: 0, magnitude: 0 };
@@ -22,11 +24,13 @@ export class GUIManager {
   constructor(
     visualizationManager: VisualizationManager,
     tectonicManager: TectonicManager,
+    noiseManager: NoiseManager,
     interactionHandler: InteractionHandler,
     onResetCallback: (degree: number) => void
   ) {
     this.visualizationManager = visualizationManager;
     this.tectonicManager = tectonicManager;
+    this.noiseManager = noiseManager;
     this.interactionHandler = interactionHandler;
     this.onResetCallback = onResetCallback;
 
@@ -71,7 +75,7 @@ export class GUIManager {
     const noiseGui = this.gui.addFolder('Perlin Noise');
 
     const regenerateNoise = debounce(() => {
-      this.tectonicManager.generatePerlinNoise(
+      this.noiseManager.generatePerlinNoise(
         noiseParams.seed,
         noiseParams.scale,
         noiseParams.octaves,
@@ -81,9 +85,13 @@ export class GUIManager {
     }, 150);
 
     noiseGui
-      .add({ visible: this.tectonicManager.isNoiseDisplayEnabled() }, 'visible')
+      .add({ visible: this.noiseManager.isNoiseDisplayEnabled() }, 'visible')
       .name('Show')
-      .onChange((value: boolean) => this.tectonicManager.setNoiseDisplayEnabled(value));
+      .onChange((value: boolean) => this.noiseManager.setNoiseDisplayEnabled(value));
+    noiseGui
+      .add({ gradient: this.noiseManager.isGradientDisplayEnabled() }, 'gradient')
+      .name('Gradient')
+      .onChange((value: boolean) => this.noiseManager.setGradientDisplayEnabled(value));
     noiseGui.add(noiseParams, 'seed', 0, 1000).step(1).name('Seed').onChange(regenerateNoise);
     noiseGui.add(noiseParams, 'scale', 0.5, 10.0).step(0.1).name('Scale').onChange(regenerateNoise);
     noiseGui.add(noiseParams, 'octaves', 1, 8).step(1).name('Octaves').onChange(regenerateNoise);

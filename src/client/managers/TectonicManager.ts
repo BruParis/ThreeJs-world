@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TectonicSystem, Tile, BoundaryType, GeologicalType, GeologicalIntensity } from '../tectonics/data/Plate';
+import { TectonicSystem, BoundaryType, GeologicalType, GeologicalIntensity } from '../tectonics/data/Plate';
 import { Halfedge } from '@core/Halfedge';
 import {
   buildTectonicSystem,
@@ -26,7 +26,6 @@ import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByT
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
 import { idToHSLColor, assignColorToTriangle } from '../utils/ColorUtils';
-import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 
 /**
  * Manages the tectonic plate system, including building, coloring, and plate operations.
@@ -39,13 +38,25 @@ export class TectonicManager {
   private netRotation: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
   private geologyDisplayEnabled: boolean = false;
   private recomputeOrogenyMode: boolean = false;
-  private noiseDisplayEnabled: boolean = false;
-  private noiseValues: Map<Tile, number> = new Map();
-  private perlinNoise: PerlinNoise3D | null = null;
+
+  // Callback for when noise display should be checked
+  private checkNoiseDisplayEnabled: (() => boolean) | null = null;
+  private applyNoiseColors: (() => void) | null = null;
 
   constructor(visualizationManager: VisualizationManager, sceneManager: SceneManager) {
     this.visualizationManager = visualizationManager;
     this.sceneManager = sceneManager;
+  }
+
+  /**
+   * Sets callbacks for noise display integration.
+   */
+  public setNoiseCallbacks(
+    checkNoiseDisplayEnabled: () => boolean,
+    applyNoiseColors: () => void
+  ): void {
+    this.checkNoiseDisplayEnabled = checkNoiseDisplayEnabled;
+    this.applyNoiseColors = applyNoiseColors;
   }
 
   /**
@@ -68,8 +79,10 @@ export class TectonicManager {
    */
   public refreshPlateDisplay(): void {
     // Noise display takes highest priority when enabled
-    if (this.noiseDisplayEnabled) {
-      this.colorTectonicSystemByNoise();
+    if (this.checkNoiseDisplayEnabled && this.checkNoiseDisplayEnabled()) {
+      if (this.applyNoiseColors) {
+        this.applyNoiseColors();
+      }
       return;
     }
 
@@ -310,113 +323,6 @@ export class TectonicManager {
         }
       }
     }
-  }
-
-  /**
-   * Generates Perlin noise values for all tiles based on their centroid positions.
-   * Uses FBM (Fractal Brownian Motion) for more natural-looking noise.
-   */
-  public generatePerlinNoise(
-    seed: number = 42,
-    scale: number = 2.0,
-    octaves: number = 4,
-    persistence: number = 0.5,
-    lacunarity: number = 2.0
-  ): void {
-    if (!this.tectonicSystem) {
-      console.warn('No tectonic plate system available for noise generation.');
-      return;
-    }
-
-    this.perlinNoise = new PerlinNoise3D(seed);
-    this.noiseValues.clear();
-
-    for (const plate of this.tectonicSystem.plates) {
-      for (const tile of plate.tiles) {
-        const pos = tile.centroid;
-        // Use FBM for more natural terrain-like noise
-        // Scale the position to control noise frequency
-        const noiseValue = this.perlinNoise.fbm(
-          pos.x * scale,
-          pos.y * scale,
-          pos.z * scale,
-          octaves,
-          persistence,
-          lacunarity
-        );
-        // Map from [-1, 1] to [0, 1]
-        const normalizedValue = (noiseValue + 1) / 2;
-        this.noiseValues.set(tile, normalizedValue);
-      }
-    }
-
-    console.log(`Generated Perlin noise for ${this.noiseValues.size} tiles.`);
-
-    // If noise display is enabled, refresh the visualization
-    if (this.noiseDisplayEnabled) {
-      this.colorTectonicSystemByNoise();
-    }
-  }
-
-  /**
-   * Colors the tectonic system by noise values (grayscale 0-1).
-   */
-  public colorTectonicSystemByNoise(): void {
-    const dualMesh = this.visualizationManager.getDualMesh();
-
-    if (!dualMesh) {
-      console.warn('No dual mesh available for coloring by noise.');
-      return;
-    }
-
-    if (!this.tectonicSystem) {
-      console.warn('No tectonic plate system available.');
-      return;
-    }
-
-    if (this.noiseValues.size === 0) {
-      console.warn('No noise values generated. Call generatePerlinNoise() first.');
-      return;
-    }
-
-    for (const plate of this.tectonicSystem.plates) {
-      for (const tile of plate.tiles) {
-        const noiseValue = this.noiseValues.get(tile) ?? 0.5;
-        // Grayscale color: same value for R, G, B
-        const noiseColor = new THREE.Color(noiseValue, noiseValue, noiseValue);
-
-        for (const auxHe of tile.loop()) {
-          const origFaceIdx = dualMesh.geometry.userData.halfedge2FaceMap.get(auxHe.id);
-          if (origFaceIdx !== undefined) {
-            assignColorToTriangle(dualMesh.geometry, origFaceIdx, noiseColor);
-          } else {
-            console.warn('No face found for halfedge id:', auxHe.id);
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Sets whether noise display is enabled and refreshes visualization.
-   */
-  public setNoiseDisplayEnabled(enabled: boolean): void {
-    this.noiseDisplayEnabled = enabled;
-    this.refreshPlateDisplay();
-  }
-
-  /**
-   * Gets whether noise display is enabled.
-   */
-  public isNoiseDisplayEnabled(): boolean {
-    return this.noiseDisplayEnabled;
-  }
-
-  /**
-   * Gets the noise value for a specific tile.
-   */
-  public getNoiseValue(tile: Tile): number | undefined {
-    return this.noiseValues.get(tile);
   }
 
   /**

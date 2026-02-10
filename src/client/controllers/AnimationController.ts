@@ -64,6 +64,7 @@ export class AnimationController {
     const boundaryLines = this.visualizationManager.getBoundaryLines();
     const allBoundariesLines = this.visualizationManager.getAllBoundariesLines();
     const neighborTilesLines = this.visualizationManager.getNeighborTilesLines();
+    const noiseGradientLines = this.visualizationManager.getNoiseGradientLines();
 
     if (icosahedron) {
       icosahedron.rotation.x += this.rotationSpeed;
@@ -108,6 +109,11 @@ export class AnimationController {
     if (dualMesh) {
       dualMesh.rotation.x += this.rotationSpeed;
       dualMesh.rotation.y += this.rotationSpeed;
+    }
+
+    if (noiseGradientLines) {
+      noiseGradientLines.rotation.x += this.rotationSpeed;
+      noiseGradientLines.rotation.y += this.rotationSpeed;
     }
   }
 

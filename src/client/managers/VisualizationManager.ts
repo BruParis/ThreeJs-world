@@ -40,6 +40,7 @@ export class VisualizationManager {
   private boundaryLinesMaterial: LineMaterial;
   private allBoundariesLinesMaterial: LineMaterial;
   private neighborTilesLinesMaterial: LineMaterial;
+  private noiseGradientLinesMaterial: LineMaterial;
 
   // Line segments
   private halfedgeGraphLines: LineSegments2;
@@ -49,6 +50,7 @@ export class VisualizationManager {
   private boundaryLines: LineSegments2;
   private allBoundariesLines: LineSegments2;
   private neighborTilesLines: LineSegments2;
+  private noiseGradientLines: LineSegments2;
 
   // Halfedge graphs
   private icoHalfedgeGraph: HalfedgeGraph;
@@ -155,6 +157,14 @@ export class VisualizationManager {
       visible: false,
     });
 
+    this.noiseGradientLinesMaterial = new LineMaterial({
+      linewidth: 2,
+      depthTest: true,
+      depthWrite: true,
+      vertexColors: true,
+      visible: true,
+    });
+
     // Initialize line segments
     this.halfedgeGraphLines = new LineSegments2(new LineSegmentsGeometry(), this.graphLinesMaterial);
     this.tileLines = new LineSegments2(new LineSegmentsGeometry(), this.tileLinesMaterial);
@@ -163,6 +173,7 @@ export class VisualizationManager {
     this.boundaryLines = new LineSegments2(new LineSegmentsGeometry(), this.boundaryLinesMaterial);
     this.allBoundariesLines = new LineSegments2(new LineSegmentsGeometry(), this.allBoundariesLinesMaterial);
     this.neighborTilesLines = new LineSegments2(new LineSegmentsGeometry(), this.neighborTilesLinesMaterial);
+    this.noiseGradientLines = new LineSegments2(new LineSegmentsGeometry(), this.noiseGradientLinesMaterial);
   }
 
   /**
@@ -678,6 +689,14 @@ export class VisualizationManager {
 
   public getNeighborTilesLinesMaterial(): LineMaterial {
     return this.neighborTilesLinesMaterial;
+  }
+
+  public getNoiseGradientLines(): LineSegments2 {
+    return this.noiseGradientLines;
+  }
+
+  public getNoiseGradientLinesMaterial(): LineMaterial {
+    return this.noiseGradientLinesMaterial;
   }
 
   public getIcoHalfedgeGraph(): HalfedgeGraph {
