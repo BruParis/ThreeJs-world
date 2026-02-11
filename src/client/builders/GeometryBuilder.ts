@@ -19,6 +19,7 @@ export interface GeometryBuildResult {
     numVertices: number;
     numFaces: number;
     numHalfedges: number;
+    numDualFaces: number;
     pentagons: number;
     hexagons: number;
     heptagons: number;
@@ -83,6 +84,7 @@ export class GeometryBuilder {
         numVertices: primalGraph.vertices.size,
         numFaces: primalGraph.faces.size,
         numHalfedges: primalGraph.halfedges.size,
+        numDualFaces: faceDistrib.dualFaces,
         pentagons: faceDistrib.pentagons,
         hexagons: faceDistrib.hexagons,
         heptagons: faceDistrib.heptagons

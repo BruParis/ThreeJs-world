@@ -140,8 +140,16 @@ export class GUIManager {
     // Debug/Stats (collapsed by default)
     const statsGui = this.gui.addFolder('Stats');
     statsGui.add(icoParams, 'numVertices').name('Vertices').listen();
-    statsGui.add(icoParams, 'numFaces').name('Faces').listen();
+    statsGui.add(icoParams, 'numFaces').name('Primal Faces').listen();
     statsGui.add(this.netRotationParams, 'magnitude').name('Net Rotation').listen();
+
+    // Face distribution subfolder
+    const icoDualParams = this.visualizationManager.getIcoDualParams();
+    const faceDistGui = statsGui.addFolder('Face distribution');
+    faceDistGui.add(icoDualParams, 'dualFaces').name('Dual Faces').listen();
+    faceDistGui.add(icoDualParams, 'pentagons').name('Pentagons').listen();
+    faceDistGui.add(icoDualParams, 'hexagons').name('Hexagons').listen();
+    faceDistGui.add(icoDualParams, 'heptagons').name('Heptagons').listen();
   }
 
   /**

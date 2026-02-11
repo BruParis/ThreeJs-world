@@ -74,6 +74,7 @@ export class VisualizationManager {
   };
 
   private icoDualParams = {
+    dualFaces: 0,
     pentagons: 0,
     hexagons: 0,
     heptagons: 0
@@ -191,6 +192,7 @@ export class VisualizationManager {
     numVertices: number;
     numFaces: number;
     numHalfedges: number;
+    numDualFaces: number;
     pentagons: number;
     hexagons: number;
     heptagons: number;
@@ -198,6 +200,7 @@ export class VisualizationManager {
     this.icoParams.numVertices = stats.numVertices;
     this.icoParams.numFaces = stats.numFaces;
     this.icoParams.numHalfedges = stats.numHalfedges;
+    this.icoDualParams.dualFaces = stats.numDualFaces;
     this.icoDualParams.pentagons = stats.pentagons;
     this.icoDualParams.hexagons = stats.hexagons;
     this.icoDualParams.heptagons = stats.heptagons;

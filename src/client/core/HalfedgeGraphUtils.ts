@@ -463,11 +463,13 @@ export class FaceDistribution {
   pentagons: number;
   hexagons: number;
   heptagons: number;
+  dualFaces: number;
 
   constructor(pentagons: number, hexagons: number, heptagons: number) {
     this.pentagons = pentagons;
     this.hexagons = hexagons;
     this.heptagons = heptagons;
+    this.dualFaces = pentagons + hexagons + heptagons;
   }
 }
 
