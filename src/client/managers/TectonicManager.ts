@@ -11,10 +11,7 @@ import {
   categorizePlates,
   assignGeologicalTypes
 } from '../tectonics/simulation/Tectonics';
-import {
-  initOrogenyAtBoundary,
-  runOrogenyPropagation
-} from '../tectonics/simulation/Geology';
+import { recomputeOrogenyForBoundary } from '../tectonics/simulation/Orogeny';
 import { PLATE_CATEGORY_COLORS, PlateDisplayMode } from '../visualization/PlateColors';
 import { getGeologicalColor } from '../visualization/GeologyColors';
 import {
@@ -581,18 +578,9 @@ export class TectonicManager {
       tile.geologicalIntensity = GeologicalIntensity.NONE;
     }
 
-    // Recompute orogeny for this boundary
-    const boundaryTiles = initOrogenyAtBoundary(boundary, this.tectonicSystem);
-
-    console.log(`[Recompute Orogeny] Found ${boundaryTiles.length} boundary tiles for propagation`);
-
-    // Log details about boundary tiles
-    for (const info of boundaryTiles) {
-      console.log(`[Recompute Orogeny] Boundary tile ${info.tile.id} in plate ${info.tile.plate.id} (${info.tile.plate.category}), amplitudeScale: ${info.amplitudeScale}`);
-    }
-
-    // Run propagation from these boundary tiles
-    runOrogenyPropagation(boundaryTiles, this.tectonicSystem);
+    // Recompute orogeny for this boundary using Perlin noise-based approach
+    const assignedCount = recomputeOrogenyForBoundary(boundary, this.tectonicSystem);
+    console.log(`[Recompute Orogeny] Assigned orogeny to ${assignedCount} tiles`);
 
     // Refresh display
     this.refreshPlateDisplay();

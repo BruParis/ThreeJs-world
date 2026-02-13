@@ -339,7 +339,6 @@ function relaxGraph(halfedgeGraph: HalfedgeGraph, shiftDampening: number = 0.7) 
       ).normalize();
 
       const currentDistToCentroid = vertex.position.distanceTo(faceCentroid);
-      // const distDiff = idealDistToCentroid - currentDistToCentroid;
       const distDiff = currentDistToCentroid - idealDistToCentroid;
       distDiffArray.push(distDiff);
 

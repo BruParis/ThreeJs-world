@@ -57,7 +57,8 @@ export class GeometryBuilder {
     const ico_build_time = performance.now();
 
     // Apply distortion and normalize
-    distortGraphLoop(primalGraph, verticesEdgeCountIdMap, 3, 0.5);
+    // distortGraphLoop(primalGraph, verticesEdgeCountIdMap, 3, 0.5);
+    distortGraphLoop(primalGraph, verticesEdgeCountIdMap, 1, 0.5);
     normalizeVertices(primalGraph);
 
     const distort_time = performance.now();

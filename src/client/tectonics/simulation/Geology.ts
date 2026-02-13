@@ -2,11 +2,6 @@ import { GeologicalType, GeologicalIntensity, TectonicSystem } from '../data/Pla
 import {
   assignOrogenyType,
   assignAncientOrogenyZones,
-  initOrogenyAtBoundary,
-  runOrogenyPropagation,
-  orogenyPropagationStep,
-  getContributionToNeighbor,
-  computeAverageContribution,
   PROPAGATION_CONFIG
 } from './Orogeny';
 import { assignShieldZones } from './Shield';
@@ -63,10 +58,5 @@ function assignGeologicalTypes(tectonicSystem: TectonicSystem): void {
 export {
   assignGeologicalTypes,
   assignOrogenyType,
-  initOrogenyAtBoundary,
-  runOrogenyPropagation,
-  orogenyPropagationStep,
-  getContributionToNeighbor,
-  computeAverageContribution,
   PROPAGATION_CONFIG
 };

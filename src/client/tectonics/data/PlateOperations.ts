@@ -237,7 +237,7 @@ function transferTileToPlate(tile: Tile, targetPlate: Plate): void {
 
   // 2) It should not cut the current plate in two (not a bridge tile)
   if (tile.isABridge()) {
-    console.warn("Tile cannot be transferred to target plate: it is a bridge tile.");
+    // console.warn("Tile cannot be transferred to target plate: it is a bridge tile.");
     return;
   }
 
