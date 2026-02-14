@@ -339,9 +339,30 @@ function buildTectonicSystem(halfedgeGraph: HalfedgeGraph, numPlates: number): T
   const allTiles = Array.from(new Set(edge2TileMap.values()));
   console.log(`Total tiles created: ${allTiles.length}`);
 
-  // 3) Select numPlates random tiles as seeds
-  const shuffled = allTiles.sort(() => 0.5 - Math.random());
-  const seeds: Tile[] = shuffled.slice(0, numPlates);
+  // 3) Select seeds: first 2 at poles, rest random
+  const seeds: Tile[] = [];
+
+  if (numPlates >= 2) {
+    // Find tile closest to north pole (highest Y centroid)
+    const northPoleTile = allTiles.reduce((best, tile) =>
+      tile.centroid.y > best.centroid.y ? tile : best
+    );
+    seeds.push(northPoleTile);
+
+    // Find tile closest to south pole (lowest Y centroid)
+    const southPoleTile = allTiles.reduce((best, tile) =>
+      tile.centroid.y < best.centroid.y ? tile : best
+    );
+    seeds.push(southPoleTile);
+
+    // Fill remaining seeds with random tiles (excluding pole tiles)
+    const remainingTiles = allTiles.filter(t => t !== northPoleTile && t !== southPoleTile);
+    const shuffled = remainingTiles.sort(() => 0.5 - Math.random());
+    seeds.push(...shuffled.slice(0, numPlates - 2));
+  } else if (numPlates === 1) {
+    // Single plate: just pick any tile
+    seeds.push(allTiles[0]);
+  }
 
   // 4) Perform flood fill to assign tiles to plates
   const plates = floodFill(tectonicSystem, seeds, edge2TileMap);
