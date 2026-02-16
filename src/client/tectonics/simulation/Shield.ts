@@ -10,14 +10,21 @@ import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 /**
  * Configuration for shield zones (ancient cratonic cores).
  * Uses Perlin noise to determine which tiles become shield.
+ * Favors tiles closer to plate centroid.
  */
 const SHIELD_CONFIG = {
   // Target area coverage (fraction of plate area that becomes shield)
-  TARGET_AREA_RATIO: [0.6, 0.8] as [number, number],  // 50%-70% of plate area
+  TARGET_AREA_RATIO: [0.6, 0.8] as [number, number],  // 60%-80% of plate area
 
   // Perlin noise parameters for shield distribution
-  NOISE_SCALE: 4.0,     // Scale of noise features (larger = more intricate patterns)
-  NOISE_OCTAVES: 2,     // Fewer octaves for smoother, larger shield regions
+  NOISE_SCALE: 5.0,     // Scale of noise features (larger = more intricate patterns)
+  NOISE_OCTAVES: 3,     // Fewer octaves for smoother, larger shield regions
+
+  // Centroid distance weighting - favors shield near plate center
+  // Power for distance decay (higher = stronger center bias)
+  // Actually, weight_power < 1 showed better results, > 1 tended make just 
+  // near-circular blobs near the centers
+  CENTROID_WEIGHT_POWER: 0.7,
 };
 
 // ============================================================================
@@ -34,8 +41,8 @@ const PLATFORM_CONFIG = {
   TARGET_AREA_RATIO: [0.4, 0.6] as [number, number],  // 40%-60% of shield area
 
   // Perlin noise parameters for platform distribution
-  NOISE_SCALE: 5.0,     // Scale of noise features (larger = more intricate patterns)
-  NOISE_OCTAVES: 3,     // More octaves for additional detail
+  NOISE_SCALE: 6.0,     // Scale of noise features (larger = more intricate patterns)
+  NOISE_OCTAVES: 4,     // More octaves for additional detail
 };
 
 // ============================================================================
@@ -304,16 +311,38 @@ function refineMarginGeology(plate: Plate, tectonicSystem: TectonicSystem): numb
 }
 
 // ============================================================================
-// Shield Assignment (Perlin Noise-based)
+// Shield Assignment (Perlin Noise-based with Centroid Distance Weighting)
 // ============================================================================
+
+/**
+ * Computes distance statistics for ALL tiles in a plate relative to plate centroid.
+ * This ensures consistent normalization across plates of different sizes.
+ */
+function computePlateCentroidDistanceStats(
+  plate: Plate
+): { minDist: number; maxDist: number } {
+  const plateCentroid = plate.centroid;
+  let minDist = Infinity;
+  let maxDist = 0;
+
+  for (const tile of plate.tiles) {
+    const dist = tile.centroid.distanceTo(plateCentroid);
+    minDist = Math.min(minDist, dist);
+    maxDist = Math.max(maxDist, dist);
+  }
+
+  return { minDist, maxDist };
+}
 
 /**
  * Assigns shield type to unassigned tiles in a plate using Perlin noise.
  * Creates a unique Perlin noise field per plate with low octaves for smooth regions.
- * Computes a threshold based on target area ratio to determine which tiles become shield.
+ * Weights noise by distance to plate centroid (closer = higher chance of shield).
+ * Normalizes all weighted values so they sum to 1.
+ * Uses cumulative distribution with target area ratio to determine which tiles become shield.
  * Returns the set of all tiles assigned as SHIELD.
  */
-function assignShieldWithNoise(unassignedTiles: Tile[]): Set<Tile> {
+function assignShieldWithNoise(unassignedTiles: Tile[], plate: Plate): Set<Tile> {
   const assignedShield = new Set<Tile>();
 
   if (unassignedTiles.length === 0) return assignedShield;
@@ -322,21 +351,59 @@ function assignShieldWithNoise(unassignedTiles: Tile[]): Set<Tile> {
   const seed = Math.floor(Math.random() * 100000);
   const perlinNoise = new PerlinNoise3D(seed);
 
-  // Compute noise value for each unassigned tile
-  const tileNoiseValues: Map<Tile, number> = new Map();
+  // Get plate centroid
+  const plateCentroid = plate.centroid;
+
+  // Compute distance statistics from ALL tiles in the plate (not just unassigned)
+  // This ensures consistent normalization across plates of different sizes
+  const { minDist, maxDist } = computePlateCentroidDistanceStats(plate);
+  const distRange = maxDist - minDist;
+
+  // Compute noise value for each unassigned tile, weighted by centroid distance
+  const tileWeightedValues: Map<Tile, number> = new Map();
 
   for (const tile of unassignedTiles) {
-    const centroid = tile.centroid;
+    const tileCentroid = tile.centroid;
+
     // Sample FBM noise at tile centroid (centroid is already on unit sphere)
     const rawNoise = perlinNoise.fbm(
-      centroid.x * SHIELD_CONFIG.NOISE_SCALE,
-      centroid.y * SHIELD_CONFIG.NOISE_SCALE,
-      centroid.z * SHIELD_CONFIG.NOISE_SCALE,
+      tileCentroid.x * SHIELD_CONFIG.NOISE_SCALE,
+      tileCentroid.y * SHIELD_CONFIG.NOISE_SCALE,
+      tileCentroid.z * SHIELD_CONFIG.NOISE_SCALE,
       SHIELD_CONFIG.NOISE_OCTAVES
     );
     // Convert from [-1, 1] to [0, 1]
     const normalizedNoise = (rawNoise + 1) / 2;
-    tileNoiseValues.set(tile, normalizedNoise);
+
+    // Compute centroid distance weight (closer to centroid = higher weight)
+    // Using plate-wide statistics for consistent normalization
+    const dist = tileCentroid.distanceTo(plateCentroid);
+    const normalizedDist = distRange > 0 ? (dist - minDist) / distRange : 0;  // 0 at closest, 1 at farthest
+    // Weight: 1 at center, decays towards edge
+    const centroidWeight = Math.pow(1 - normalizedDist, SHIELD_CONFIG.CENTROID_WEIGHT_POWER);
+
+    // Combine noise with centroid weight
+    const weightedValue = normalizedNoise * centroidWeight;
+    tileWeightedValues.set(tile, weightedValue);
+  }
+
+  // Normalize all weighted values so they sum to 1
+  let totalWeightedValue = 0;
+  for (const value of tileWeightedValues.values()) {
+    totalWeightedValue += value;
+  }
+
+  const tileNormalizedValues: Map<Tile, number> = new Map();
+  if (totalWeightedValue > 0) {
+    for (const [tile, value] of tileWeightedValues) {
+      tileNormalizedValues.set(tile, value / totalWeightedValue);
+    }
+  } else {
+    // Fallback: equal distribution
+    const equalValue = 1 / unassignedTiles.length;
+    for (const tile of unassignedTiles) {
+      tileNormalizedValues.set(tile, equalValue);
+    }
   }
 
   // Sample target area ratio for shield coverage
@@ -350,34 +417,25 @@ function assignShieldWithNoise(unassignedTiles: Tile[]): Set<Tile> {
   }
   const targetShieldArea = totalUnassignedArea * targetRatio;
 
-  // Sort tiles by noise value (ascending) to find the threshold
+  // Sort tiles by normalized value (descending - highest values first for shield)
   const sortedTiles = Array.from(unassignedTiles).sort((a, b) => {
-    const noiseA = tileNoiseValues.get(a) || 0;
-    const noiseB = tileNoiseValues.get(b) || 0;
-    return noiseA - noiseB;  // Ascending order (lowest noise first)
+    const valueA = tileNormalizedValues.get(a) || 0;
+    const valueB = tileNormalizedValues.get(b) || 0;
+    return valueB - valueA;  // Descending order (highest values first)
   });
 
-  // Find threshold: accumulate area until we reach target
-  // Tiles with noise <= threshold will become shield
+  // Accumulate area until we reach target, marking tiles as shield
   let accumulatedArea = 0;
-  let threshold = 0.0;
 
   for (const tile of sortedTiles) {
     if (accumulatedArea >= targetShieldArea) {
       // We've reached target area
       break;
     }
-    threshold = tileNoiseValues.get(tile) || 0;
-    accumulatedArea += tile.area;
-  }
 
-  // Assign Shield to all tiles with noise <= threshold
-  for (const tile of unassignedTiles) {
-    const noiseValue = tileNoiseValues.get(tile) || 0;
-    if (noiseValue <= threshold) {
-      tile.geologicalType = GeologicalType.SHIELD;
-      assignedShield.add(tile);
-    }
+    tile.geologicalType = GeologicalType.SHIELD;
+    assignedShield.add(tile);
+    accumulatedArea += tile.area;
   }
 
   return assignedShield;
@@ -479,8 +537,8 @@ function createShieldZonesForPlate(plate: Plate): void {
   const unassignedTiles = getUnassignedTiles(plate);
   if (unassignedTiles.length === 0) return;
 
-  // Step 1: Assign Shield using Perlin noise
-  const shieldTiles = assignShieldWithNoise(unassignedTiles);
+  // Step 1: Assign Shield using Perlin noise weighted by centroid distance
+  const shieldTiles = assignShieldWithNoise(unassignedTiles, plate);
 
   // Step 2: Convert some Shield tiles to Platform using Perlin noise
   if (shieldTiles.size > 0) {

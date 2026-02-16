@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { Tile, Plate, PlateCategory, BoundaryType, GeologicalType, GeologicalIntensity, TectonicSystem, PlateBoundary, BoundaryEdge } from '../data/Plate';
 import { kmToDistance } from '../../world/World';
 import { getMotionDecile, getAreaDecile, getNeighborTilesInPlate, getUnassignedTiles } from './GeologyUtils';
@@ -35,7 +34,8 @@ const OROGENY_NOISE_CONFIG = {
   WIDTH_VARIATION_MAX: 1.2,  // Maximum width factor (120% of base max)
 
   // Distance damping - how noise is dampened with distance from boundary
-  DISTANCE_DAMPING_POWER: 0.7,  // Higher = faster decay with distance
+  // Less than 1 to compensate a bit the distance effect, so it is actually not a dampening
+  DISTANCE_DAMPING_POWER: 0.7,
 
   // Intensity thresholds - divides [0, 1] range into intensity levels
   // Values below UNASSIGNED_THRESHOLD leave tile unassigned
@@ -225,10 +225,9 @@ interface BoundarySegmentInfo {
 }
 
 /**
- * Gets the tile on the continental plate side of a boundary edge.
- * For continental-continental, returns the tile on the specified target plate.
+ * Gets the tile on the specified target plate's side of a boundary edge.
  */
-function getContinentalTileFromEdge(
+function getTileFromEdge(
   boundaryEdge: BoundaryEdge,
   targetPlate: Plate,
   tectonicSystem: TectonicSystem
@@ -476,7 +475,9 @@ function assignOrogenyIntensityToCandidates(candidates: OrogenyCandidate[]): voi
 
 /**
  * Identifies boundary segments for orogeny processing.
- * Groups convergent boundary edges by the continental plates they affect.
+ * Groups convergent boundary edges by the plates they affect.
+ * Handles continental-continental, oceanic-continental, and oceanic-oceanic cases.
+ * For oceanic-oceanic, the larger plate (overriding) develops a thin island arc.
  */
 function identifyOrogenyBoundarySegments(
   boundary: PlateBoundary,
@@ -487,11 +488,6 @@ function identifyOrogenyBoundarySegments(
 
   const plateAisContinental = plateA.category === PlateCategory.CONTINENTAL;
   const plateBisContinental = plateB.category === PlateCategory.CONTINENTAL;
-
-  // Skip if neither plate is continental
-  if (!plateAisContinental && !plateBisContinental) {
-    return [];
-  }
 
   // Check if boundary has convergent edges
   let hasConvergent = false;
@@ -511,11 +507,16 @@ function identifyOrogenyBoundarySegments(
 
   const segments: BoundarySegmentInfo[] = [];
 
-  // For continental-continental: create segments for both plates
-  // For oceanic-continental: create segment only for continental plate
+  // Determine target plates based on plate categories:
+  // - Continental-Continental: both plates (or larger only if asymmetric)
+  // - Oceanic-Continental: continental plate only
+  // - Oceanic-Oceanic: larger plate (overriding plate gets island arc)
   const targetPlates: Plate[] = [];
 
-  if (plateAisContinental && plateBisContinental) {
+  const bothContinental = plateAisContinental && plateBisContinental;
+  const bothOceanic = !plateAisContinental && !plateBisContinental;
+
+  if (bothContinental) {
     // Both continental: check if symmetric or asymmetric
     const largerPlate = plateA.area >= plateB.area ? plateA : plateB;
     const smallerPlate = plateA.area >= plateB.area ? plateB : plateA;
@@ -528,9 +529,16 @@ function identifyOrogenyBoundarySegments(
       // Asymmetric: only larger plate gets orogeny
       targetPlates.push(largerPlate);
     }
+  } else if (bothOceanic) {
+    // Oceanic-Oceanic: the larger plate typically acts as the overriding plate
+    // and develops the volcanic island arc. Expansion is very thin.
+    const overridingPlate = plateA.area >= plateB.area ? plateA : plateB;
+    targetPlates.push(overridingPlate);
   } else if (plateAisContinental) {
+    // Oceanic-Continental: continental plate gets orogeny
     targetPlates.push(plateA);
   } else {
+    // Oceanic-Continental: continental plate gets orogeny
     targetPlates.push(plateB);
   }
 
@@ -544,16 +552,15 @@ function identifyOrogenyBoundarySegments(
         continue;
       }
 
-      const tile = getContinentalTileFromEdge(bEdge, targetPlate, tectonicSystem);
+      const tile = getTileFromEdge(bEdge, targetPlate, tectonicSystem);
       if (tile) {
         boundaryTiles.add(tile);
       }
     }
 
     if (boundaryTiles.size > 0) {
-      // For symmetric collision, halve the expansion distance
-      const isBothContinental = plateAisContinental && plateBisContinental;
-      const maxDist = isBothContinental && targetPlates.length > 1
+      // For symmetric continental collision, halve the expansion distance
+      const maxDist = bothContinental && targetPlates.length > 1
         ? boundaryConfig.maxExpansionDistance * 0.5
         : boundaryConfig.maxExpansionDistance;
 
@@ -694,293 +701,247 @@ export function recomputeOrogenyForBoundary(
 }
 
 // ============================================================================
-// Ancient Orogeny Zones
+// Ancient Orogeny Zones (Perlin Noise-based)
 // ============================================================================
 
 /**
- * Configuration for ancient orogeny zones.
+ * Configuration for ancient orogeny zones using Perlin noise.
+ * Ancient orogens are eroded remnants of ancient mountain belts,
+ * distributed organically across continental interiors.
  */
-const ANCIENT_OROGENY_CONFIG = {
-  // Number of zones based on plate size decile
-  LARGE_PLATE_ZONES: [1, 3] as [number, number],    // Decile 7-9: 1-3 zones
-  MODERATE_PLATE_ZONES: [0, 2] as [number, number], // Decile 4-6: 0-2 zones
-  SMALL_PLATE_ZONES: [0, 1] as [number, number],    // Decile 0-3: 0-1 zones
+const ANCIENT_OROGENY_NOISE_CONFIG = {
+  // Target area coverage (fraction of remaining unassigned continental area)
+  TARGET_AREA_RATIO: [0.06, 0.12] as [number, number],  // 6%-12% of remaining unassigned area
 
-  // Length of ancient orogeny chain (km)
-  LENGTH_KM: [400, 2000] as [number, number],
+  // Perlin noise parameters for ancient orogeny distribution
+  NOISE_SCALE: 3.0,       // Scale of noise features
+  NOISE_OCTAVES: 3,       // Low-level octaves for moderate variation
+  NOISE_PERSISTENCE: 0.5,
+  NOISE_LACUNARITY: 2.0,
 
-  // Width of ancient orogeny zone (km)
-  WIDTH_KM: [200, 700] as [number, number],
-
-  // Random walk parameters
-  WALK_DIRECTION_VARIANCE: 0.4,  // How much the walk direction can deviate (0-1)
+  // Convergent boundary avoidance: ancient orogens are traces from past orogenies,
+  // so they should be more likely to appear farther from CONVERGENT boundaries
+  // (which represent active orogens). Divergent/transform boundaries don't matter.
+  // Weight decays as tiles get closer to convergent boundaries.
+  CONVERGENT_AVOIDANCE_POWER: 0.5,  // Power for distance weighting (< 1 = weaker avoidance)
 };
 
 /**
- * Determines the number of ancient orogeny zones for a plate based on its size.
+ * Gets the tile on a specific plate's side of a boundary edge.
  */
-function getAncientOrogenyZoneCount(plate: Plate, tectonicSystem: TectonicSystem): number {
-  const areaDecile = getAreaDecile(plate.area, tectonicSystem);
-
-  let range: [number, number];
-  if (areaDecile >= 7) {
-    range = ANCIENT_OROGENY_CONFIG.LARGE_PLATE_ZONES;
-  } else if (areaDecile >= 4) {
-    range = ANCIENT_OROGENY_CONFIG.MODERATE_PLATE_ZONES;
-  } else {
-    range = ANCIENT_OROGENY_CONFIG.SMALL_PLATE_ZONES;
-  }
-
-  const [min, max] = range;
-  return Math.floor(min + Math.random() * (max - min + 1));
-}
-
-/**
- * Computes ancient orogeny dimensions based on plate size.
- * Larger plates get longer and wider ancient orogeny zones.
- */
-function computeAncientOrogenyDimensions(
+function getTileOnPlateSideForAncient(
+  boundaryEdge: BoundaryEdge,
   plate: Plate,
   tectonicSystem: TectonicSystem
-): { lengthKm: number; widthKm: number } {
-  const areaDecile = getAreaDecile(plate.area, tectonicSystem);
-  const sizeFactor = areaDecile / 9; // 0 to 1
-
-  const [minLength, maxLength] = ANCIENT_OROGENY_CONFIG.LENGTH_KM;
-  const [minWidth, maxWidth] = ANCIENT_OROGENY_CONFIG.WIDTH_KM;
-
-  // Interpolate based on size, with some randomness
-  const lengthKm = minLength + (maxLength - minLength) * (0.3 + 0.7 * sizeFactor * Math.random());
-  const widthKm = minWidth + (maxWidth - minWidth) * (0.3 + 0.7 * sizeFactor * Math.random());
-
-  return { lengthKm, widthKm };
-}
-
-/**
- * Selects a random neighbor tile that is unassigned and within the same plate.
- * Prefers neighbors roughly in the given direction.
- */
-function selectRandomNeighborInDirection(
-  tile: Tile,
-  direction: THREE.Vector3,
-  tectonicSystem: TectonicSystem,
-  assigned: Set<Tile>
 ): Tile | null {
-  const candidates: { tile: Tile; alignment: number }[] = [];
-
-  for (const he of tile.loop()) {
-    const neighborTile = tectonicSystem.edge2TileMap.get(he.twin);
-    if (!neighborTile || neighborTile.plate !== tile.plate) {
-      continue;
-    }
-    if (assigned.has(neighborTile)) {
-      continue;
-    }
-    if (neighborTile.geologicalType !== GeologicalType.UNKNOWN) {
-      continue;
-    }
-
-    // Compute alignment with direction
-    const toNeighbor = neighborTile.centroid.clone().sub(tile.centroid).normalize();
-    const alignment = toNeighbor.dot(direction);
-
-    candidates.push({ tile: neighborTile, alignment });
+  const tile = tectonicSystem.edge2TileMap.get(boundaryEdge.halfedge);
+  if (tile && tile.plate === plate) {
+    return tile;
   }
 
-  if (candidates.length === 0) {
-    return null;
+  const twinTile = tectonicSystem.edge2TileMap.get(boundaryEdge.halfedge.twin);
+  if (twinTile && twinTile.plate === plate) {
+    return twinTile;
   }
 
-  // Weight selection by alignment (but allow some randomness)
-  // Add variance to allow jagged paths
-  const variance = ANCIENT_OROGENY_CONFIG.WALK_DIRECTION_VARIANCE;
-  const weightedCandidates = candidates.map(c => ({
-    tile: c.tile,
-    weight: Math.max(0.1, c.alignment + variance * (Math.random() - 0.5))
-  }));
-
-  // Normalize weights
-  const totalWeight = weightedCandidates.reduce((sum, c) => sum + c.weight, 0);
-  let random = Math.random() * totalWeight;
-
-  for (const candidate of weightedCandidates) {
-    random -= candidate.weight;
-    if (random <= 0) {
-      return candidate.tile;
-    }
-  }
-
-  return weightedCandidates[weightedCandidates.length - 1].tile;
+  return null;
 }
 
 /**
- * Creates a jagged line of tiles starting from a seed, walking in both directions.
- * Returns the tiles forming the central ridge of the ancient orogeny.
+ * Computes distance statistics for all tiles in a plate relative to CONVERGENT boundaries only.
+ * Returns the maximum distance any tile has from the nearest convergent boundary edge.
+ * Tiles not reachable from convergent boundaries get distance Infinity (no avoidance applied).
  */
-function createAncientOrogenyRidge(
-  seed: Tile,
-  targetLengthKm: number,
+function computeConvergentBoundaryDistanceStats(
+  plate: Plate,
   tectonicSystem: TectonicSystem
-): Tile[] {
-  const targetLength = kmToDistance(targetLengthKm);
-  const ridgeTiles: Tile[] = [seed];
-  const assigned = new Set<Tile>([seed]);
+): { maxDistFromConvergent: number; tileDistances: Map<Tile, number> } {
+  const tileDistances = new Map<Tile, number>();
 
-  // Pick a random initial direction (tangent to sphere at seed location)
-  const up = seed.centroid.clone().normalize();
-  const randomVec = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
-  const initialDirection = randomVec.sub(up.clone().multiplyScalar(randomVec.dot(up))).normalize();
+  // Find tiles adjacent to convergent boundary edges
+  const convergentBoundaryTiles = new Set<Tile>();
 
-  // Walk in positive direction
-  let currentTile = seed;
-  let currentDirection = initialDirection.clone();
-  let totalLength = 0;
-  const halfLength = targetLength / 2;
+  for (const boundary of tectonicSystem.boundaries) {
+    // Check if this boundary involves our plate
+    const isPlateInvolved = boundary.plateA === plate || boundary.plateB === plate;
+    if (!isPlateInvolved) continue;
 
-  while (totalLength < halfLength) {
-    const nextTile = selectRandomNeighborInDirection(currentTile, currentDirection, tectonicSystem, assigned);
-    if (!nextTile) {
-      break;
+    // Find convergent edges and get tiles on our plate's side
+    for (const bEdge of boundary.boundaryEdges) {
+      if (bEdge.refinedType !== BoundaryType.CONVERGENT) {
+        continue;
+      }
+
+      const tile = getTileOnPlateSideForAncient(bEdge, plate, tectonicSystem);
+      if (tile) {
+        convergentBoundaryTiles.add(tile);
+      }
     }
-
-    const stepLength = nextTile.centroid.clone().sub(currentTile.centroid).length();
-    totalLength += stepLength;
-
-    ridgeTiles.push(nextTile);
-    assigned.add(nextTile);
-
-    // Update direction with some persistence
-    const newDirection = nextTile.centroid.clone().sub(currentTile.centroid).normalize();
-    currentDirection.lerp(newDirection, 0.5).normalize();
-    currentTile = nextTile;
   }
 
-  // Walk in negative direction from seed
-  currentTile = seed;
-  currentDirection = initialDirection.clone().negate();
-  totalLength = 0;
-
-  while (totalLength < halfLength) {
-    const nextTile = selectRandomNeighborInDirection(currentTile, currentDirection, tectonicSystem, assigned);
-    if (!nextTile) {
-      break;
-    }
-
-    const stepLength = nextTile.centroid.clone().sub(currentTile.centroid).length();
-    totalLength += stepLength;
-
-    ridgeTiles.unshift(nextTile); // Add to beginning
-    assigned.add(nextTile);
-
-    // Update direction with some persistence
-    const newDirection = nextTile.centroid.clone().sub(currentTile.centroid).normalize();
-    currentDirection.lerp(newDirection, 0.5).normalize();
-    currentTile = nextTile;
+  // If no convergent boundaries, return empty distances (no avoidance will be applied)
+  if (convergentBoundaryTiles.size === 0) {
+    return { maxDistFromConvergent: 0, tileDistances };
   }
 
-  return ridgeTiles;
-}
+  // BFS from convergent boundary tiles to compute distances
+  const visited = new Set<Tile>();
 
-/**
- * Propagates ancient orogeny outward from ridge tiles until width is reached.
- */
-function propagateAncientOrogenyFromRidge(
-  ridgeTiles: Tile[],
-  targetWidthKm: number,
-  tectonicSystem: TectonicSystem
-): void {
-  const targetWidth = kmToDistance(targetWidthKm);
-  const halfWidth = targetWidth / 2;
-
-  // Mark ridge tiles as ancient orogeny (intensity is not used for ancient orogeny)
-  const assigned = new Set<Tile>();
-  for (const tile of ridgeTiles) {
-    tile.geologicalType = GeologicalType.ANCIENT_OROGEN;
-    assigned.add(tile);
+  // Initialize convergent boundary tiles with distance 0
+  for (const tile of convergentBoundaryTiles) {
+    tileDistances.set(tile, 0);
+    visited.add(tile);
   }
 
-  // Propagate outward using BFS with distance tracking
-  interface PropagatingTile {
-    tile: Tile;
-    distance: number;
-  }
+  // BFS to propagate distances
+  let wave = Array.from(convergentBoundaryTiles);
+  while (wave.length > 0) {
+    const nextWave: Tile[] = [];
 
-  let currentWave: PropagatingTile[] = ridgeTiles.map(t => ({ tile: t, distance: 0 }));
+    for (const currentTile of wave) {
+      const currentDist = tileDistances.get(currentTile) || 0;
 
-  while (currentWave.length > 0) {
-    const nextWave: PropagatingTile[] = [];
-
-    for (const { tile, distance } of currentWave) {
       // Get neighbors in same plate
-      for (const he of tile.loop()) {
-        const neighborTile = tectonicSystem.edge2TileMap.get(he.twin);
-        if (!neighborTile || neighborTile.plate !== tile.plate) {
-          continue;
-        }
-        if (assigned.has(neighborTile)) {
-          continue;
-        }
-        if (neighborTile.geologicalType !== GeologicalType.UNKNOWN) {
-          continue;
-        }
+      const neighbors = getNeighborTilesInPlate(currentTile, tectonicSystem);
+      for (const neighbor of neighbors) {
+        if (visited.has(neighbor)) continue;
 
-        const stepDistance = neighborTile.centroid.clone().sub(tile.centroid).length();
-        const newDistance = distance + stepDistance;
+        const stepDist = currentTile.centroid.distanceTo(neighbor.centroid);
+        const neighborDist = currentDist + stepDist;
 
-        if (newDistance > halfWidth) {
-          continue;
-        }
-
-        // Assign ancient orogeny (intensity is not used for ancient orogeny)
-        neighborTile.geologicalType = GeologicalType.ANCIENT_OROGEN;
-
-        assigned.add(neighborTile);
-        nextWave.push({ tile: neighborTile, distance: newDistance });
+        tileDistances.set(neighbor, neighborDist);
+        visited.add(neighbor);
+        nextWave.push(neighbor);
       }
     }
 
-    currentWave = nextWave;
+    wave = nextWave;
   }
+
+  // Find max distance
+  let maxDistFromConvergent = 0;
+  for (const dist of tileDistances.values()) {
+    maxDistFromConvergent = Math.max(maxDistFromConvergent, dist);
+  }
+
+  return { maxDistFromConvergent, tileDistances };
 }
 
 /**
- * Creates a single ancient orogeny zone on a plate.
+ * Assigns ancient orogeny type to unassigned tiles in a plate using Perlin noise.
+ * Creates a unique Perlin noise field per plate.
+ * Weights noise by distance from convergent boundaries (farther = higher chance).
+ * Uses a target area ratio to determine how many tiles become ancient orogen.
+ * Returns the number of tiles assigned.
  */
-function createAncientOrogenyZone(
+function assignAncientOrogenyWithNoise(
+  unassignedTiles: Tile[],
   plate: Plate,
   tectonicSystem: TectonicSystem
-): boolean {
-  // Find unassigned tiles
-  const unassignedTiles = getUnassignedTiles(plate);
-  if (unassignedTiles.length === 0) {
-    return false;
+): number {
+  if (unassignedTiles.length === 0) return 0;
+
+  // Create a new Perlin noise instance with a random seed for this plate
+  const seed = Math.floor(Math.random() * 100000);
+  const perlinNoise = new PerlinNoise3D(seed);
+
+  // Compute distance from convergent boundaries for weighting
+  const { maxDistFromConvergent, tileDistances } = computeConvergentBoundaryDistanceStats(plate, tectonicSystem);
+
+  // Compute noise value for each unassigned tile, weighted by convergent boundary distance
+  const tileWeightedValues: Map<Tile, number> = new Map();
+
+  for (const tile of unassignedTiles) {
+    const centroid = tile.centroid;
+
+    // Sample FBM noise at tile centroid
+    const rawNoise = perlinNoise.fbm(
+      centroid.x * ANCIENT_OROGENY_NOISE_CONFIG.NOISE_SCALE,
+      centroid.y * ANCIENT_OROGENY_NOISE_CONFIG.NOISE_SCALE,
+      centroid.z * ANCIENT_OROGENY_NOISE_CONFIG.NOISE_SCALE,
+      ANCIENT_OROGENY_NOISE_CONFIG.NOISE_OCTAVES,
+      ANCIENT_OROGENY_NOISE_CONFIG.NOISE_PERSISTENCE,
+      ANCIENT_OROGENY_NOISE_CONFIG.NOISE_LACUNARITY
+    );
+    // Convert from [-1, 1] to [0, 1]
+    const normalizedNoise = (rawNoise + 1) / 2;
+
+    // Compute convergent boundary distance weight (farther from convergent = higher weight)
+    // If no convergent boundaries exist, all tiles get weight 1 (no avoidance)
+    let convergentWeight = 1.0;
+    if (maxDistFromConvergent > 0) {
+      const convergentDist = tileDistances.get(tile) || maxDistFromConvergent;
+      const normalizedConvergentDist = convergentDist / maxDistFromConvergent;
+      // Weight: 0 at convergent boundary, 1 at farthest point
+      convergentWeight = Math.pow(normalizedConvergentDist, ANCIENT_OROGENY_NOISE_CONFIG.CONVERGENT_AVOIDANCE_POWER);
+    }
+
+    // Combine noise with convergent boundary weight
+    const weightedValue = normalizedNoise * convergentWeight;
+    tileWeightedValues.set(tile, weightedValue);
   }
 
-  // Select random seed
-  const seed = unassignedTiles[Math.floor(Math.random() * unassignedTiles.length)];
-
-  // Compute dimensions based on plate size
-  const { lengthKm, widthKm } = computeAncientOrogenyDimensions(plate, tectonicSystem);
-
-  // Create jagged ridge
-  const ridgeTiles = createAncientOrogenyRidge(seed, lengthKm, tectonicSystem);
-
-  if (ridgeTiles.length < 3) {
-    return false;
+  // Normalize all weighted values so they sum to 1
+  let totalWeightedValue = 0;
+  for (const value of tileWeightedValues.values()) {
+    totalWeightedValue += value;
   }
 
-  // Propagate outward from ridge
-  propagateAncientOrogenyFromRidge(ridgeTiles, widthKm, tectonicSystem);
+  const tileNormalizedValues: Map<Tile, number> = new Map();
+  if (totalWeightedValue > 0) {
+    for (const [tile, value] of tileWeightedValues) {
+      tileNormalizedValues.set(tile, value / totalWeightedValue);
+    }
+  } else {
+    // Fallback: equal distribution
+    const equalValue = 1 / unassignedTiles.length;
+    for (const tile of unassignedTiles) {
+      tileNormalizedValues.set(tile, equalValue);
+    }
+  }
 
-  return true;
+  // Sample target area ratio for ancient orogeny coverage
+  const [minRatio, maxRatio] = ANCIENT_OROGENY_NOISE_CONFIG.TARGET_AREA_RATIO;
+  const targetRatio = minRatio + Math.random() * (maxRatio - minRatio);
+
+  // Compute total unassigned area and target ancient orogeny area
+  let totalUnassignedArea = 0;
+  for (const tile of unassignedTiles) {
+    totalUnassignedArea += tile.area;
+  }
+  const targetArea = totalUnassignedArea * targetRatio;
+
+  // Sort tiles by normalized value (descending - highest values first)
+  const sortedTiles = Array.from(unassignedTiles).sort((a, b) => {
+    const valueA = tileNormalizedValues.get(a) || 0;
+    const valueB = tileNormalizedValues.get(b) || 0;
+    return valueB - valueA;  // Descending order (highest values first)
+  });
+
+  // Accumulate area until we reach target, marking tiles as ancient orogen
+  let accumulatedArea = 0;
+  let assignedCount = 0;
+
+  for (const tile of sortedTiles) {
+    if (accumulatedArea >= targetArea) {
+      break;
+    }
+
+    tile.geologicalType = GeologicalType.ANCIENT_OROGEN;
+    assignedCount++;
+    accumulatedArea += tile.area;
+  }
+
+  return assignedCount;
 }
 
 /**
- * Assigns ancient orogeny zones to continental plates based on their size.
+ * Assigns ancient orogeny zones to continental plates using Perlin noise.
  * Ancient orogeny zones are only placed on continental plates.
+ * Uses noise-based distribution weighted by distance from convergent boundaries.
  */
 export function assignAncientOrogenyZones(tectonicSystem: TectonicSystem): void {
-  let totalZones = 0;
+  let totalAssigned = 0;
 
   for (const plate of tectonicSystem.plates) {
     // Only continental plates get ancient orogeny zones
@@ -988,28 +949,15 @@ export function assignAncientOrogenyZones(tectonicSystem: TectonicSystem): void 
       continue;
     }
 
-    const zoneCount = getAncientOrogenyZoneCount(plate, tectonicSystem);
-
-    if (zoneCount === 0) {
+    // Get unassigned tiles for this plate
+    const unassignedTiles = getUnassignedTiles(plate);
+    if (unassignedTiles.length === 0) {
       continue;
     }
 
-    for (let i = 0; i < zoneCount; i++) {
-      if (createAncientOrogenyZone(plate, tectonicSystem)) {
-        totalZones++;
-      }
-    }
+    // Assign ancient orogeny using noise-based distribution
+    totalAssigned += assignAncientOrogenyWithNoise(unassignedTiles, plate, tectonicSystem);
   }
 
-  // Log results
-  let ancientCount = 0;
-  for (const plate of tectonicSystem.plates) {
-    for (const tile of plate.tiles) {
-      if (tile.geologicalType === GeologicalType.ANCIENT_OROGEN) {
-        ancientCount++;
-      }
-    }
-  }
-
-  console.log(`Assigned ANCIENT_OROGEN to ${ancientCount} tiles in ${totalZones} zones`);
+  console.log(`Assigned ANCIENT_OROGEN to ${totalAssigned} tiles`);
 }
