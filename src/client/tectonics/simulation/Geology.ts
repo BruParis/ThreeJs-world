@@ -7,6 +7,7 @@ import {
 import { assignShieldZones } from './Shield';
 import { assignOceanicCrustType } from './OceanicCrust';
 import { assignForelandBasins, assignRiftBasins, assignIntracratonicBasins } from './Basin';
+import { assignIgneousProvinces } from './IgneousProvince';
 
 // ============================================================================
 // Main Entry Point
@@ -14,14 +15,16 @@ import { assignForelandBasins, assignRiftBasins, assignIntracratonicBasins } fro
 
 /**
  * Assigns geological types to all tiles in the tectonic system.
+ * Order matters - earlier types block later propagation.
  * Handles:
  * 1. Active orogeny at convergent boundaries
- * 2. Oceanic crust at oceanic/continental divergent boundaries
- * 3. Foreland basins behind orogeny at convergent boundaries
- * 4. Rift basins at continental/continental divergent boundaries
- * 5. Ancient orogeny zones (remnants of former mountain belts)
- * 6. Shield zones (ancient cratonic cores)
- * 7. Intracratonic basins within shield/platform regions
+ * 2. Igneous provinces (LIPs) - blocks oceanic crust propagation
+ * 3. Oceanic crust at oceanic/continental divergent boundaries
+ * 4. Foreland basins behind orogeny at convergent boundaries
+ * 5. Rift basins at continental/continental divergent boundaries
+ * 6. Ancient orogeny zones (remnants of former mountain belts)
+ * 7. Shield zones (ancient cratonic cores)
+ * 8. Intracratonic basins within shield/platform regions
  */
 function assignGeologicalTypes(tectonicSystem: TectonicSystem): void {
   // Reset all tiles
@@ -35,7 +38,11 @@ function assignGeologicalTypes(tectonicSystem: TectonicSystem): void {
   // Assign active orogeny at convergent boundaries
   assignOrogenyType(tectonicSystem);
 
+  // Assign igneous provinces (LIPs) - must be before oceanic crust so propagation stops at LIPs
+  assignIgneousProvinces(tectonicSystem);
+
   // Assign oceanic crust at oceanic/continental divergent boundaries
+  // Propagation stops when meeting igneous provinces or other assigned types
   assignOceanicCrustType(tectonicSystem);
 
   // Assign foreland basins behind orogeny at convergent boundaries (Case 1)

@@ -13,6 +13,7 @@ export const GEOLOGICAL_TYPE_BASE_COLORS: Record<GeologicalType, [number, number
   [GeologicalType.BASIN]: [0.6, 0.6, 0.9],             // Light blue (sedimentary basins)
   [GeologicalType.MAGMATIC]: [0.5, 0.5, 0.5],          // Grey (default)
   [GeologicalType.EXTENDED_CRUST]: [0.6, 0.4, 0.6],    // Purple (rifted/thinned continental crust)
+  [GeologicalType.IGNEOUS_PROVINCE]: [0.6, 0.2, 0.8],  // Purple (large igneous provinces / flood basalts)
   [GeologicalType.OCEANIC_CRUST]: [0.1, 0.2, 0.6],     // Blue (oceanic floor)
   [GeologicalType.OCEANIC_RIDGE]: [0.5, 0.5, 0.5],     // Grey (default)
   [GeologicalType.OCEANIC_PLATEAU]: [0.5, 0.5, 0.5],   // Grey (default)
@@ -63,7 +64,7 @@ export function getGeologicalColor(
   const baseColor = GEOLOGICAL_TYPE_BASE_COLORS[type];
 
   // Types that do not use intensity - return base color directly
-  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN) {
+  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN || type === GeologicalType.IGNEOUS_PROVINCE) {
     return baseColor;
   }
 
@@ -77,7 +78,7 @@ export function getGeologicalColor(
  */
 export function getGeologicalTypeColor(type: GeologicalType): [number, number, number] {
   // Types that use base color directly (no intensity)
-  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN) {
+  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN || type === GeologicalType.IGNEOUS_PROVINCE) {
     return GEOLOGICAL_TYPE_BASE_COLORS[type];
   }
   // For active orogen, use intensity-based blending
@@ -123,6 +124,7 @@ export const GEOLOGY_TYPE_LEGEND: { label: string; type: GeologicalType }[] = [
   { label: 'Platform', type: GeologicalType.PLATFORM },
   { label: 'Oceanic Crust', type: GeologicalType.OCEANIC_CRUST },
   { label: 'Basin', type: GeologicalType.BASIN },
+  { label: 'Igneous Province', type: GeologicalType.IGNEOUS_PROVINCE },
 ];
 
 /**

@@ -275,6 +275,7 @@ export enum GeologicalType {
   BASIN = 'basin',
   MAGMATIC = 'magmatic',
   EXTENDED_CRUST = 'extended_crust',
+  IGNEOUS_PROVINCE = 'igneous_province',
   // Oceanic Types
   OCEANIC_CRUST = 'oceanic_crust',
   OCEANIC_RIDGE = 'oceanic_ridge',

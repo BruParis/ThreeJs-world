@@ -60,8 +60,8 @@ const OROGENY_EXPANSION_KM = {
   CONTINENTAL_CONTINENTAL_SLOW: [500, 800] as [number, number],
 
   // Oceanic-Continental collisions (subduction)
-  OCEANIC_CONTINENTAL_INTENSIVE: [200, 400] as [number, number],
-  OCEANIC_CONTINENTAL_SLOW: [150, 300] as [number, number],
+  OCEANIC_CONTINENTAL_INTENSIVE: [200, 1000] as [number, number],
+  OCEANIC_CONTINENTAL_SLOW: [150, 500] as [number, number],
 
   // Oceanic-Oceanic collisions
   OCEANIC_OCEANIC: [100, 200] as [number, number],
