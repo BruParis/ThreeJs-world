@@ -266,6 +266,31 @@ export enum BoundaryType {
   TRANSFORM = 'transform'
 }
 
+/**
+ * Indicates which side of a convergent boundary is the dominant (overriding) plate.
+ *
+ * In real tectonics:
+ * - Oceanic-Continental: Continental plate always dominates (oceanic subducts)
+ * - Oceanic-Oceanic: The younger/less dense oceanic plate dominates (older subducts)
+ * - Continental-Continental: Neither dominates - collision creates orogeny on both sides
+ *
+ * The "side" is relative to the BoundaryEdge's halfedge:
+ * - THIS_SIDE: The tile associated with this halfedge is dominant
+ * - TWIN_SIDE: The tile associated with the twin halfedge is dominant
+ */
+export enum ConvergentDominance {
+  /** Not a convergent boundary - dominance concept doesn't apply */
+  NOT_APPLICABLE = 'not_applicable',
+  /** Convergent boundary but dominance not yet computed */
+  UNDETERMINED = 'undetermined',
+  /** The tile on this halfedge's side is dominant (overriding plate) */
+  THIS_SIDE = 'this_side',
+  /** The tile on the twin halfedge's side is dominant (overriding plate) */
+  TWIN_SIDE = 'twin_side',
+  /** Neither plate dominates - continental collision, orogeny affects both sides */
+  NEITHER = 'neither'
+}
+
 export enum GeologicalType {
   UNKNOWN = 'unknown',
   SHIELD = 'shield',
@@ -285,12 +310,14 @@ export enum GeologicalType {
 export class BoundaryEdge {
   halfedge: Halfedge;
   private _rawType: BoundaryType;
-  refinedType: BoundaryType;
+  private _refinedType: BoundaryType;
+  private _dominance: ConvergentDominance;
 
   constructor(edge: Halfedge) {
     this.halfedge = edge;
     this._rawType = BoundaryType.UNKNOWN;
-    this.refinedType = BoundaryType.UNKNOWN;
+    this._refinedType = BoundaryType.UNKNOWN;
+    this._dominance = ConvergentDominance.NOT_APPLICABLE;
   }
 
   get rawType(): BoundaryType {
@@ -299,7 +326,44 @@ export class BoundaryEdge {
 
   set rawType(value: BoundaryType) {
     this._rawType = value;
-    this.refinedType = value;
+    this._refinedType = value;
+    // Reset dominance when raw type changes - will be computed during refinement
+    this._dominance = value === BoundaryType.CONVERGENT
+      ? ConvergentDominance.UNDETERMINED
+      : ConvergentDominance.NOT_APPLICABLE;
+  }
+
+  get refinedType(): BoundaryType {
+    return this._refinedType;
+  }
+
+  set refinedType(value: BoundaryType) {
+    this._refinedType = value;
+    // Update dominance applicability when refined type changes
+    if (value !== BoundaryType.CONVERGENT) {
+      this._dominance = ConvergentDominance.NOT_APPLICABLE;
+    } else if (this._dominance === ConvergentDominance.NOT_APPLICABLE) {
+      this._dominance = ConvergentDominance.UNDETERMINED;
+    }
+  }
+
+  /**
+   * Gets the convergent dominance for this boundary edge.
+   * Only meaningful when refinedType is CONVERGENT.
+   */
+  get dominance(): ConvergentDominance {
+    return this._dominance;
+  }
+
+  /**
+   * Sets the convergent dominance for this boundary edge.
+   * Should only be set when refinedType is CONVERGENT.
+   */
+  set dominance(value: ConvergentDominance) {
+    if (this._refinedType !== BoundaryType.CONVERGENT && value !== ConvergentDominance.NOT_APPLICABLE) {
+      console.warn(`Setting dominance on non-convergent boundary (type=${this._refinedType})`);
+    }
+    this._dominance = value;
   }
 }
 

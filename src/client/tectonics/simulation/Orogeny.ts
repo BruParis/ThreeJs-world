@@ -477,7 +477,12 @@ function assignOrogenyIntensityToCandidates(candidates: OrogenyCandidate[]): voi
  * Identifies boundary segments for orogeny processing.
  * Groups convergent boundary edges by the plates they affect.
  * Handles continental-continental, oceanic-continental, and oceanic-oceanic cases.
- * For oceanic-oceanic, the larger plate (overriding) develops a thin island arc.
+ *
+ * For oceanic-oceanic: there's no dominant plate. Orogeny propagates randomly:
+ * - 40% chance: both plates develop island arcs
+ * - 30% chance: only plate A
+ * - 30% chance: only plate B
+ * The expansion width remains thin (OCEANIC_OCEANIC limits).
  */
 function identifyOrogenyBoundarySegments(
   boundary: PlateBoundary,
@@ -530,10 +535,20 @@ function identifyOrogenyBoundarySegments(
       targetPlates.push(largerPlate);
     }
   } else if (bothOceanic) {
-    // Oceanic-Oceanic: the larger plate typically acts as the overriding plate
-    // and develops the volcanic island arc. Expansion is very thin.
-    const overridingPlate = plateA.area >= plateB.area ? plateA : plateB;
-    targetPlates.push(overridingPlate);
+    // Oceanic-Oceanic: no dominant plate, orogeny can propagate to both sides
+    // with randomness - sometimes both, sometimes just one plate
+    // This creates island arcs on either or both sides
+    const random = Math.random();
+    if (random < 0.4) {
+      // 40% chance: both plates get island arcs
+      targetPlates.push(plateA, plateB);
+    } else if (random < 0.7) {
+      // 30% chance: only plate A
+      targetPlates.push(plateA);
+    } else {
+      // 30% chance: only plate B
+      targetPlates.push(plateB);
+    }
   } else if (plateAisContinental) {
     // Oceanic-Continental: continental plate gets orogeny
     targetPlates.push(plateA);
@@ -559,8 +574,10 @@ function identifyOrogenyBoundarySegments(
     }
 
     if (boundaryTiles.size > 0) {
-      // For symmetric continental collision, halve the expansion distance
-      const maxDist = bothContinental && targetPlates.length > 1
+      // For symmetric collisions (both continental or both oceanic with dual propagation),
+      // halve the expansion distance per plate
+      const isSymmetricCollision = (bothContinental || bothOceanic) && targetPlates.length > 1;
+      const maxDist = isSymmetricCollision
         ? boundaryConfig.maxExpansionDistance * 0.5
         : boundaryConfig.maxExpansionDistance;
 
@@ -711,11 +728,11 @@ export function recomputeOrogenyForBoundary(
  */
 const ANCIENT_OROGENY_NOISE_CONFIG = {
   // Target area coverage (fraction of remaining unassigned continental area)
-  TARGET_AREA_RATIO: [0.06, 0.12] as [number, number],  // 6%-12% of remaining unassigned area
+  TARGET_AREA_RATIO: [0.06, 0.10] as [number, number],  // 6%-12% of remaining unassigned area
 
   // Perlin noise parameters for ancient orogeny distribution
-  NOISE_SCALE: 3.0,       // Scale of noise features
-  NOISE_OCTAVES: 3,       // Low-level octaves for moderate variation
+  NOISE_SCALE: 5.0,       // Scale of noise features
+  NOISE_OCTAVES: 4,
   NOISE_PERSISTENCE: 0.5,
   NOISE_LACUNARITY: 2.0,
 

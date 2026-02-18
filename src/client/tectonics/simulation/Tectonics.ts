@@ -11,7 +11,7 @@ import {
   transferTileToPlate,
   refineBoundaryType
 } from '../data/PlateOperations';
-import { computeNetRotation, computeTectonicDynamics, caracterizeBoundaryEdge } from '../dynamics/dynamics';
+import { computeNetRotation, computeTectonicDynamics, caracterizeBoundaryEdge, computeConvergentDominance } from '../dynamics/dynamics';
 import { assignGeologicalTypes } from './Geology';
 
 function _splitPlateAtBridgeTiles(tectonicSystem: TectonicSystem): void {
@@ -504,6 +504,19 @@ function caracterizePlateBoundaries(tectonicSystem: TectonicSystem): void {
 }
 
 /**
+ * Computes convergent dominance for all boundary edges.
+ * This determines which plate is the overriding plate at convergent boundaries.
+ * Must be called after boundary types are refined and plate categories are assigned.
+ */
+function computeBoundaryDominance(tectonicSystem: TectonicSystem): void {
+  for (const boundary of tectonicSystem.boundaries) {
+    for (const bEdge of boundary.boundaryEdges) {
+      computeConvergentDominance(tectonicSystem, bEdge);
+    }
+  }
+}
+
+/**
  * Computes the divergent edge ratio for a plate, weighted by plate area.
  * Returns the ratio of divergent boundary edges to total boundary edges,
  * multiplied by the plate's area for area-weighted sorting.
@@ -580,4 +593,4 @@ function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: numb
   console.log(`Plate categorization: target=${(continentalRatio * 100).toFixed(1)}%, actual=${(actualRatio * 100).toFixed(1)}%`);
 }
 
-export { buildTectonicSystem, computeTectonicMotion, computeNetRotation, computePlateBoundaries, caracterizePlateBoundaries, logTileTransferEligibility, categorizePlates, assignGeologicalTypes };
+export { buildTectonicSystem, computeTectonicMotion, computeNetRotation, computePlateBoundaries, caracterizePlateBoundaries, computeBoundaryDominance, logTileTransferEligibility, categorizePlates, assignGeologicalTypes };

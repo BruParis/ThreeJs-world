@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 
-import { Tile, Plate, PlateBoundary, BoundaryType, BoundaryEdge, TectonicSystem } from '../tectonics/data/Plate';
+import { Tile, Plate, PlateBoundary, BoundaryType, BoundaryEdge, TectonicSystem, ConvergentDominance } from '../tectonics/data/Plate';
 import { BOUNDARY_COLORS } from './BoundaryColors';
 
 
@@ -423,6 +423,132 @@ function makeLineSegments2ForNeighborTilesInPlate(
   lines.computeLineDistances();
 }
 
+/**
+ * Creates small triangles indicating the dominant plate at convergent boundaries.
+ * Each triangle has its base aligned with the boundary edge and points toward the dominant plate.
+ * Triangle size is proportional to the edge length (base is ~1/3 of edge length).
+ * Triangles are colored to match the boundary type color.
+ *
+ * @param tectonicSystem The tectonic system containing all boundaries
+ * @param lines The LineSegments2 object to populate
+ * @param baseFraction Fraction of edge length for triangle base (default 0.33)
+ */
+function makeLineSegments2ForDominanceIndicators(
+  tectonicSystem: TectonicSystem,
+  lines: LineSegments2,
+  baseFraction: number = 0.5
+): void {
+  const positions = new Array<number>();
+  const colors = new Array<number>();
+
+  // Offset to render above boundary lines
+  const offsetFactor = 0.001;
+
+  for (const boundary of tectonicSystem.boundaries) {
+    for (const bEdge of boundary.boundaryEdges) {
+      const dominance = bEdge.dominance;
+
+      // Validate: dominance should only be set for convergent boundaries
+      if (dominance !== ConvergentDominance.NOT_APPLICABLE &&
+          dominance !== ConvergentDominance.UNDETERMINED &&
+          bEdge.refinedType !== BoundaryType.CONVERGENT) {
+        console.error(
+          `BoundaryEdge has dominance=${dominance} but refinedType=${bEdge.refinedType}. ` +
+          `Dominance is only relevant for CONVERGENT boundaries.`
+        );
+        continue;
+      }
+
+      // Only draw for convergent boundaries with determined dominance
+      if (bEdge.refinedType !== BoundaryType.CONVERGENT) {
+        continue;
+      }
+
+      if (dominance !== ConvergentDominance.THIS_SIDE && dominance !== ConvergentDominance.TWIN_SIDE) {
+        continue;
+      }
+
+      // Use the boundary color for this edge type
+      const color = BOUNDARY_COLORS[bEdge.refinedType];
+
+      const he = bEdge.halfedge;
+      const vStart = he.vertex.position;
+      const vEnd = he.twin.vertex.position;
+
+      // Compute edge length and derive triangle size
+      const edgeLength = vStart.distanceTo(vEnd);
+      const halfBase = (edgeLength * baseFraction) * 0.5;
+      const height = halfBase * 1.732; // sqrt(3) for equilateral triangle
+
+      // Edge midpoint (on sphere surface)
+      const midpoint = new THREE.Vector3()
+        .addVectors(vStart, vEnd)
+        .multiplyScalar(0.5)
+        .normalize();
+
+      // Edge direction (tangent to sphere at midpoint)
+      const edgeDir = new THREE.Vector3()
+        .subVectors(vEnd, vStart)
+        .sub(midpoint.clone().multiplyScalar(new THREE.Vector3().subVectors(vEnd, vStart).dot(midpoint)))
+        .normalize();
+
+      // Normal direction: perpendicular to edge, in tangent plane
+      // Points from the halfedge's tile side toward the twin's tile side
+      const normalDir = new THREE.Vector3().crossVectors(midpoint, edgeDir).normalize();
+
+      // Determine which direction the triangle should point
+      // If THIS_SIDE is dominant, triangle points toward this side (opposite of normalDir)
+      // If TWIN_SIDE is dominant, triangle points toward twin side (same as normalDir)
+      const pointDirection = dominance === ConvergentDominance.TWIN_SIDE
+        ? normalDir.clone()
+        : normalDir.clone().negate();
+
+      // Compute triangle vertices on sphere surface
+      // Base vertices: midpoint ± halfBase along edge direction
+      const baseLeft = midpoint.clone()
+        .add(edgeDir.clone().multiplyScalar(-halfBase))
+        .normalize()
+        .multiplyScalar(1 + offsetFactor);
+
+      const baseRight = midpoint.clone()
+        .add(edgeDir.clone().multiplyScalar(halfBase))
+        .normalize()
+        .multiplyScalar(1 + offsetFactor);
+
+      // Apex: midpoint + height in point direction
+      const apex = midpoint.clone()
+        .add(pointDirection.clone().multiplyScalar(height))
+        .normalize()
+        .multiplyScalar(1 + offsetFactor);
+
+      // Draw triangle as three line segments
+      // Base: left to right
+      positions.push(baseLeft.x, baseLeft.y, baseLeft.z);
+      positions.push(baseRight.x, baseRight.y, baseRight.z);
+      colors.push(color[0], color[1], color[2]);
+      colors.push(color[0], color[1], color[2]);
+
+      // Left side: left to apex
+      positions.push(baseLeft.x, baseLeft.y, baseLeft.z);
+      positions.push(apex.x, apex.y, apex.z);
+      colors.push(color[0], color[1], color[2]);
+      colors.push(color[0], color[1], color[2]);
+
+      // Right side: right to apex
+      positions.push(baseRight.x, baseRight.y, baseRight.z);
+      positions.push(apex.x, apex.y, apex.z);
+      colors.push(color[0], color[1], color[2]);
+      colors.push(color[0], color[1], color[2]);
+    }
+  }
+
+  lines.geometry.dispose();
+  lines.geometry = new LineSegmentsGeometry();
+  lines.geometry.setPositions(positions);
+  lines.geometry.setColors(colors);
+  lines.computeLineDistances();
+}
+
 export {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
@@ -431,5 +557,6 @@ export {
   makeLineSegments2FromBoundaryGradient,
   makeLineSegments2ForAllBoundaries,
   makeLineSegments2ForAllBoundariesByType,
-  makeLineSegments2ForNeighborTilesInPlate
+  makeLineSegments2ForNeighborTilesInPlate,
+  makeLineSegments2ForDominanceIndicators
 };

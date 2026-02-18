@@ -39,6 +39,7 @@ export class VisualizationManager {
   private motionVecLinesMaterial: LineMaterial;
   private boundaryLinesMaterial: LineMaterial;
   private allBoundariesLinesMaterial: LineMaterial;
+  private dominanceIndicatorsLinesMaterial: LineMaterial;
   private neighborTilesLinesMaterial: LineMaterial;
   private noiseGradientLinesMaterial: LineMaterial;
 
@@ -49,6 +50,7 @@ export class VisualizationManager {
   private motionVecLines: LineSegments2;
   private boundaryLines: LineSegments2;
   private allBoundariesLines: LineSegments2;
+  private dominanceIndicatorsLines: LineSegments2;
   private neighborTilesLines: LineSegments2;
   private noiseGradientLines: LineSegments2;
 
@@ -150,6 +152,14 @@ export class VisualizationManager {
       visible: true,
     });
 
+    this.dominanceIndicatorsLinesMaterial = new LineMaterial({
+      linewidth: 2,
+      depthTest: true,
+      depthWrite: true,
+      vertexColors: true,
+      visible: true,
+    });
+
     this.neighborTilesLinesMaterial = new LineMaterial({
       linewidth: 5,
       depthTest: true,
@@ -173,6 +183,7 @@ export class VisualizationManager {
     this.motionVecLines = new LineSegments2(new LineSegmentsGeometry(), this.motionVecLinesMaterial);
     this.boundaryLines = new LineSegments2(new LineSegmentsGeometry(), this.boundaryLinesMaterial);
     this.allBoundariesLines = new LineSegments2(new LineSegmentsGeometry(), this.allBoundariesLinesMaterial);
+    this.dominanceIndicatorsLines = new LineSegments2(new LineSegmentsGeometry(), this.dominanceIndicatorsLinesMaterial);
     this.neighborTilesLines = new LineSegments2(new LineSegmentsGeometry(), this.neighborTilesLinesMaterial);
     this.noiseGradientLines = new LineSegments2(new LineSegmentsGeometry(), this.noiseGradientLinesMaterial);
   }
@@ -686,6 +697,14 @@ export class VisualizationManager {
     return this.allBoundariesLinesMaterial;
   }
 
+  public getDominanceIndicatorsLines(): LineSegments2 {
+    return this.dominanceIndicatorsLines;
+  }
+
+  public getDominanceIndicatorsLinesMaterial(): LineMaterial {
+    return this.dominanceIndicatorsLinesMaterial;
+  }
+
   public getNeighborTilesLines(): LineSegments2 {
     return this.neighborTilesLines;
   }
@@ -716,5 +735,30 @@ export class VisualizationManager {
 
   public getIcoDualParams() {
     return this.icoDualParams;
+  }
+
+  /**
+   * Returns all objects that should be rotated together in the animation loop.
+   * Add new rotatable objects here to ensure they rotate with the globe.
+   */
+  public getRotatableObjects(): THREE.Object3D[] {
+    const objects: THREE.Object3D[] = [];
+
+    // Meshes
+    if (this.icosahedron) objects.push(this.icosahedron);
+    if (this.dualMesh) objects.push(this.dualMesh);
+
+    // Line segments
+    objects.push(this.halfedgeGraphLines);
+    objects.push(this.tileLines);
+    objects.push(this.plateLines);
+    objects.push(this.motionVecLines);
+    objects.push(this.boundaryLines);
+    objects.push(this.allBoundariesLines);
+    objects.push(this.dominanceIndicatorsLines);
+    objects.push(this.neighborTilesLines);
+    objects.push(this.noiseGradientLines);
+
+    return objects;
   }
 }

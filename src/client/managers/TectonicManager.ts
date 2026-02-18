@@ -7,6 +7,7 @@ import {
   computeNetRotation,
   computePlateBoundaries,
   caracterizePlateBoundaries,
+  computeBoundaryDominance,
   logTileTransferEligibility,
   categorizePlates,
   assignGeologicalTypes
@@ -19,7 +20,7 @@ import {
   transferTileToPlate,
   plateAbsorbedByPlate,
 } from '../tectonics/data/PlateOperations';
-import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType } from '../visualization/TectonicsDrawingUtils';
+import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType, makeLineSegments2ForDominanceIndicators } from '../visualization/TectonicsDrawingUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
 import { idToHSLColor, assignColorToTriangle } from '../utils/ColorUtils';
@@ -148,6 +149,9 @@ export class TectonicManager {
     // Categorize plates after boundaries are known (uses divergent edge info)
     categorizePlates(this.tectonicSystem);
 
+    // Compute convergent dominance after plate categories are assigned
+    computeBoundaryDominance(this.tectonicSystem);
+
     // Assign geological types to tiles (orogeny at convergent boundaries)
     assignGeologicalTypes(this.tectonicSystem);
 
@@ -187,6 +191,22 @@ export class TectonicManager {
     }
 
     scene.add(allBoundariesLines);
+
+    // Update dominance indicators visualization
+    const dominanceIndicatorsLines = this.visualizationManager.getDominanceIndicatorsLines();
+
+    if (dominanceIndicatorsLines) {
+      scene.remove(dominanceIndicatorsLines);
+    }
+
+    makeLineSegments2ForDominanceIndicators(this.tectonicSystem, dominanceIndicatorsLines);
+
+    // Copy rotation from allBoundariesLines to keep in sync
+    if (allBoundariesLines) {
+      dominanceIndicatorsLines.rotation.copy(allBoundariesLines.rotation);
+    }
+
+    scene.add(dominanceIndicatorsLines);
   }
 
   /**
@@ -216,6 +236,22 @@ export class TectonicManager {
     }
 
     scene.add(allBoundariesLines);
+
+    // Also refresh dominance indicators
+    const dominanceIndicatorsLines = this.visualizationManager.getDominanceIndicatorsLines();
+
+    if (dominanceIndicatorsLines) {
+      scene.remove(dominanceIndicatorsLines);
+    }
+
+    makeLineSegments2ForDominanceIndicators(this.tectonicSystem, dominanceIndicatorsLines);
+
+    // Copy rotation from allBoundariesLines to keep in sync
+    if (allBoundariesLines) {
+      dominanceIndicatorsLines.rotation.copy(allBoundariesLines.rotation);
+    }
+
+    scene.add(dominanceIndicatorsLines);
   }
 
   /**

@@ -53,67 +53,16 @@ export class AnimationController {
 
   /**
    * Applies rotation to all visualization objects.
+   * Uses VisualizationManager.getRotatableObjects() to ensure all objects rotate together.
    */
   private applyRotations(): void {
-    const icosahedron = this.visualizationManager.getIcosahedron();
-    const dualMesh = this.visualizationManager.getDualMesh();
-    const halfedgeGraphLines = this.visualizationManager.getHalfedgeGraphLines();
-    const tileLines = this.visualizationManager.getTileLines();
-    const plateLines = this.visualizationManager.getPlateLines();
-    const motionVecLines = this.visualizationManager.getMotionVecLines();
-    const boundaryLines = this.visualizationManager.getBoundaryLines();
-    const allBoundariesLines = this.visualizationManager.getAllBoundariesLines();
-    const neighborTilesLines = this.visualizationManager.getNeighborTilesLines();
-    const noiseGradientLines = this.visualizationManager.getNoiseGradientLines();
+    const rotatableObjects = this.visualizationManager.getRotatableObjects();
 
-    if (icosahedron) {
-      icosahedron.rotation.x += this.rotationSpeed;
-      icosahedron.rotation.y += this.rotationSpeed;
-    }
-
-    if (halfedgeGraphLines) {
-      halfedgeGraphLines.rotation.x += this.rotationSpeed;
-      halfedgeGraphLines.rotation.y += this.rotationSpeed;
-    }
-
-    if (tileLines) {
-      tileLines.rotation.x += this.rotationSpeed;
-      tileLines.rotation.y += this.rotationSpeed;
-    }
-
-    if (plateLines) {
-      plateLines.rotation.x += this.rotationSpeed;
-      plateLines.rotation.y += this.rotationSpeed;
-    }
-
-    if (motionVecLines) {
-      motionVecLines.rotation.x += this.rotationSpeed;
-      motionVecLines.rotation.y += this.rotationSpeed;
-    }
-
-    if (boundaryLines) {
-      boundaryLines.rotation.x += this.rotationSpeed;
-      boundaryLines.rotation.y += this.rotationSpeed;
-    }
-
-    if (allBoundariesLines) {
-      allBoundariesLines.rotation.x += this.rotationSpeed;
-      allBoundariesLines.rotation.y += this.rotationSpeed;
-    }
-
-    if (neighborTilesLines) {
-      neighborTilesLines.rotation.x += this.rotationSpeed;
-      neighborTilesLines.rotation.y += this.rotationSpeed;
-    }
-
-    if (dualMesh) {
-      dualMesh.rotation.x += this.rotationSpeed;
-      dualMesh.rotation.y += this.rotationSpeed;
-    }
-
-    if (noiseGradientLines) {
-      noiseGradientLines.rotation.x += this.rotationSpeed;
-      noiseGradientLines.rotation.y += this.rotationSpeed;
+    for (const obj of rotatableObjects) {
+      if (obj) {
+        obj.rotation.x += this.rotationSpeed;
+        obj.rotation.y += this.rotationSpeed;
+      }
     }
   }
 
