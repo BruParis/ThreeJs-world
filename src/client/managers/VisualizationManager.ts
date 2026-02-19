@@ -19,6 +19,7 @@ import {
   makeLineSegments2ForNeighborTilesInPlate
 } from '../visualization/TectonicsDrawingUtils';
 import { SceneManager } from './SceneManager';
+import { areaToKm2 } from '../world/World';
 
 /**
  * Manages all visualization elements: meshes, materials, lines, and rebuild logic.
@@ -504,9 +505,10 @@ export class VisualizationManager {
       color: #333;
       border: 1px solid #666;
     `;
+    const tileAreaKm2 = areaToKm2(tile.area);
     tileLabelDiv.innerHTML = `
       <strong>Tile #${tile.id}</strong><br>
-      Area: ${tile.area.toFixed(6)}
+      Area: ${tileAreaKm2.toLocaleString(undefined, { maximumFractionDigits: 0 })} km²
     `;
 
     this.tileLabel = new CSS2DObject(tileLabelDiv);
@@ -527,10 +529,11 @@ export class VisualizationManager {
       color: #333;
       border: 1px solid #336;
     `;
+    const plateAreaKm2 = areaToKm2(plate.area);
     plateLabelDiv.innerHTML = `
       <strong>Plate #${plate.id}</strong><br>
       Category: ${plate.category}<br>
-      Area: ${plate.area.toFixed(6)}<br>
+      Area: ${plateAreaKm2.toLocaleString(undefined, { maximumFractionDigits: 0 })} km²<br>
       Tiles: ${plate.tiles.size}
     `;
 
@@ -602,32 +605,22 @@ export class VisualizationManager {
         break;
 
       case 'rawType':
+        this.boundaryLinesMaterial.depthTest = true;
+        this.boundaryLines.renderOrder = 0;
         makeLineSegments2FromBoundary(this.currentBoundary, this.boundaryLines, true);
         scene.add(this.boundaryLines);
         break;
 
       case 'refinedType':
+        this.boundaryLinesMaterial.depthTest = true;
+        this.boundaryLines.renderOrder = 0;
         makeLineSegments2FromBoundary(this.currentBoundary, this.boundaryLines, false);
         scene.add(this.boundaryLines);
         break;
 
       case 'iteration':
-        if (!this.currentBoundary.limitEdges || !this.currentClickPoint) {
-          console.warn('Cannot display iteration: no limit edges or click point');
-          return;
-        }
-        const [limitA, limitB] = this.currentBoundary.limitEdges;
-        const distToA = this.currentClickPoint.distanceTo(
-          limitA.halfedge.vertex.position.clone().add(limitA.halfedge.next.vertex.position).multiplyScalar(0.5)
-        );
-        const distToB = this.currentClickPoint.distanceTo(
-          limitB.halfedge.vertex.position.clone().add(limitB.halfedge.next.vertex.position).multiplyScalar(0.5)
-        );
-        const closestLimit = distToA < distToB ? limitA : limitB;
-        const success = makeLineSegments2FromBoundaryGradient(this.currentBoundary, this.boundaryLines, closestLimit);
-        if (success) {
-          scene.add(this.boundaryLines);
-        }
+        // Edge Order mode: all boundaries are handled by refreshAllBoundariesDisplay
+        // No per-boundary visualization needed here
         break;
     }
   }

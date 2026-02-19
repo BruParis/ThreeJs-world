@@ -110,7 +110,7 @@ export class GUIManager {
       .onChange((value: PlateDisplayMode) => this.tectonicManager.setPlateDisplayMode(value));
     tectonicGui
       .add({ boundaryDisplay: this.interactionHandler.getBoundaryDisplayMode() }, 'boundaryDisplay',
-        { 'Raw': BoundaryDisplayMode.RAW_TYPE, 'Refined': BoundaryDisplayMode.REFINED_TYPE, 'Iteration': BoundaryDisplayMode.ITERATION })
+        { 'Raw': BoundaryDisplayMode.RAW_TYPE, 'Refined': BoundaryDisplayMode.REFINED_TYPE, 'Edge Order': BoundaryDisplayMode.EDGE_ORDER })
       .name('Boundary')
       .onChange((value: BoundaryDisplayMode) => {
         this.interactionHandler.setBoundaryDisplayMode(value);

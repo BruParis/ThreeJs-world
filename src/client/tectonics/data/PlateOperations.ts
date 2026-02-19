@@ -1,6 +1,14 @@
 import { Halfedge } from '@core/Halfedge';
 import { HalfedgeGraph } from '@core/HalfedgeGraph';
 import { Tile, Plate, TectonicSystem, PlateBoundary, BoundaryEdge, BoundaryType } from './Plate';
+import { kmToDistance } from '../../world/World';
+
+/**
+ * Smoothing window half-width in kilometers for boundary type refinement.
+ * This determines how far along the boundary we look when computing the
+ * majority boundary type.
+ */
+const SMOOTHING_WINDOW_HALF_KM = 700;
 
 // Helper class for managing a set of items with O(1) add, delete, and random access.
 class RandomSet<T> {
@@ -375,66 +383,124 @@ function splitPlateFromTile(tectonicSystem: TectonicSystem, bridgeTile: Tile): v
 }
 
 /**
- * Helper for refineBoundaryType: converts segments of certain types if bounded by a specific type.
- * @param orderedEdges Edges in order along the boundary
- * @param convertibleTypes Types that can be converted
- * @param boundingType The type that must be on both sides of a segment
- * @param targetType The type to convert to
+ * Computes the length of a boundary edge on the unit sphere.
+ * Returns the chord length between the two vertices.
  */
-function refinePass(
-  orderedEdges: BoundaryEdge[],
-  convertibleTypes: BoundaryType[],
-  boundingType: BoundaryType,
-  targetType: BoundaryType
-): void {
-  const n = orderedEdges.length;
-
-  // Find segments of convertible types
-  let i = 0;
-  while (i < n) {
-    const edge = orderedEdges[i];
-
-    if (!convertibleTypes.includes(edge.refinedType)) {
-      i++;
-      continue;
-    }
-
-    // Found start of a convertible segment
-    const segmentStart = i;
-    let segmentEnd = i;
-
-    // Find the end of this segment
-    while (segmentEnd < n && convertibleTypes.includes(orderedEdges[segmentEnd].refinedType)) {
-      segmentEnd++;
-    }
-    // segmentEnd now points to first edge after segment (or n if segment goes to end)
-
-    // Check what's before and after the segment
-    const beforeIdx = segmentStart - 1;
-    const afterIdx = segmentEnd;
-
-    const typeBefore = beforeIdx >= 0 ? orderedEdges[beforeIdx].refinedType : null;
-    const typeAfter = afterIdx < n ? orderedEdges[afterIdx].refinedType : null;
-
-    // If both sides are the bounding type, convert the segment
-    if (typeBefore === boundingType && typeAfter === boundingType) {
-      for (let j = segmentStart; j < segmentEnd; j++) {
-        orderedEdges[j].refinedType = targetType;
-      }
-    }
-
-    i = segmentEnd;
-  }
+function getEdgeLength(edge: BoundaryEdge): number {
+  const he = edge.halfedge;
+  return he.vertex.position.distanceTo(he.twin.vertex.position);
 }
 
 /**
- * Refines boundary edge types by smoothing out isolated segments.
+ * Computes the majority boundary type within a distance-based window.
+ * Considers CONVERGENT, DIVERGENT, and TRANSFORM as active types for voting.
+ * INACTIVE is treated as neutral and doesn't contribute to the vote.
  *
- * First pass: Convert inactive/transform edges to divergent if between two divergent segments,
- * or to convergent if between two convergent segments.
+ * @param orderedEdges Edges in order along the boundary
+ * @param edgeLengths Pre-computed lengths for each edge
+ * @param centerIdx Index of the edge being evaluated
+ * @param halfWindowDist Distance to consider on each side (in unit sphere units)
+ * @param globalMajority The majority type along the whole boundary (used as tiebreaker)
+ * @returns The majority active type, or null if no clear majority
+ */
+function getMajorityType(
+  orderedEdges: BoundaryEdge[],
+  edgeLengths: number[],
+  centerIdx: number,
+  halfWindowDist: number,
+  globalMajority: BoundaryType | null
+): BoundaryType | null {
+  const n = orderedEdges.length;
+  let convergentCount = 0;
+  let divergentCount = 0;
+  let transformCount = 0;
+
+  // Helper to count a boundary type
+  const countType = (type: BoundaryType) => {
+    if (type === BoundaryType.CONVERGENT) {
+      convergentCount++;
+    } else if (type === BoundaryType.DIVERGENT) {
+      divergentCount++;
+    } else if (type === BoundaryType.TRANSFORM) {
+      transformCount++;
+    }
+  };
+
+  // Count the center edge
+  countType(orderedEdges[centerIdx].rawType);
+
+  // Expand backwards from center until we exceed the distance threshold
+  let accumulatedDist = edgeLengths[centerIdx] / 2; // Start from center of current edge
+  for (let i = centerIdx - 1; i >= 0 && accumulatedDist < halfWindowDist; i--) {
+    accumulatedDist += edgeLengths[i];
+    countType(orderedEdges[i].rawType);
+  }
+
+  // Expand forwards from center until we exceed the distance threshold
+  accumulatedDist = edgeLengths[centerIdx] / 2;
+  for (let i = centerIdx + 1; i < n && accumulatedDist < halfWindowDist; i++) {
+    accumulatedDist += edgeLengths[i];
+    countType(orderedEdges[i].rawType);
+  }
+
+  // Determine majority among active types
+  const totalActive = convergentCount + divergentCount + transformCount;
+  if (totalActive === 0) {
+    return null; // No active types in window
+  }
+
+  // Find the maximum count
+  const maxCount = Math.max(convergentCount, divergentCount, transformCount);
+
+  // If clear majority (more than half), return that type
+  if (maxCount > totalActive / 2) {
+    if (convergentCount === maxCount) {
+      return BoundaryType.CONVERGENT;
+    } else if (divergentCount === maxCount) {
+      return BoundaryType.DIVERGENT;
+    } else {
+      return BoundaryType.TRANSFORM;
+    }
+  }
+
+  // No clear majority - use precedence rules:
+  // CONVERGENT and DIVERGENT take precedence over TRANSFORM
+  // Between CONVERGENT and DIVERGENT: if tied, use global majority as tiebreaker
+  if (convergentCount > divergentCount && convergentCount > 0) {
+    return BoundaryType.CONVERGENT;
+  } else if (divergentCount > convergentCount && divergentCount > 0) {
+    return BoundaryType.DIVERGENT;
+  } else if (convergentCount === divergentCount && convergentCount > 0) {
+    // Tied between CONVERGENT and DIVERGENT - use global majority
+    if (globalMajority === BoundaryType.CONVERGENT || globalMajority === BoundaryType.DIVERGENT) {
+      return globalMajority;
+    }
+    // Global majority is TRANSFORM or null - default to CONVERGENT
+    return BoundaryType.CONVERGENT;
+  } else if (transformCount > 0) {
+    return BoundaryType.TRANSFORM;
+  }
+
+  return null;
+}
+
+/**
+ * Refines boundary edge types by smoothing out geometric artifacts from hexagonal tiles.
  *
- * Second pass: Convert convergent edges to inactive if between two inactive segments,
- * or divergent edges to transform if between two transform segments.
+ * Problem: Hexagonal tile edges have varying orientations, causing the raw boundary
+ * type classification to alternate (e.g., DIVERGENT-CONVERGENT-DIVERGENT) even when
+ * the overall plate motion clearly indicates a single boundary type.
+ *
+ * Solution: Use majority voting over a distance-based sliding window to determine
+ * the dominant boundary type for each edge. The window size is defined in real-world
+ * units (km) via SMOOTHING_WINDOW_HALF_KM, making the smoothing consistent regardless
+ * of tile resolution.
+ *
+ * The algorithm:
+ * 1. For each edge, examine neighboring edges within SMOOTHING_WINDOW_HALF_KM distance
+ * 2. Count CONVERGENT, DIVERGENT, and TRANSFORM votes (INACTIVE is ignored)
+ * 3. Assign the majority type if there's a clear winner (>50% of votes)
+ * 4. Preserve INACTIVE only if no active type dominates nearby
  */
 function refineBoundaryType(boundary: PlateBoundary): void {
   // Collect edges in order
@@ -443,33 +509,61 @@ function refineBoundaryType(boundary: PlateBoundary): void {
     orderedEdges.push(edge);
   }
 
-  if (orderedEdges.length < 3) {
-    return; // Need at least 3 edges to have "between" relationship
+  const n = orderedEdges.length;
+  if (n < 3) {
+    return;
   }
 
-  // First pass: expand divergent/convergent into inactive/transform segments
-  refinePass(orderedEdges,
-    [BoundaryType.INACTIVE, BoundaryType.TRANSFORM], // types to convert
-    BoundaryType.DIVERGENT,  // if between these
-    BoundaryType.DIVERGENT   // convert to this
-  );
-  refinePass(orderedEdges,
-    [BoundaryType.INACTIVE, BoundaryType.TRANSFORM],
-    BoundaryType.CONVERGENT,
-    BoundaryType.CONVERGENT
-  );
+  // Pre-compute edge lengths
+  const edgeLengths = orderedEdges.map(getEdgeLength);
 
-  // Second pass: contract convergent/divergent into inactive/transform segments
-  refinePass(orderedEdges,
-    [BoundaryType.DIVERGENT, BoundaryType.CONVERGENT],
-    BoundaryType.INACTIVE,
-    BoundaryType.INACTIVE
-  );
-  refinePass(orderedEdges,
-    [BoundaryType.DIVERGENT, BoundaryType.CONVERGENT],
-    BoundaryType.TRANSFORM,
-    BoundaryType.TRANSFORM
-  );
+  // Compute global raw type counts for the entire boundary
+  let globalConvergent = 0;
+  let globalDiverging = 0;
+  for (const edge of orderedEdges) {
+    if (edge.rawType === BoundaryType.CONVERGENT) {
+      globalConvergent++;
+    } else if (edge.rawType === BoundaryType.DIVERGENT) {
+      globalDiverging++;
+    }
+  }
+
+  // Determine global majority (only between CONVERGENT and DIVERGENT)
+  let globalMajority: BoundaryType | null = null;
+  if (globalConvergent > globalDiverging) {
+    globalMajority = BoundaryType.CONVERGENT;
+  } else if (globalDiverging > globalConvergent) {
+    globalMajority = BoundaryType.DIVERGENT;
+  }
+  // If tied globally, globalMajority stays null (will fall back to CONVERGENT in getMajorityType)
+
+  // Convert km threshold to unit sphere distance
+  const halfWindowDist = kmToDistance(SMOOTHING_WINDOW_HALF_KM);
+
+  // Compute refined types based on majority voting
+  // Store in temporary array to avoid affecting neighbor calculations
+  const refinedTypes: BoundaryType[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const rawType = orderedEdges[i].rawType;
+    const majorityType = getMajorityType(orderedEdges, edgeLengths, i, halfWindowDist, globalMajority);
+
+    if (majorityType !== null) {
+      // Clear majority exists - use it
+      refinedTypes.push(majorityType);
+    } else if (rawType === BoundaryType.INACTIVE || rawType === BoundaryType.TRANSFORM) {
+      // No active majority and raw type is already weak - keep it
+      refinedTypes.push(rawType);
+    } else {
+      // No majority but raw type is active - keep raw type
+      refinedTypes.push(rawType);
+    }
+  }
+
+  // Apply refined types
+  for (let i = 0; i < n; i++) {
+    orderedEdges[i].refinedType = refinedTypes[i];
+  }
 }
 
 export {

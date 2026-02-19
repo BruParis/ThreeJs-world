@@ -180,32 +180,31 @@ function makeLineSegments2ForTileMotionVec(tectonicSystem: TectonicSystem, lines
 }
 
 /**
- * Creates line segments for a boundary with gradient coloring from one limit to another.
+ * Creates line segments for a boundary with gradient coloring along its length.
+ * For open boundaries, colors from one limit to the other (cyan to magenta).
+ * For closed loops, colors around the loop starting from the provided start edge.
+ *
  * @param boundary The plate boundary to visualize
  * @param lines The LineSegments2 object to populate
- * @param startLimit Optional: which limit edge to start from. If not provided, uses first limit.
- * @returns true if successful, false if boundary has no limits (closed loop)
+ * @param startEdge Optional: edge to start from. For open boundaries, should be a limit edge.
+ *                  For closed loops, can be any edge (e.g., closest to click point).
+ * @returns true if successful
  */
 function makeLineSegments2FromBoundaryGradient(
   boundary: PlateBoundary,
   lines: LineSegments2,
-  startLimit?: BoundaryEdge
+  startEdge?: BoundaryEdge
 ): boolean {
   const positions = new Array<number>();
   const colors = new Array<number>();
 
-  // Higher offset than allBoundaries (0.001) to render above them
-  const offsetFactor = 0.003;
-
-  // Check if boundary has limit edges
-  if (!boundary.limitEdges) {
-    console.warn(`PlateBoundary ${boundary.id}: no limit edges (closed loop), cannot create gradient`);
-    return false;
-  }
+  // Higher offset than other boundary visualizations to render above them
+  // Regular boundary lines use 0.003, all boundaries use 0.001
+  const offsetFactor = 0.006;
 
   // Collect edges in order
   const orderedEdges: BoundaryEdge[] = [];
-  for (const edge of boundary.iterateEdges(startLimit)) {
+  for (const edge of boundary.iterateEdges(startEdge)) {
     orderedEdges.push(edge);
   }
 
@@ -549,6 +548,65 @@ function makeLineSegments2ForDominanceIndicators(
   lines.computeLineDistances();
 }
 
+/**
+ * Creates line segments for all boundaries with gradient coloring along each boundary.
+ * Each boundary is colored with a cyan-to-magenta gradient from one end to the other.
+ * @param tectonicSystem The tectonic system containing all boundaries
+ * @param lines The LineSegments2 object to populate
+ */
+function makeLineSegments2ForAllBoundariesGradient(
+  tectonicSystem: TectonicSystem,
+  lines: LineSegments2
+): void {
+  const positions = new Array<number>();
+  const colors = new Array<number>();
+
+  const offsetFactor = 0.001;
+
+  // Gradient colors: start (cyan) to end (magenta)
+  const startColor = [0, 1, 1]; // Cyan
+  const endColor = [1, 0, 1];   // Magenta
+
+  for (const boundary of tectonicSystem.boundaries) {
+    // Collect edges in order for this boundary
+    const orderedEdges: BoundaryEdge[] = [];
+    for (const edge of boundary.iterateEdges()) {
+      orderedEdges.push(edge);
+    }
+
+    const totalEdges = orderedEdges.length;
+    if (totalEdges === 0) continue;
+
+    for (let i = 0; i < orderedEdges.length; i++) {
+      const bEdge = orderedEdges[i];
+      const t = totalEdges > 1 ? i / (totalEdges - 1) : 0;
+
+      const vStart = bEdge.halfedge.vertex.position.clone();
+      const vEnd = bEdge.halfedge.next.vertex.position.clone();
+
+      vStart.multiplyScalar(1 + offsetFactor);
+      vEnd.multiplyScalar(1 + offsetFactor);
+
+      positions.push(vStart.x, vStart.y, vStart.z);
+      positions.push(vEnd.x, vEnd.y, vEnd.z);
+
+      // Interpolate color
+      const r = startColor[0] + t * (endColor[0] - startColor[0]);
+      const g = startColor[1] + t * (endColor[1] - startColor[1]);
+      const b = startColor[2] + t * (endColor[2] - startColor[2]);
+
+      colors.push(r, g, b);
+      colors.push(r, g, b);
+    }
+  }
+
+  lines.geometry.dispose();
+  lines.geometry = new LineSegmentsGeometry();
+  lines.geometry.setPositions(positions);
+  lines.geometry.setColors(colors);
+  lines.computeLineDistances();
+}
+
 export {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
@@ -557,6 +615,7 @@ export {
   makeLineSegments2FromBoundaryGradient,
   makeLineSegments2ForAllBoundaries,
   makeLineSegments2ForAllBoundariesByType,
+  makeLineSegments2ForAllBoundariesGradient,
   makeLineSegments2ForNeighborTilesInPlate,
   makeLineSegments2ForDominanceIndicators
 };

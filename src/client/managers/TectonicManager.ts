@@ -20,7 +20,7 @@ import {
   transferTileToPlate,
   plateAbsorbedByPlate,
 } from '../tectonics/data/PlateOperations';
-import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType, makeLineSegments2ForDominanceIndicators } from '../visualization/TectonicsDrawingUtils';
+import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType, makeLineSegments2ForAllBoundariesGradient, makeLineSegments2ForDominanceIndicators } from '../visualization/TectonicsDrawingUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
 import { idToHSLColor, assignColorToTriangle } from '../utils/ColorUtils';
@@ -227,9 +227,13 @@ export class TectonicManager {
       scene.remove(allBoundariesLines);
     }
 
-    // For 'iteration' mode, fall back to refined type since gradient only applies to selected boundary
-    const useRawType = mode === 'rawType';
-    makeLineSegments2ForAllBoundariesByType(this.tectonicSystem, allBoundariesLines, useRawType);
+    if (mode === 'iteration') {
+      // Edge Order mode: show gradient coloring on all boundaries
+      makeLineSegments2ForAllBoundariesGradient(this.tectonicSystem, allBoundariesLines);
+    } else {
+      const useRawType = mode === 'rawType';
+      makeLineSegments2ForAllBoundariesByType(this.tectonicSystem, allBoundariesLines, useRawType);
+    }
 
     if (rotation) {
       allBoundariesLines.rotation.copy(rotation);

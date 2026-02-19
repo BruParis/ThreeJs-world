@@ -6,7 +6,7 @@ import { TectonicManager } from '../managers/TectonicManager';
 export enum BoundaryDisplayMode {
   RAW_TYPE = 'rawType',
   REFINED_TYPE = 'refinedType',
-  ITERATION = 'iteration'
+  EDGE_ORDER = 'iteration'  // Shows gradient from one end to the other
 }
 
 /**
