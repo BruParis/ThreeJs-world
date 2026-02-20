@@ -22,7 +22,10 @@ import { assignTransformGeology } from './TransformGeology';
  * 1. Active orogeny at convergent boundaries
  * 2. Fold-and-thrust belts at the periphery of orogeny zones
  * 3. Igneous provinces (LIPs) - blocks oceanic crust propagation
- * 4. Oceanic crust at oceanic/continental divergent boundaries
+ * 4. Oceanic crust at:
+ *    - All oceanic plate tiles
+ *    - Oceanic/continental divergent boundaries (propagates into continental)
+ *    - Intra-continental divergent boundaries connecting to oceanic plates
  * 5. Transform boundary geology (pull-apart basins at releasing bends)
  * 6. Foreland basins behind orogeny at convergent boundaries
  * 7. Rift basins at continental/continental divergent boundaries

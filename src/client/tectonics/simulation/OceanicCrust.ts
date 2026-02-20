@@ -366,6 +366,301 @@ function initOceanicCrustAtBoundary(
 }
 
 // ============================================================================
+// Intra-Continental Divergent Boundaries Connecting to Oceanic Plates
+// ============================================================================
+
+/**
+ * Configuration for oceanic crust propagation along intra-continental divergent boundaries.
+ */
+const INTRA_CONTINENTAL_CONFIG = {
+  // Maximum propagation distance from oceanic connection (in km)
+  MAX_PROPAGATION_KM: 2000,
+
+  // Base probability of assigning oceanic crust at connection point
+  BASE_PROBABILITY: 0.9,
+
+  // Minimum probability at maximum distance
+  MIN_PROBABILITY: 0.1,
+
+  // Width of the oceanic crust zone perpendicular to boundary (in km)
+  ZONE_WIDTH_KM: 150,
+};
+
+/**
+ * Finds the endpoints of divergent segments on a continental-continental boundary.
+ * Returns tiles that are at the boundary and adjacent to tiles already assigned as OCEANIC_CRUST.
+ * This should be called after oceanic crust has been assigned at oceanic/continental boundaries.
+ */
+function findDivergentBoundaryEndpoints(
+  boundary: PlateBoundary,
+  tectonicSystem: TectonicSystem
+): { tile: Tile; plate: Plate }[] {
+  const plateA = boundary.plateA;
+  const plateB = boundary.plateB;
+
+  // Only process continental-continental boundaries
+  if (plateA.category !== PlateCategory.CONTINENTAL ||
+      plateB.category !== PlateCategory.CONTINENTAL) {
+    return [];
+  }
+
+  // Check if boundary has divergent edges
+  let hasDivergent = false;
+  for (const bEdge of boundary.boundaryEdges) {
+    if (bEdge.refinedType === BoundaryType.DIVERGENT) {
+      hasDivergent = true;
+      break;
+    }
+  }
+
+  if (!hasDivergent) {
+    return [];
+  }
+
+  const endpoints: { tile: Tile; plate: Plate }[] = [];
+
+  // For each continental plate, find tiles at the divergent boundary
+  // that are adjacent to tiles already assigned as OCEANIC_CRUST
+  for (const continentalPlate of [plateA, plateB]) {
+    for (const bEdge of boundary.boundaryEdges) {
+      if (bEdge.refinedType !== BoundaryType.DIVERGENT) {
+        continue;
+      }
+
+      const he = bEdge.halfedge;
+      const tileOnThisSide = tectonicSystem.edge2TileMap.get(he);
+      const tileOnOtherSide = tectonicSystem.edge2TileMap.get(he.twin);
+
+      // Get the tile on this continental plate
+      let continentalTile: Tile | undefined;
+      if (tileOnThisSide?.plate === continentalPlate) {
+        continentalTile = tileOnThisSide;
+      } else if (tileOnOtherSide?.plate === continentalPlate) {
+        continentalTile = tileOnOtherSide;
+      }
+
+      if (!continentalTile) continue;
+
+      // Check if this tile has any neighbor already assigned as OCEANIC_CRUST
+      for (const neighborHe of continentalTile.loop()) {
+        const neighborTile = tectonicSystem.edge2TileMap.get(neighborHe.twin);
+        if (neighborTile && neighborTile.geologicalType === GeologicalType.OCEANIC_CRUST) {
+          // This tile is at the junction between continental divergence and oceanic crust
+          endpoints.push({ tile: continentalTile, plate: continentalPlate });
+          break;
+        }
+      }
+    }
+  }
+
+  // Remove duplicates (same tile might be found multiple times)
+  const seen = new Set<Tile>();
+  const uniqueEndpoints: { tile: Tile; plate: Plate }[] = [];
+  for (const ep of endpoints) {
+    if (!seen.has(ep.tile)) {
+      seen.add(ep.tile);
+      uniqueEndpoints.push(ep);
+    }
+  }
+
+  return uniqueEndpoints;
+}
+
+/**
+ * Collects all tiles along the divergent boundary for a given continental plate.
+ * Returns tiles ordered by their approximate position along the boundary.
+ */
+function collectDivergentBoundaryTiles(
+  boundary: PlateBoundary,
+  continentalPlate: Plate,
+  tectonicSystem: TectonicSystem
+): Set<Tile> {
+  const boundaryTiles = new Set<Tile>();
+
+  for (const bEdge of boundary.boundaryEdges) {
+    if (bEdge.refinedType !== BoundaryType.DIVERGENT) {
+      continue;
+    }
+
+    const he = bEdge.halfedge;
+    const tileA = tectonicSystem.edge2TileMap.get(he);
+    const tileB = tectonicSystem.edge2TileMap.get(he.twin);
+
+    if (tileA?.plate === continentalPlate) {
+      boundaryTiles.add(tileA);
+    }
+    if (tileB?.plate === continentalPlate) {
+      boundaryTiles.add(tileB);
+    }
+  }
+
+  return boundaryTiles;
+}
+
+/**
+ * Propagates oceanic crust from endpoints along a continental-continental divergent boundary.
+ * Uses BFS along boundary tiles with dampening based on distance from oceanic connection.
+ */
+function propagateOceanicCrustFromEndpoints(
+  endpoints: { tile: Tile; plate: Plate }[],
+  boundary: PlateBoundary,
+  tectonicSystem: TectonicSystem,
+  globalAssigned: Set<Tile>
+): number {
+  if (endpoints.length === 0) {
+    return 0;
+  }
+
+  const maxDistance = kmToDistance(INTRA_CONTINENTAL_CONFIG.MAX_PROPAGATION_KM);
+  const zoneWidth = kmToDistance(INTRA_CONTINENTAL_CONFIG.ZONE_WIDTH_KM);
+  let totalAssigned = 0;
+
+  // Group endpoints by plate
+  const endpointsByPlate = new Map<Plate, Tile[]>();
+  for (const ep of endpoints) {
+    if (!endpointsByPlate.has(ep.plate)) {
+      endpointsByPlate.set(ep.plate, []);
+    }
+    endpointsByPlate.get(ep.plate)!.push(ep.tile);
+  }
+
+  // Process each plate separately
+  for (const [plate, plateEndpoints] of endpointsByPlate) {
+    // Get all divergent boundary tiles for this plate
+    const boundaryTiles = collectDivergentBoundaryTiles(boundary, plate, tectonicSystem);
+
+    // Track assigned tiles and their distances
+    const assigned = new Set<Tile>();
+    const tileDistances = new Map<Tile, number>();
+
+    // Initialize BFS from endpoints
+    interface WaveTile {
+      tile: Tile;
+      distance: number;
+    }
+
+    let wave: WaveTile[] = [];
+
+    for (const endpointTile of plateEndpoints) {
+      if (endpointTile.geologicalType === GeologicalType.UNKNOWN) {
+        // Assign oceanic crust to endpoint
+        endpointTile.geologicalType = GeologicalType.OCEANIC_CRUST;
+        assigned.add(endpointTile);
+        globalAssigned.add(endpointTile);
+        tileDistances.set(endpointTile, 0);
+        totalAssigned++;
+        wave.push({ tile: endpointTile, distance: 0 });
+      }
+    }
+
+    // BFS along boundary tiles
+    while (wave.length > 0) {
+      const nextWave: WaveTile[] = [];
+
+      for (const { tile, distance } of wave) {
+        // Get neighbors
+        const neighbors = getNeighborTilesInPlate(tile, tectonicSystem);
+
+        for (const neighbor of neighbors) {
+          // Skip if already assigned
+          if (assigned.has(neighbor) || globalAssigned.has(neighbor)) {
+            continue;
+          }
+
+          // Skip if already has a geological type
+          if (neighbor.geologicalType !== GeologicalType.UNKNOWN) {
+            continue;
+          }
+
+          // Calculate distance to neighbor
+          const stepDistance = tile.centroid.distanceTo(neighbor.centroid);
+          const newDistance = distance + stepDistance;
+
+          // Check if within max propagation distance
+          if (newDistance > maxDistance) {
+            continue;
+          }
+
+          // Check if neighbor is on or near the boundary
+          const isOnBoundary = boundaryTiles.has(neighbor);
+
+          // If not on boundary, check if within zone width of a boundary tile
+          let isNearBoundary = isOnBoundary;
+          if (!isOnBoundary) {
+            for (const boundaryTile of boundaryTiles) {
+              const distToBoundary = neighbor.centroid.distanceTo(boundaryTile.centroid);
+              if (distToBoundary <= zoneWidth) {
+                isNearBoundary = true;
+                break;
+              }
+            }
+          }
+
+          if (!isNearBoundary) {
+            continue;
+          }
+
+          // Compute probability with dampening based on distance
+          const distanceFactor = 1 - (newDistance / maxDistance);
+          const probability = INTRA_CONTINENTAL_CONFIG.MIN_PROBABILITY +
+            (INTRA_CONTINENTAL_CONFIG.BASE_PROBABILITY - INTRA_CONTINENTAL_CONFIG.MIN_PROBABILITY) * distanceFactor;
+
+          // Random check with connectivity requirement
+          // Only assign if we pass probability check
+          if (Math.random() > probability) {
+            continue;
+          }
+
+          // Assign oceanic crust
+          neighbor.geologicalType = GeologicalType.OCEANIC_CRUST;
+          assigned.add(neighbor);
+          globalAssigned.add(neighbor);
+          tileDistances.set(neighbor, newDistance);
+          totalAssigned++;
+
+          nextWave.push({ tile: neighbor, distance: newDistance });
+        }
+      }
+
+      wave = nextWave;
+    }
+  }
+
+  return totalAssigned;
+}
+
+/**
+ * Assigns oceanic crust along intra-continental divergent boundaries
+ * that connect to oceanic plates at their endpoints.
+ */
+function assignOceanicCrustAtIntraContinentalDivergence(
+  tectonicSystem: TectonicSystem,
+  globalAssigned: Set<Tile>
+): number {
+  let totalAssigned = 0;
+
+  for (const boundary of tectonicSystem.boundaries) {
+    // Find endpoints where continental divergence meets oceanic plate
+    const endpoints = findDivergentBoundaryEndpoints(boundary, tectonicSystem);
+
+    if (endpoints.length === 0) {
+      continue;
+    }
+
+    // Propagate oceanic crust from endpoints
+    const count = propagateOceanicCrustFromEndpoints(
+      endpoints,
+      boundary,
+      tectonicSystem,
+      globalAssigned
+    );
+    totalAssigned += count;
+  }
+
+  return totalAssigned;
+}
+
+// ============================================================================
 // Assign All Oceanic Plate Tiles
 // ============================================================================
 
@@ -400,13 +695,17 @@ function assignAllOceanicPlateTiles(tectonicSystem: TectonicSystem): number {
  * Assigns oceanic crust type:
  * 1. To all tiles on oceanic plates
  * 2. Propagates into continental plates at oceanic/continental divergent boundaries
+ * 3. Propagates along intra-continental divergent boundaries from oceanic connections
  */
 export function assignOceanicCrustType(tectonicSystem: TectonicSystem): void {
+  // Track all assigned tiles globally to prevent duplicates
+  const globalAssigned = new Set<Tile>();
+
   // First: assign OCEANIC_CRUST to all tiles on oceanic plates
   const oceanicPlateCount = assignAllOceanicPlateTiles(tectonicSystem);
   console.log(`Assigned OCEANIC_CRUST to ${oceanicPlateCount} tiles on oceanic plates`);
 
-  // Second: propagate into continental plates at divergent boundaries
+  // Second: propagate into continental plates at oceanic/continental divergent boundaries
   const allBoundaryTiles: PropagatingTileState[] = [];
 
   for (const boundary of tectonicSystem.boundaries) {
@@ -416,6 +715,24 @@ export function assignOceanicCrustType(tectonicSystem: TectonicSystem): void {
 
   // Run propagation from all boundary tiles into continental plates
   runOceanicCrustPropagation(allBoundaryTiles, tectonicSystem);
+
+  // Update globalAssigned with tiles assigned so far
+  for (const plate of tectonicSystem.plates) {
+    for (const tile of plate.tiles) {
+      if (tile.geologicalType === GeologicalType.OCEANIC_CRUST) {
+        globalAssigned.add(tile);
+      }
+    }
+  }
+
+  // Third: propagate along intra-continental divergent boundaries from oceanic connections
+  const intraContinentalCount = assignOceanicCrustAtIntraContinentalDivergence(
+    tectonicSystem,
+    globalAssigned
+  );
+  if (intraContinentalCount > 0) {
+    console.log(`Assigned OCEANIC_CRUST to ${intraContinentalCount} tiles along intra-continental divergent boundaries`);
+  }
 
   // Log total results
   let totalOceanicCrustCount = 0;
@@ -428,6 +745,6 @@ export function assignOceanicCrustType(tectonicSystem: TectonicSystem): void {
   }
 
   const propagatedCount = totalOceanicCrustCount - oceanicPlateCount;
-  console.log(`Propagated OCEANIC_CRUST to ${propagatedCount} tiles in continental plates`);
+  console.log(`Propagated OCEANIC_CRUST to ${propagatedCount} tiles in continental plates (total)`);
   console.log(`Total OCEANIC_CRUST tiles: ${totalOceanicCrustCount}`);
 }
