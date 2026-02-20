@@ -11,7 +11,7 @@ import {
   transferTileToPlate,
   refineBoundaryType
 } from '../data/PlateOperations';
-import { computeNetRotation, computeTectonicDynamics, caracterizeBoundaryEdge, computeConvergentDominance } from '../dynamics/dynamics';
+import { computeNetRotation, computeTectonicDynamics, caracterizeBoundaryEdge, computeConvergentDominance, computeTransformSlide } from '../dynamics/dynamics';
 import { assignGeologicalTypes } from './Geology';
 
 function _splitPlateAtBridgeTiles(tectonicSystem: TectonicSystem): void {
@@ -504,14 +504,16 @@ function caracterizePlateBoundaries(tectonicSystem: TectonicSystem): void {
 }
 
 /**
- * Computes convergent dominance for all boundary edges.
- * This determines which plate is the overriding plate at convergent boundaries.
+ * Computes convergent dominance and transform slide for all boundary edges.
+ * - Convergent dominance: which plate is the overriding plate at convergent boundaries
+ * - Transform slide: direction each plate is sliding at transform boundaries
  * Must be called after boundary types are refined and plate categories are assigned.
  */
 function computeBoundaryDominance(tectonicSystem: TectonicSystem): void {
   for (const boundary of tectonicSystem.boundaries) {
     for (const bEdge of boundary.boundaryEdges) {
       computeConvergentDominance(tectonicSystem, bEdge);
+      computeTransformSlide(tectonicSystem, bEdge);
     }
   }
 }

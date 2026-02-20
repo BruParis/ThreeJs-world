@@ -56,11 +56,11 @@ const OROGENY_NOISE_CONFIG = {
  */
 const OROGENY_EXPANSION_KM = {
   // Continental-Continental collisions
-  CONTINENTAL_CONTINENTAL_INTENSIVE: [1000, 1500] as [number, number],
-  CONTINENTAL_CONTINENTAL_SLOW: [500, 800] as [number, number],
+  CONTINENTAL_CONTINENTAL_INTENSIVE: [700, 2000] as [number, number],
+  CONTINENTAL_CONTINENTAL_SLOW: [400, 800] as [number, number],
 
   // Oceanic-Continental collisions (subduction)
-  OCEANIC_CONTINENTAL_INTENSIVE: [200, 1000] as [number, number],
+  OCEANIC_CONTINENTAL_INTENSIVE: [200, 1200] as [number, number],
   OCEANIC_CONTINENTAL_SLOW: [150, 500] as [number, number],
 
   // Oceanic-Oceanic collisions
@@ -977,4 +977,195 @@ export function assignAncientOrogenyZones(tectonicSystem: TectonicSystem): void 
   }
 
   console.log(`Assigned ANCIENT_OROGEN to ${totalAssigned} tiles`);
+}
+
+// ============================================================================
+// Fold-and-Thrust Belt Assignment
+// ============================================================================
+
+/**
+ * Configuration for fold-and-thrust belt assignment.
+ * Fold-and-thrust belts form within low/moderate intensity orogeny zones
+ * and extend outward into unassigned terrain.
+ */
+const FOLD_AND_THRUST_CONFIG = {
+  // Width of fold-and-thrust propagation (in km)
+  WIDTH_KM: 400,
+
+  // Probability of selecting a low/moderate orogeny tile as starting point
+  STARTING_PROBABILITY: 0.05,
+
+  // Probability of assigning fold-and-thrust to eligible tiles during propagation
+  ASSIGNMENT_PROBABILITY: 0.6,
+};
+
+/**
+ * Checks if a tile has eligible intensity for fold-and-thrust (MODERATE or lower).
+ */
+function isEligibleIntensity(intensity: GeologicalIntensity): boolean {
+  return intensity === GeologicalIntensity.LOW ||
+         intensity === GeologicalIntensity.MODERATE;
+}
+
+/**
+ * Collects all OROGEN tiles with MODERATE or lower intensity that could be
+ * starting points for fold-and-thrust assignment.
+ */
+function collectLowModerateOrogenyTiles(
+  tectonicSystem: TectonicSystem
+): Tile[] {
+  const eligibleTiles: Tile[] = [];
+
+  for (const plate of tectonicSystem.plates) {
+    // Only continental plates have fold-and-thrust belts
+    if (plate.category !== PlateCategory.CONTINENTAL) {
+      continue;
+    }
+
+    for (const tile of plate.tiles) {
+      if (tile.geologicalType === GeologicalType.OROGEN &&
+          isEligibleIntensity(tile.geologicalIntensity)) {
+        eligibleTiles.push(tile);
+      }
+    }
+  }
+
+  return eligibleTiles;
+}
+
+/**
+ * Randomly selects starting tiles from eligible orogeny tiles.
+ */
+function selectFoldAndThrustStartingTiles(
+  eligibleTiles: Tile[]
+): Set<Tile> {
+  const startingTiles = new Set<Tile>();
+
+  for (const tile of eligibleTiles) {
+    if (Math.random() < FOLD_AND_THRUST_CONFIG.STARTING_PROBABILITY) {
+      startingTiles.add(tile);
+    }
+  }
+
+  return startingTiles;
+}
+
+/**
+ * Propagates fold-and-thrust zones from starting tiles within orogeny.
+ * Can propagate to:
+ * - OROGEN tiles with intensity <= MODERATE (convert to FOLD_AND_THRUST)
+ * - UNKNOWN tiles (assign as FOLD_AND_THRUST)
+ */
+function propagateFoldAndThrust(
+  startTiles: Set<Tile>,
+  tectonicSystem: TectonicSystem
+): number {
+  const maxWidth = kmToDistance(FOLD_AND_THRUST_CONFIG.WIDTH_KM);
+  const assigned = new Set<Tile>();
+  let totalAssigned = 0;
+
+  // Track tiles with their distance from starting point
+  interface PropagatingTile {
+    tile: Tile;
+    distance: number;
+  }
+
+  // Initialize with starting tiles (distance 0)
+  let currentWave: PropagatingTile[] = [];
+  for (const tile of startTiles) {
+    // Convert starting orogeny tiles to fold-and-thrust
+    tile.geologicalType = GeologicalType.FOLD_AND_THRUST;
+    tile.geologicalIntensity = GeologicalIntensity.NONE;
+    assigned.add(tile);
+    totalAssigned++;
+    currentWave.push({ tile, distance: 0 });
+  }
+
+  // Propagate outward
+  while (currentWave.length > 0) {
+    const nextWave: PropagatingTile[] = [];
+
+    for (const { tile, distance } of currentWave) {
+      const neighbors = getNeighborTilesInPlate(tile, tectonicSystem);
+
+      for (const neighbor of neighbors) {
+        // Skip already assigned tiles
+        if (assigned.has(neighbor)) {
+          continue;
+        }
+
+        // Check if neighbor is eligible:
+        // - OROGEN with intensity <= MODERATE
+        // - UNKNOWN
+        const isEligibleOrogen = neighbor.geologicalType === GeologicalType.OROGEN &&
+                                  isEligibleIntensity(neighbor.geologicalIntensity);
+        const isUnknown = neighbor.geologicalType === GeologicalType.UNKNOWN;
+
+        if (!isEligibleOrogen && !isUnknown) {
+          continue;
+        }
+
+        // Compute distance
+        const stepDistance = tile.centroid.distanceTo(neighbor.centroid);
+        const newDistance = distance + stepDistance;
+
+        // Stop if beyond max width
+        if (newDistance > maxWidth) {
+          continue;
+        }
+
+        // Probability decreases with distance
+        const distanceFactor = 1 - (newDistance / maxWidth);
+        const probability = FOLD_AND_THRUST_CONFIG.ASSIGNMENT_PROBABILITY * distanceFactor;
+
+        if (Math.random() < probability) {
+          neighbor.geologicalType = GeologicalType.FOLD_AND_THRUST;
+          neighbor.geologicalIntensity = GeologicalIntensity.NONE;
+          assigned.add(neighbor);
+          totalAssigned++;
+          nextWave.push({ tile: neighbor, distance: newDistance });
+        }
+      }
+    }
+
+    currentWave = nextWave;
+  }
+
+  return totalAssigned;
+}
+
+/**
+ * Assigns fold-and-thrust belts starting from within orogeny zones.
+ *
+ * Fold-and-thrust belts form where compressional forces from mountain building
+ * propagate outward. This function:
+ * 1. Collects all OROGEN tiles with MODERATE or lower intensity
+ * 2. Randomly selects some as starting points
+ * 3. Propagates to nearby tiles that are either:
+ *    - OROGEN with intensity <= MODERATE (converts to FOLD_AND_THRUST)
+ *    - UNKNOWN (assigns as FOLD_AND_THRUST)
+ *
+ * This function should be called after orogeny assignment.
+ */
+export function assignFoldAndThrustBelts(tectonicSystem: TectonicSystem): void {
+  // Collect all OROGEN tiles with MODERATE or lower intensity
+  const eligibleTiles = collectLowModerateOrogenyTiles(tectonicSystem);
+
+  if (eligibleTiles.length === 0) {
+    console.log('Assigned FOLD_AND_THRUST to 0 tiles (no eligible orogeny tiles found)');
+    return;
+  }
+
+  // Randomly select starting tiles
+  const startingTiles = selectFoldAndThrustStartingTiles(eligibleTiles);
+
+  if (startingTiles.size === 0) {
+    console.log('Assigned FOLD_AND_THRUST to 0 tiles (no starting tiles selected)');
+    return;
+  }
+
+  // Propagate fold-and-thrust from starting tiles
+  const totalAssigned = propagateFoldAndThrust(startingTiles, tectonicSystem);
+
+  console.log(`Assigned FOLD_AND_THRUST to ${totalAssigned} tiles (from ${startingTiles.size} starting points within orogeny)`);
 }

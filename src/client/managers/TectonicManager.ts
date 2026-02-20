@@ -20,7 +20,7 @@ import {
   transferTileToPlate,
   plateAbsorbedByPlate,
 } from '../tectonics/data/PlateOperations';
-import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType, makeLineSegments2ForAllBoundariesGradient, makeLineSegments2ForDominanceIndicators } from '../visualization/TectonicsDrawingUtils';
+import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType, makeLineSegments2ForAllBoundariesGradient, makeLineSegments2ForDominanceIndicators, makeLineSegments2ForTransformSlideIndicators } from '../visualization/TectonicsDrawingUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
 import { idToHSLColor, assignColorToTriangle } from '../utils/ColorUtils';
@@ -207,6 +207,22 @@ export class TectonicManager {
     }
 
     scene.add(dominanceIndicatorsLines);
+
+    // Update transform slide indicators visualization
+    const transformSlideLines = this.visualizationManager.getTransformSlideLines();
+
+    if (transformSlideLines) {
+      scene.remove(transformSlideLines);
+    }
+
+    makeLineSegments2ForTransformSlideIndicators(this.tectonicSystem, transformSlideLines);
+
+    // Copy rotation from allBoundariesLines to keep in sync
+    if (allBoundariesLines) {
+      transformSlideLines.rotation.copy(allBoundariesLines.rotation);
+    }
+
+    scene.add(transformSlideLines);
   }
 
   /**
@@ -256,6 +272,22 @@ export class TectonicManager {
     }
 
     scene.add(dominanceIndicatorsLines);
+
+    // Also refresh transform slide indicators
+    const transformSlideLines = this.visualizationManager.getTransformSlideLines();
+
+    if (transformSlideLines) {
+      scene.remove(transformSlideLines);
+    }
+
+    makeLineSegments2ForTransformSlideIndicators(this.tectonicSystem, transformSlideLines);
+
+    // Copy rotation from allBoundariesLines to keep in sync
+    if (allBoundariesLines) {
+      transformSlideLines.rotation.copy(allBoundariesLines.rotation);
+    }
+
+    scene.add(transformSlideLines);
   }
 
   /**

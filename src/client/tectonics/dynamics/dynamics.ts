@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BoundaryEdge, BoundaryType, ConvergentDominance, Plate, PlateCategory, TectonicSystem, Tile } from '../data/Plate';
+import { BoundaryEdge, BoundaryType, ConvergentDominance, TransformSlide, Plate, PlateCategory, TectonicSystem, Tile } from '../data/Plate';
 
 /**
  * Computes the net rotation vector of all plates in the tectonic system.
@@ -386,9 +386,91 @@ function computeConvergentDominance(tectonicSystem: TectonicSystem, bEdge: Bound
   }
 }
 
+/**
+ * Computes the transform slide directions for a boundary edge.
+ *
+ * For transform boundaries, each plate slides past the other. The slide direction
+ * is determined by the tangential component of each plate's motion relative to the edge:
+ * - FORWARD: Plate is moving in the direction of the edge vector (vertex -> twin.vertex)
+ * - BACKWARD: Plate is moving opposite to the edge vector
+ *
+ * This information is used to visualize the relative motion with arrows parallel to the edge.
+ *
+ * @param tectonicSystem The tectonic system context
+ * @param bEdge The boundary edge to compute slide directions for
+ */
+function computeTransformSlide(tectonicSystem: TectonicSystem, bEdge: BoundaryEdge): void {
+  // Only compute for transform boundaries
+  if (bEdge.refinedType !== BoundaryType.TRANSFORM) {
+    bEdge.thisSideSlide = TransformSlide.NOT_APPLICABLE;
+    bEdge.twinSideSlide = TransformSlide.NOT_APPLICABLE;
+    return;
+  }
+
+  const he = bEdge.halfedge;
+  const tile = tectonicSystem.edge2TileMap.get(he);
+  const twinTile = tectonicSystem.edge2TileMap.get(he.twin);
+
+  if (!tile || !twinTile) {
+    console.warn("Could not find tiles for boundary halfedge", he.id);
+    bEdge.thisSideSlide = TransformSlide.UNDETERMINED;
+    bEdge.twinSideSlide = TransformSlide.UNDETERMINED;
+    return;
+  }
+
+  // Get edge midpoint on the sphere surface
+  const edgeMidpoint = new THREE.Vector3()
+    .addVectors(he.vertex.position, he.twin.vertex.position)
+    .multiplyScalar(0.5)
+    .normalize();
+
+  // Compute edge direction (tangent to sphere at midpoint)
+  // This is the direction from vertex to twin.vertex
+  const edgeVec = new THREE.Vector3().subVectors(he.twin.vertex.position, he.vertex.position);
+  const edgeDir = edgeVec.clone()
+    .sub(edgeMidpoint.clone().multiplyScalar(edgeVec.dot(edgeMidpoint)))
+    .normalize();
+
+  // Project each tile's motion onto the edge direction (tangential component)
+  // Positive = moving in edge direction (FORWARD)
+  // Negative = moving opposite to edge direction (BACKWARD)
+
+  // This side's motion projected onto tangent plane at midpoint
+  const thisSideMotion = tile.motionVec.clone()
+    .sub(edgeMidpoint.clone().multiplyScalar(tile.motionVec.dot(edgeMidpoint)));
+  const thisSideTangent = thisSideMotion.dot(edgeDir);
+
+  // Twin side's motion projected onto tangent plane at midpoint
+  const twinSideMotion = twinTile.motionVec.clone()
+    .sub(edgeMidpoint.clone().multiplyScalar(twinTile.motionVec.dot(edgeMidpoint)));
+  const twinSideTangent = twinSideMotion.dot(edgeDir);
+
+  // Determine slide directions
+  // Use a small threshold to avoid noise
+  const threshold = 0.0001;
+
+  if (thisSideTangent > threshold) {
+    bEdge.thisSideSlide = TransformSlide.FORWARD;
+  } else if (thisSideTangent < -threshold) {
+    bEdge.thisSideSlide = TransformSlide.BACKWARD;
+  } else {
+    // Very small motion - default to forward (arbitrary choice)
+    bEdge.thisSideSlide = TransformSlide.FORWARD;
+  }
+
+  if (twinSideTangent > threshold) {
+    bEdge.twinSideSlide = TransformSlide.FORWARD;
+  } else if (twinSideTangent < -threshold) {
+    bEdge.twinSideSlide = TransformSlide.BACKWARD;
+  } else {
+    bEdge.twinSideSlide = TransformSlide.FORWARD;
+  }
+}
+
 export {
   computeNetRotation,
   computeTectonicDynamics,
   caracterizeBoundaryEdge,
-  computeConvergentDominance
+  computeConvergentDominance,
+  computeTransformSlide
 };

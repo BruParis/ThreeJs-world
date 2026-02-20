@@ -291,12 +291,33 @@ export enum ConvergentDominance {
   NEITHER = 'neither'
 }
 
+/**
+ * Indicates the sliding direction of a plate at a transform boundary.
+ *
+ * The direction is relative to the edge vector (from halfedge.vertex to halfedge.twin.vertex):
+ * - FORWARD: The plate is sliding in the same direction as the edge vector
+ * - BACKWARD: The plate is sliding opposite to the edge vector
+ *
+ * Each side of a transform boundary has its own slide direction.
+ */
+export enum TransformSlide {
+  /** Not a transform boundary - slide concept doesn't apply */
+  NOT_APPLICABLE = 'not_applicable',
+  /** Transform boundary but slide not yet computed */
+  UNDETERMINED = 'undetermined',
+  /** Plate is sliding in the direction of the edge vector (vertex -> twin.vertex) */
+  FORWARD = 'forward',
+  /** Plate is sliding opposite to the edge vector */
+  BACKWARD = 'backward'
+}
+
 export enum GeologicalType {
   UNKNOWN = 'unknown',
   SHIELD = 'shield',
   PLATFORM = 'platform',
   OROGEN = 'orogen',
   ANCIENT_OROGEN = 'ancient_orogen',
+  FOLD_AND_THRUST = 'fold_and_thrust',
   BASIN = 'basin',
   MAGMATIC = 'magmatic',
   EXTENDED_CRUST = 'extended_crust',
@@ -312,12 +333,16 @@ export class BoundaryEdge {
   private _rawType: BoundaryType;
   private _refinedType: BoundaryType;
   private _dominance: ConvergentDominance;
+  private _thisSideSlide: TransformSlide;
+  private _twinSideSlide: TransformSlide;
 
   constructor(edge: Halfedge) {
     this.halfedge = edge;
     this._rawType = BoundaryType.UNKNOWN;
     this._refinedType = BoundaryType.UNKNOWN;
     this._dominance = ConvergentDominance.NOT_APPLICABLE;
+    this._thisSideSlide = TransformSlide.NOT_APPLICABLE;
+    this._twinSideSlide = TransformSlide.NOT_APPLICABLE;
   }
 
   get rawType(): BoundaryType {
@@ -331,6 +356,14 @@ export class BoundaryEdge {
     this._dominance = value === BoundaryType.CONVERGENT
       ? ConvergentDominance.UNDETERMINED
       : ConvergentDominance.NOT_APPLICABLE;
+    // Reset transform slide when raw type changes
+    if (value === BoundaryType.TRANSFORM) {
+      this._thisSideSlide = TransformSlide.UNDETERMINED;
+      this._twinSideSlide = TransformSlide.UNDETERMINED;
+    } else {
+      this._thisSideSlide = TransformSlide.NOT_APPLICABLE;
+      this._twinSideSlide = TransformSlide.NOT_APPLICABLE;
+    }
   }
 
   get refinedType(): BoundaryType {
@@ -344,6 +377,14 @@ export class BoundaryEdge {
       this._dominance = ConvergentDominance.NOT_APPLICABLE;
     } else if (this._dominance === ConvergentDominance.NOT_APPLICABLE) {
       this._dominance = ConvergentDominance.UNDETERMINED;
+    }
+    // Update transform slide applicability when refined type changes
+    if (value !== BoundaryType.TRANSFORM) {
+      this._thisSideSlide = TransformSlide.NOT_APPLICABLE;
+      this._twinSideSlide = TransformSlide.NOT_APPLICABLE;
+    } else if (this._thisSideSlide === TransformSlide.NOT_APPLICABLE) {
+      this._thisSideSlide = TransformSlide.UNDETERMINED;
+      this._twinSideSlide = TransformSlide.UNDETERMINED;
     }
   }
 
@@ -364,6 +405,44 @@ export class BoundaryEdge {
       console.warn(`Setting dominance on non-convergent boundary (type=${this._refinedType})`);
     }
     this._dominance = value;
+  }
+
+  /**
+   * Gets the transform slide direction for the tile on this halfedge's side.
+   * Only meaningful when refinedType is TRANSFORM.
+   */
+  get thisSideSlide(): TransformSlide {
+    return this._thisSideSlide;
+  }
+
+  /**
+   * Sets the transform slide direction for the tile on this halfedge's side.
+   * Should only be set when refinedType is TRANSFORM.
+   */
+  set thisSideSlide(value: TransformSlide) {
+    if (this._refinedType !== BoundaryType.TRANSFORM && value !== TransformSlide.NOT_APPLICABLE) {
+      console.warn(`Setting thisSideSlide on non-transform boundary (type=${this._refinedType})`);
+    }
+    this._thisSideSlide = value;
+  }
+
+  /**
+   * Gets the transform slide direction for the tile on the twin halfedge's side.
+   * Only meaningful when refinedType is TRANSFORM.
+   */
+  get twinSideSlide(): TransformSlide {
+    return this._twinSideSlide;
+  }
+
+  /**
+   * Sets the transform slide direction for the tile on the twin halfedge's side.
+   * Should only be set when refinedType is TRANSFORM.
+   */
+  set twinSideSlide(value: TransformSlide) {
+    if (this._refinedType !== BoundaryType.TRANSFORM && value !== TransformSlide.NOT_APPLICABLE) {
+      console.warn(`Setting twinSideSlide on non-transform boundary (type=${this._refinedType})`);
+    }
+    this._twinSideSlide = value;
   }
 }
 

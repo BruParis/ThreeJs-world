@@ -41,6 +41,7 @@ export class VisualizationManager {
   private boundaryLinesMaterial: LineMaterial;
   private allBoundariesLinesMaterial: LineMaterial;
   private dominanceIndicatorsLinesMaterial: LineMaterial;
+  private transformSlideLinesMaterial: LineMaterial;
   private neighborTilesLinesMaterial: LineMaterial;
   private noiseGradientLinesMaterial: LineMaterial;
 
@@ -52,6 +53,7 @@ export class VisualizationManager {
   private boundaryLines: LineSegments2;
   private allBoundariesLines: LineSegments2;
   private dominanceIndicatorsLines: LineSegments2;
+  private transformSlideLines: LineSegments2;
   private neighborTilesLines: LineSegments2;
   private noiseGradientLines: LineSegments2;
 
@@ -161,6 +163,14 @@ export class VisualizationManager {
       visible: true,
     });
 
+    this.transformSlideLinesMaterial = new LineMaterial({
+      linewidth: 2,
+      depthTest: true,
+      depthWrite: true,
+      vertexColors: true,
+      visible: true,
+    });
+
     this.neighborTilesLinesMaterial = new LineMaterial({
       linewidth: 5,
       depthTest: true,
@@ -185,6 +195,7 @@ export class VisualizationManager {
     this.boundaryLines = new LineSegments2(new LineSegmentsGeometry(), this.boundaryLinesMaterial);
     this.allBoundariesLines = new LineSegments2(new LineSegmentsGeometry(), this.allBoundariesLinesMaterial);
     this.dominanceIndicatorsLines = new LineSegments2(new LineSegmentsGeometry(), this.dominanceIndicatorsLinesMaterial);
+    this.transformSlideLines = new LineSegments2(new LineSegmentsGeometry(), this.transformSlideLinesMaterial);
     this.neighborTilesLines = new LineSegments2(new LineSegmentsGeometry(), this.neighborTilesLinesMaterial);
     this.noiseGradientLines = new LineSegments2(new LineSegmentsGeometry(), this.noiseGradientLinesMaterial);
   }
@@ -698,6 +709,14 @@ export class VisualizationManager {
     return this.dominanceIndicatorsLinesMaterial;
   }
 
+  public getTransformSlideLines(): LineSegments2 {
+    return this.transformSlideLines;
+  }
+
+  public getTransformSlideLinesMaterial(): LineMaterial {
+    return this.transformSlideLinesMaterial;
+  }
+
   public getNeighborTilesLines(): LineSegments2 {
     return this.neighborTilesLines;
   }
@@ -749,6 +768,7 @@ export class VisualizationManager {
     objects.push(this.boundaryLines);
     objects.push(this.allBoundariesLines);
     objects.push(this.dominanceIndicatorsLines);
+    objects.push(this.transformSlideLines);
     objects.push(this.neighborTilesLines);
     objects.push(this.noiseGradientLines);
 

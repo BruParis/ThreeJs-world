@@ -9,7 +9,8 @@ export const GEOLOGICAL_TYPE_BASE_COLORS: Record<GeologicalType, [number, number
   [GeologicalType.SHIELD]: [1.0, 0.6, 0.2],            // Orange (ancient stable cores)
   [GeologicalType.PLATFORM]: [1.0, 0.6, 0.8],          // Pink (sedimentary cover on shield)
   [GeologicalType.OROGEN]: [0.0, 1.0, 1.0],            // Cyan (active mountains)
-  [GeologicalType.ANCIENT_OROGEN]: [0.1, 0.5, 0.5],    // Tan/brown (old eroded mountains)
+  [GeologicalType.ANCIENT_OROGEN]: [0.1, 0.5, 0.5],    // Teal (old eroded mountains)
+  [GeologicalType.FOLD_AND_THRUST]: [0.3, 0.7, 0.4],   // Rust/amber (transpressional ridges along transforms)
   [GeologicalType.BASIN]: [0.6, 0.6, 0.9],             // Light blue (sedimentary basins)
   [GeologicalType.MAGMATIC]: [0.5, 0.5, 0.5],          // Grey (default)
   [GeologicalType.EXTENDED_CRUST]: [0.6, 0.4, 0.6],    // Purple (rifted/thinned continental crust)
@@ -64,7 +65,7 @@ export function getGeologicalColor(
   const baseColor = GEOLOGICAL_TYPE_BASE_COLORS[type];
 
   // Types that do not use intensity - return base color directly
-  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN || type === GeologicalType.IGNEOUS_PROVINCE) {
+  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.FOLD_AND_THRUST || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN || type === GeologicalType.IGNEOUS_PROVINCE) {
     return baseColor;
   }
 
@@ -78,7 +79,7 @@ export function getGeologicalColor(
  */
 export function getGeologicalTypeColor(type: GeologicalType): [number, number, number] {
   // Types that use base color directly (no intensity)
-  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN || type === GeologicalType.IGNEOUS_PROVINCE) {
+  if (type === GeologicalType.ANCIENT_OROGEN || type === GeologicalType.FOLD_AND_THRUST || type === GeologicalType.SHIELD || type === GeologicalType.PLATFORM || type === GeologicalType.OCEANIC_CRUST || type === GeologicalType.BASIN || type === GeologicalType.IGNEOUS_PROVINCE) {
     return GEOLOGICAL_TYPE_BASE_COLORS[type];
   }
   // For active orogen, use intensity-based blending
@@ -120,6 +121,7 @@ export const GEOLOGICAL_INTENSITY_LEGEND: { label: string; intensity: Geological
 export const GEOLOGY_TYPE_LEGEND: { label: string; type: GeologicalType }[] = [
   { label: 'Orogen', type: GeologicalType.OROGEN },
   { label: 'Ancient Orogen', type: GeologicalType.ANCIENT_OROGEN },
+  { label: 'Fold & Thrust', type: GeologicalType.FOLD_AND_THRUST },
   { label: 'Shield', type: GeologicalType.SHIELD },
   { label: 'Platform', type: GeologicalType.PLATFORM },
   { label: 'Oceanic Crust', type: GeologicalType.OCEANIC_CRUST },

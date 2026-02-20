@@ -2,12 +2,14 @@ import { GeologicalType, GeologicalIntensity, TectonicSystem } from '../data/Pla
 import {
   assignOrogenyType,
   assignAncientOrogenyZones,
+  assignFoldAndThrustBelts,
   PROPAGATION_CONFIG
 } from './Orogeny';
 import { assignShieldZones } from './Shield';
 import { assignOceanicCrustType } from './OceanicCrust';
 import { assignForelandBasins, assignRiftBasins, assignIntracratonicBasins } from './Basin';
 import { assignIgneousProvinces } from './IgneousProvince';
+import { assignTransformGeology } from './TransformGeology';
 
 // ============================================================================
 // Main Entry Point
@@ -18,13 +20,15 @@ import { assignIgneousProvinces } from './IgneousProvince';
  * Order matters - earlier types block later propagation.
  * Handles:
  * 1. Active orogeny at convergent boundaries
- * 2. Igneous provinces (LIPs) - blocks oceanic crust propagation
- * 3. Oceanic crust at oceanic/continental divergent boundaries
- * 4. Foreland basins behind orogeny at convergent boundaries
- * 5. Rift basins at continental/continental divergent boundaries
- * 6. Ancient orogeny zones (remnants of former mountain belts)
- * 7. Shield zones (ancient cratonic cores)
- * 8. Intracratonic basins within shield/platform regions
+ * 2. Fold-and-thrust belts at the periphery of orogeny zones
+ * 3. Igneous provinces (LIPs) - blocks oceanic crust propagation
+ * 4. Oceanic crust at oceanic/continental divergent boundaries
+ * 5. Transform boundary geology (pull-apart basins at releasing bends)
+ * 6. Foreland basins behind orogeny at convergent boundaries
+ * 7. Rift basins at continental/continental divergent boundaries
+ * 8. Ancient orogeny zones (remnants of former mountain belts)
+ * 9. Shield zones (ancient cratonic cores)
+ * 10. Intracratonic basins within shield/platform regions
  */
 function assignGeologicalTypes(tectonicSystem: TectonicSystem): void {
   // Reset all tiles
@@ -38,12 +42,19 @@ function assignGeologicalTypes(tectonicSystem: TectonicSystem): void {
   // Assign active orogeny at convergent boundaries
   assignOrogenyType(tectonicSystem);
 
+  // Assign fold-and-thrust belts at the periphery of orogeny zones
+  // Must be called right after orogeny so peripheral tiles are still UNKNOWN
+  assignFoldAndThrustBelts(tectonicSystem);
+
   // Assign igneous provinces (LIPs) - must be before oceanic crust so propagation stops at LIPs
   assignIgneousProvinces(tectonicSystem);
 
   // Assign oceanic crust at oceanic/continental divergent boundaries
   // Propagation stops when meeting igneous provinces or other assigned types
   assignOceanicCrustType(tectonicSystem);
+
+  // Assign transform boundary geology (pull-apart basins at releasing bends)
+  assignTransformGeology(tectonicSystem);
 
   // Assign foreland basins behind orogeny at convergent boundaries (Case 1)
   assignForelandBasins(tectonicSystem);

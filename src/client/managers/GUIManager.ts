@@ -5,9 +5,10 @@ import { TectonicManager } from './TectonicManager';
 import { NoiseManager } from './NoiseManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
 import { PlateDisplayMode } from '../visualization/PlateColors';
+import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
 
 const MIN_DEGREE = 0;
-const MAX_DEGREE = 6;
+const MAX_DEGREE = 7;
 
 /**
  * Manages the dat.GUI interface and coordinates user input with other managers.
@@ -136,6 +137,14 @@ export class GUIManager {
       .add({ reset: this.tectonicManager.isRecomputeOrogenyMode() }, 'reset')
       .name('Reset Orogeny')
       .onChange((value: boolean) => this.tectonicManager.setRecomputeOrogenyMode(value));
+
+    // Color legend subfolder
+    const legendGui = geologyGui.addFolder('Legend');
+    for (const entry of GEOLOGY_TYPE_LEGEND) {
+      const colorHex = geologyTypeColorToHex(entry.type);
+      const colorObj = { color: colorHex };
+      legendGui.addColor(colorObj, 'color').name(entry.label).listen();
+    }
 
     // Debug/Stats (collapsed by default)
     const statsGui = this.gui.addFolder('Stats');

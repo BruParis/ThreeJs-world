@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 
-import { Tile, Plate, PlateBoundary, BoundaryType, BoundaryEdge, TectonicSystem, ConvergentDominance } from '../tectonics/data/Plate';
+import { Tile, Plate, PlateBoundary, BoundaryType, BoundaryEdge, TectonicSystem, ConvergentDominance, TransformSlide } from '../tectonics/data/Plate';
 import { BOUNDARY_COLORS } from './BoundaryColors';
+import { kmToDistance } from '../world/World';
 
 
 function makeLineSegments2FromTile(tile: Tile, lines: LineSegments2): void {
@@ -607,6 +608,284 @@ function makeLineSegments2ForAllBoundariesGradient(
   lines.computeLineDistances();
 }
 
+/**
+ * Configuration for transform slide indicators.
+ * All distances are in kilometers.
+ */
+const TRANSFORM_SLIDE_CONFIG = {
+  // Distance interval between arrows (in km)
+  ARROW_INTERVAL_KM: 700,
+  // Arrow length (in km)
+  ARROW_LENGTH_KM: 100,
+  // Lateral offset from boundary center (in km)
+  LATERAL_OFFSET_KM: 30,
+  // Vertical offset to render above boundary lines (in km)
+  VERTICAL_OFFSET_KM: 6,
+  // Arrow head size as fraction of arrow length
+  ARROW_HEAD_FRACTION: 0.3,
+};
+
+/**
+ * Represents a group of consecutive transform edges for arrow placement.
+ */
+interface TransformEdgeGroup {
+  edges: BoundaryEdge[];
+  centerPosition: THREE.Vector3;
+  edgeDirection: THREE.Vector3;
+  normalDirection: THREE.Vector3;
+  thisSideSlide: TransformSlide;
+  twinSideSlide: TransformSlide;
+}
+
+/**
+ * Collects transform edges from a boundary into groups based on distance intervals.
+ * Each group spans approximately ARROW_INTERVAL_KM and is used to place one pair of arrows.
+ */
+function collectTransformEdgeGroups(boundary: PlateBoundary): TransformEdgeGroup[] {
+  const groups: TransformEdgeGroup[] = [];
+  const intervalDistance = kmToDistance(TRANSFORM_SLIDE_CONFIG.ARROW_INTERVAL_KM);
+
+  let currentGroup: BoundaryEdge[] = [];
+  let accumulatedDistance = 0;
+  let groupStartPos: THREE.Vector3 | null = null;
+
+  for (const bEdge of boundary.iterateEdges()) {
+    // Check if this is a transform edge with valid slide data
+    if (bEdge.refinedType !== BoundaryType.TRANSFORM ||
+        bEdge.thisSideSlide === TransformSlide.NOT_APPLICABLE ||
+        bEdge.thisSideSlide === TransformSlide.UNDETERMINED) {
+      // Non-transform edge: finalize current group if any
+      if (currentGroup.length > 0) {
+        const group = finalizeEdgeGroup(currentGroup);
+        if (group) groups.push(group);
+        currentGroup = [];
+        accumulatedDistance = 0;
+        groupStartPos = null;
+      }
+      continue;
+    }
+
+    // Add edge to current group
+    currentGroup.push(bEdge);
+
+    // Track starting position for the group
+    if (!groupStartPos) {
+      groupStartPos = bEdge.halfedge.vertex.position.clone();
+    }
+
+    // Accumulate edge length
+    const he = bEdge.halfedge;
+    const edgeLength = he.vertex.position.distanceTo(he.twin.vertex.position);
+    accumulatedDistance += edgeLength;
+
+    // Check if we've reached the interval threshold
+    if (accumulatedDistance >= intervalDistance) {
+      const group = finalizeEdgeGroup(currentGroup);
+      if (group) groups.push(group);
+      currentGroup = [];
+      accumulatedDistance = 0;
+      groupStartPos = null;
+    }
+  }
+
+  // Finalize any remaining edges
+  if (currentGroup.length > 0) {
+    const group = finalizeEdgeGroup(currentGroup);
+    if (group) groups.push(group);
+  }
+
+  return groups;
+}
+
+/**
+ * Creates a TransformEdgeGroup from a list of consecutive transform edges.
+ * Computes the center position, average direction, and dominant slide directions.
+ */
+function finalizeEdgeGroup(edges: BoundaryEdge[]): TransformEdgeGroup | null {
+  if (edges.length === 0) return null;
+
+  // Compute center position (average of all edge midpoints)
+  const centerPosition = new THREE.Vector3();
+  const avgEdgeDirection = new THREE.Vector3();
+
+  // Count slide directions to determine dominant
+  let thisSideForwardCount = 0;
+  let twinSideForwardCount = 0;
+
+  for (const bEdge of edges) {
+    const he = bEdge.halfedge;
+    const vStart = he.vertex.position;
+    const vEnd = he.twin.vertex.position;
+
+    // Add midpoint to center
+    const midpoint = new THREE.Vector3().addVectors(vStart, vEnd).multiplyScalar(0.5);
+    centerPosition.add(midpoint);
+
+    // Add edge direction (normalized at the end)
+    const edgeVec = new THREE.Vector3().subVectors(vEnd, vStart);
+    avgEdgeDirection.add(edgeVec);
+
+    // Count slide directions
+    if (bEdge.thisSideSlide === TransformSlide.FORWARD) {
+      thisSideForwardCount++;
+    }
+    if (bEdge.twinSideSlide === TransformSlide.FORWARD) {
+      twinSideForwardCount++;
+    }
+  }
+
+  // Average and normalize center position (project to sphere surface)
+  centerPosition.divideScalar(edges.length).normalize();
+
+  // Project average edge direction onto tangent plane at center and normalize
+  const edgeDirection = avgEdgeDirection.clone()
+    .sub(centerPosition.clone().multiplyScalar(avgEdgeDirection.dot(centerPosition)))
+    .normalize();
+
+  // Compute normal direction (perpendicular to edge, in tangent plane)
+  const normalDirection = new THREE.Vector3().crossVectors(centerPosition, edgeDirection).normalize();
+
+  // Determine dominant slide direction (majority vote)
+  const halfCount = edges.length / 2;
+  const thisSideSlide = thisSideForwardCount > halfCount ? TransformSlide.FORWARD : TransformSlide.BACKWARD;
+  const twinSideSlide = twinSideForwardCount > halfCount ? TransformSlide.FORWARD : TransformSlide.BACKWARD;
+
+  return {
+    edges,
+    centerPosition,
+    edgeDirection,
+    normalDirection,
+    thisSideSlide,
+    twinSideSlide,
+  };
+}
+
+/**
+ * Creates line segments for transform boundary slide indicators.
+ * Groups consecutive transform edges by distance intervals and draws one pair of
+ * arrows per group, reducing visual clutter at high resolutions.
+ *
+ * Each group of edges (spanning ~500km by default) gets:
+ * - One arrow on each side of the boundary, offset perpendicular to it
+ * - Each arrow points in the dominant slide direction for that side
+ *
+ * @param tectonicSystem The tectonic system containing boundary info
+ * @param lines The LineSegments2 object to populate
+ */
+function makeLineSegments2ForTransformSlideIndicators(
+  tectonicSystem: TectonicSystem,
+  lines: LineSegments2
+): void {
+  const positions = new Array<number>();
+  const colors = new Array<number>();
+
+  const arrowLength = kmToDistance(TRANSFORM_SLIDE_CONFIG.ARROW_LENGTH_KM);
+  const headLength = arrowLength * TRANSFORM_SLIDE_CONFIG.ARROW_HEAD_FRACTION;
+  const lateralOffset = kmToDistance(TRANSFORM_SLIDE_CONFIG.LATERAL_OFFSET_KM);
+  const verticalOffset = kmToDistance(TRANSFORM_SLIDE_CONFIG.VERTICAL_OFFSET_KM);
+
+  const color = BOUNDARY_COLORS[BoundaryType.TRANSFORM];
+
+  // Helper function to draw an arrow at a position
+  const drawArrow = (
+    center: THREE.Vector3,
+    direction: THREE.Vector3,
+    slideDirection: TransformSlide,
+    offsetDirection: THREE.Vector3
+  ) => {
+    // Offset the arrow center perpendicular to boundary
+    const arrowCenter = center.clone()
+      .add(offsetDirection.clone().multiplyScalar(lateralOffset))
+      .normalize()
+      .multiplyScalar(1 + verticalOffset);
+
+    // Arrow direction based on slide
+    const arrowDir = slideDirection === TransformSlide.FORWARD
+      ? direction.clone()
+      : direction.clone().negate();
+
+    // Arrow start and end points
+    const arrowStart = arrowCenter.clone()
+      .add(arrowDir.clone().multiplyScalar(-arrowLength / 2))
+      .normalize()
+      .multiplyScalar(1 + verticalOffset);
+
+    const arrowEnd = arrowCenter.clone()
+      .add(arrowDir.clone().multiplyScalar(arrowLength / 2))
+      .normalize()
+      .multiplyScalar(1 + verticalOffset);
+
+    // Draw arrow shaft
+    positions.push(arrowStart.x, arrowStart.y, arrowStart.z);
+    positions.push(arrowEnd.x, arrowEnd.y, arrowEnd.z);
+    colors.push(color[0], color[1], color[2]);
+    colors.push(color[0], color[1], color[2]);
+
+    // Draw arrow head (two lines forming a V)
+    const headBase = arrowEnd.clone()
+      .add(arrowDir.clone().multiplyScalar(-headLength))
+      .normalize()
+      .multiplyScalar(1 + verticalOffset);
+
+    // Perpendicular direction for arrow head wings
+    const wingDir = new THREE.Vector3().crossVectors(arrowCenter.clone().normalize(), arrowDir).normalize();
+    const wingSize = headLength * 0.5;
+
+    const wing1 = headBase.clone()
+      .add(wingDir.clone().multiplyScalar(wingSize))
+      .normalize()
+      .multiplyScalar(1 + verticalOffset);
+
+    const wing2 = headBase.clone()
+      .add(wingDir.clone().multiplyScalar(-wingSize))
+      .normalize()
+      .multiplyScalar(1 + verticalOffset);
+
+    // Head line 1: wing1 to tip
+    positions.push(wing1.x, wing1.y, wing1.z);
+    positions.push(arrowEnd.x, arrowEnd.y, arrowEnd.z);
+    colors.push(color[0], color[1], color[2]);
+    colors.push(color[0], color[1], color[2]);
+
+    // Head line 2: wing2 to tip
+    positions.push(wing2.x, wing2.y, wing2.z);
+    positions.push(arrowEnd.x, arrowEnd.y, arrowEnd.z);
+    colors.push(color[0], color[1], color[2]);
+    colors.push(color[0], color[1], color[2]);
+  };
+
+  // Process each boundary
+  for (const boundary of tectonicSystem.boundaries) {
+    // Collect transform edge groups for this boundary
+    const groups = collectTransformEdgeGroups(boundary);
+
+    // Draw arrows for each group
+    for (const group of groups) {
+      // Draw arrow for this side (offset opposite of normalDir)
+      drawArrow(
+        group.centerPosition,
+        group.edgeDirection,
+        group.thisSideSlide,
+        group.normalDirection.clone().negate()
+      );
+
+      // Draw arrow for twin side (offset along normalDir)
+      drawArrow(
+        group.centerPosition,
+        group.edgeDirection,
+        group.twinSideSlide,
+        group.normalDirection
+      );
+    }
+  }
+
+  lines.geometry.dispose();
+  lines.geometry = new LineSegmentsGeometry();
+  lines.geometry.setPositions(positions);
+  lines.geometry.setColors(colors);
+  lines.computeLineDistances();
+}
+
 export {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,
@@ -617,5 +896,6 @@ export {
   makeLineSegments2ForAllBoundariesByType,
   makeLineSegments2ForAllBoundariesGradient,
   makeLineSegments2ForNeighborTilesInPlate,
-  makeLineSegments2ForDominanceIndicators
+  makeLineSegments2ForDominanceIndicators,
+  makeLineSegments2ForTransformSlideIndicators
 };

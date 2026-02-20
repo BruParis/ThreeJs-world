@@ -1,4 +1,4 @@
-import { Tile, Plate, PlateCategory, BoundaryType, GeologicalType, TectonicSystem, PlateBoundary } from '../data/Plate';
+import { Tile, Plate, PlateCategory, BoundaryType, GeologicalType, GeologicalIntensity, TectonicSystem, PlateBoundary } from '../data/Plate';
 import { getNeighborTilesInPlate, getMotionDecile, getAreaDecile } from './GeologyUtils';
 import { kmToDistance } from '../../world/World';
 
@@ -8,8 +8,8 @@ import { kmToDistance } from '../../world/World';
 //
 // Case 1: Foreland Basins
 // - Form behind mountain ranges (orogens) at convergent boundaries
-// - For each convergent boundary where at least one plate is continental
-// - Navigate through orogeny to find UNKNOWN tiles, then propagate
+// - Start from within low/moderate intensity orogeny zones
+// - Propagate to nearby low/moderate orogeny or UNKNOWN tiles
 // - Limited by area ratio per basin
 //
 // Case 2: Rift Basins
@@ -34,162 +34,69 @@ const BASIN_CONFIG = {
   // Each starting point can create a basin up to this ratio of the plate's area
   MAX_AREA_RATIO_PER_BASIN: 0.01,  // 1% of plate area per basin
 
-  // Number of starting points per boundary length
-  // Roughly 1 starting point per X km of boundary
-  KM_PER_STARTING_POINT: 3000,
+  // Probability of selecting a low/moderate orogeny tile as starting point
+  STARTING_PROBABILITY: 0.03,
 
-  // Minimum and maximum starting points per boundary
-  MIN_STARTING_POINTS: 1,
-  MAX_STARTING_POINTS: 5,
-
-  // Maximum search depth when looking for UNKNOWN tiles through orogeny
-  MAX_SEARCH_DEPTH: 50,
+  // Propagation width from starting point (in km)
+  PROPAGATION_WIDTH_KM: 300,
 
   // Probability of propagation (adds randomization)
-  PROPAGATION_PROBABILITY: 0.75,
+  PROPAGATION_PROBABILITY: 0.6,
 };
 
 // ============================================================================
-// Starting Point Selection
+// Helper Functions for Foreland Basins
 // ============================================================================
 
 /**
- * Estimates the length of a boundary in km based on its edge count.
- * Uses average edge length approximation.
+ * Checks if a tile has eligible intensity for basin starting (MODERATE or lower).
  */
-function estimateBoundaryLengthKm(boundary: PlateBoundary): number {
-  // Count convergent edges only
-  let convergentEdgeCount = 0;
-  let totalEdgeLength = 0;
-
-  for (const bEdge of boundary.boundaryEdges) {
-    if (bEdge.refinedType === BoundaryType.CONVERGENT) {
-      convergentEdgeCount++;
-      const he = bEdge.halfedge;
-      const edgeLength = he.vertex.position.distanceTo(he.twin.vertex.position);
-      totalEdgeLength += edgeLength;
-    }
-  }
-
-  if (convergentEdgeCount === 0) {
-    return 0;
-  }
-
-  // Convert unit sphere distance to km (Earth radius ~6371 km)
-  const earthRadiusKm = 6371;
-  return totalEdgeLength * earthRadiusKm;
+function isEligibleIntensityForBasin(intensity: GeologicalIntensity): boolean {
+  return intensity === GeologicalIntensity.LOW ||
+         intensity === GeologicalIntensity.MODERATE;
 }
 
 /**
- * Determines how many starting points to use for a boundary based on its length.
+ * Collects all OROGEN tiles with MODERATE or lower intensity that could be
+ * starting points for foreland basin assignment.
  */
-function computeStartingPointCount(boundaryLengthKm: number): number {
-  const count = Math.round(boundaryLengthKm / BASIN_CONFIG.KM_PER_STARTING_POINT);
-  return Math.max(
-    BASIN_CONFIG.MIN_STARTING_POINTS,
-    Math.min(BASIN_CONFIG.MAX_STARTING_POINTS, count)
-  );
-}
-
-/**
- * Selects evenly-spaced starting tiles from convergent boundary edges on a continental plate.
- */
-function selectBoundaryStartingTiles(
-  boundary: PlateBoundary,
-  continentalPlate: Plate,
-  tectonicSystem: TectonicSystem,
-  count: number
+function collectLowModerateOrogenyTilesForBasin(
+  tectonicSystem: TectonicSystem
 ): Tile[] {
-  // Collect all continental tiles at convergent edges
-  const boundaryTiles: Tile[] = [];
-  const seenTiles = new Set<Tile>();
+  const eligibleTiles: Tile[] = [];
 
-  for (const bEdge of boundary.boundaryEdges) {
-    if (bEdge.refinedType !== BoundaryType.CONVERGENT) {
+  for (const plate of tectonicSystem.plates) {
+    // Only continental plates have foreland basins
+    if (plate.category !== PlateCategory.CONTINENTAL) {
       continue;
     }
 
-    const he = bEdge.halfedge;
-    const tileA = tectonicSystem.edge2TileMap.get(he);
-    const tileB = tectonicSystem.edge2TileMap.get(he.twin);
-
-    // Add tiles from the continental plate
-    if (tileA && tileA.plate === continentalPlate && !seenTiles.has(tileA)) {
-      boundaryTiles.push(tileA);
-      seenTiles.add(tileA);
-    }
-    if (tileB && tileB.plate === continentalPlate && !seenTiles.has(tileB)) {
-      boundaryTiles.push(tileB);
-      seenTiles.add(tileB);
-    }
-  }
-
-  if (boundaryTiles.length === 0) {
-    return [];
-  }
-
-  // Select evenly-spaced tiles
-  const selectedTiles: Tile[] = [];
-  const step = Math.max(1, Math.floor(boundaryTiles.length / count));
-
-  for (let i = 0; i < count && i * step < boundaryTiles.length; i++) {
-    selectedTiles.push(boundaryTiles[i * step]);
-  }
-
-  return selectedTiles;
-}
-
-// ============================================================================
-// Navigation Through Orogeny to Find Basin Starting Points
-// ============================================================================
-
-/**
- * Navigates from a boundary tile into the continental plate interior,
- * passing through orogeny tiles until finding UNKNOWN tiles.
- * Returns the first UNKNOWN tile found, or null if none found.
- */
-function findBasinStartingTile(
-  startTile: Tile,
-  tectonicSystem: TectonicSystem
-): Tile | null {
-  const visited = new Set<Tile>();
-  let currentWave: Tile[] = [startTile];
-  visited.add(startTile);
-
-  for (let depth = 0; depth < BASIN_CONFIG.MAX_SEARCH_DEPTH; depth++) {
-    const nextWave: Tile[] = [];
-
-    for (const tile of currentWave) {
-      // Get neighbors in the same plate
-      const neighbors = getNeighborTilesInPlate(tile, tectonicSystem);
-
-      for (const neighbor of neighbors) {
-        if (visited.has(neighbor)) {
-          continue;
-        }
-        visited.add(neighbor);
-
-        // If we found an UNKNOWN tile, this is our starting point
-        if (neighbor.geologicalType === GeologicalType.UNKNOWN) {
-          return neighbor;
-        }
-
-        // Continue through orogeny tiles
-        if (neighbor.geologicalType === GeologicalType.OROGEN ||
-            neighbor.geologicalType === GeologicalType.ANCIENT_OROGEN) {
-          nextWave.push(neighbor);
-        }
+    for (const tile of plate.tiles) {
+      if (tile.geologicalType === GeologicalType.OROGEN &&
+          isEligibleIntensityForBasin(tile.geologicalIntensity)) {
+        eligibleTiles.push(tile);
       }
     }
-
-    if (nextWave.length === 0) {
-      break;
-    }
-
-    currentWave = nextWave;
   }
 
-  return null;
+  return eligibleTiles;
+}
+
+/**
+ * Randomly selects starting tiles from eligible orogeny tiles for basin assignment.
+ */
+function selectBasinStartingTiles(
+  eligibleTiles: Tile[]
+): Set<Tile> {
+  const startingTiles = new Set<Tile>();
+
+  for (const tile of eligibleTiles) {
+    if (Math.random() < BASIN_CONFIG.STARTING_PROBABILITY) {
+      startingTiles.add(tile);
+    }
+  }
+
+  return startingTiles;
 }
 
 // ============================================================================
@@ -197,157 +104,104 @@ function findBasinStartingTile(
 // ============================================================================
 
 /**
- * Performs basin propagation from a starting tile.
- * Propagates in all directions with randomization.
- * Limited by area ratio of the target plate.
- *
- * @param startTile - The tile to start propagation from
- * @param plate - The plate we're propagating into (for area limit calculation)
- * @param tectonicSystem - The tectonic system
- * @param globalAssigned - Set of tiles already assigned (modified in place)
- * @returns Number of tiles assigned to this basin
+ * Propagates foreland basin from starting tiles within orogeny.
+ * Can propagate to:
+ * - OROGEN tiles with intensity <= MODERATE (convert to BASIN)
+ * - UNKNOWN tiles (assign as BASIN)
  */
-function propagateBasin(
-  startTile: Tile,
-  plate: Plate,
+function propagateForelandBasin(
+  startTiles: Set<Tile>,
   tectonicSystem: TectonicSystem,
   globalAssigned: Set<Tile>
 ): number {
-  // Compute maximum area for this basin based on plate area
-  const maxArea = plate.area * BASIN_CONFIG.MAX_AREA_RATIO_PER_BASIN;
+  const maxWidth = kmToDistance(BASIN_CONFIG.PROPAGATION_WIDTH_KM);
+  let totalAssigned = 0;
 
-  const assigned = new Set<Tile>();
-  let assignedArea = 0;
+  // Track tiles with their distance from starting point
+  interface PropagatingTile {
+    tile: Tile;
+    distance: number;
+    plate: Plate;
+  }
 
-  // Initialize with starting tile
-  startTile.geologicalType = GeologicalType.BASIN;
-  assigned.add(startTile);
-  globalAssigned.add(startTile);
-  assignedArea += startTile.area;
+  // Process each starting tile independently (each becomes a separate basin)
+  for (const tile of startTiles) {
+    // Compute maximum area for this basin based on plate area
+    const maxArea = tile.plate.area * BASIN_CONFIG.MAX_AREA_RATIO_PER_BASIN;
 
-  let currentWave: Tile[] = [startTile];
+    // Track area per basin (each starting tile is a separate basin)
+    const basinAssigned = new Set<Tile>();
+    let basinArea = 0;
 
-  while (currentWave.length > 0) {
-    const nextWave: Tile[] = [];
+    // Convert starting orogeny tile to basin
+    tile.geologicalType = GeologicalType.BASIN;
+    tile.geologicalIntensity = GeologicalIntensity.NONE;
+    basinAssigned.add(tile);
+    globalAssigned.add(tile);
+    basinArea += tile.area;
+    totalAssigned++;
 
-    for (const tile of currentWave) {
-      // Get neighbors in the same plate
-      const neighbors = getNeighborTilesInPlate(tile, tectonicSystem);
+    // Propagate from this starting tile
+    let wave: PropagatingTile[] = [{ tile, distance: 0, plate: tile.plate }];
 
-      for (const neighbor of neighbors) {
-        // Skip already assigned in this basin
-        if (assigned.has(neighbor)) {
-          continue;
+    while (wave.length > 0) {
+      const nextWave: PropagatingTile[] = [];
+
+      for (const { tile: currentTile, distance, plate } of wave) {
+        const neighbors = getNeighborTilesInPlate(currentTile, tectonicSystem);
+
+        for (const neighbor of neighbors) {
+          // Skip already assigned tiles
+          if (basinAssigned.has(neighbor) || globalAssigned.has(neighbor)) {
+            continue;
+          }
+
+          // Check if neighbor is eligible:
+          // - OROGEN with intensity <= MODERATE
+          // - UNKNOWN
+          const isEligibleOrogen = neighbor.geologicalType === GeologicalType.OROGEN &&
+                                    isEligibleIntensityForBasin(neighbor.geologicalIntensity);
+          const isUnknown = neighbor.geologicalType === GeologicalType.UNKNOWN;
+
+          if (!isEligibleOrogen && !isUnknown) {
+            continue;
+          }
+
+          // Compute distance
+          const stepDistance = currentTile.centroid.distanceTo(neighbor.centroid);
+          const newDistance = distance + stepDistance;
+
+          // Stop if beyond max width
+          if (newDistance > maxWidth) {
+            continue;
+          }
+
+          // Check area limit
+          if (basinArea + neighbor.area > maxArea) {
+            continue;
+          }
+
+          // Probability decreases with distance
+          const distanceFactor = 1 - (newDistance / maxWidth);
+          const probability = BASIN_CONFIG.PROPAGATION_PROBABILITY * distanceFactor;
+
+          if (Math.random() < probability) {
+            neighbor.geologicalType = GeologicalType.BASIN;
+            neighbor.geologicalIntensity = GeologicalIntensity.NONE;
+            basinAssigned.add(neighbor);
+            globalAssigned.add(neighbor);
+            basinArea += neighbor.area;
+            totalAssigned++;
+            nextWave.push({ tile: neighbor, distance: newDistance, plate });
+          }
         }
-
-        // Skip tiles already assigned globally (other basins or other types)
-        if (globalAssigned.has(neighbor)) {
-          continue;
-        }
-
-        // Only propagate to UNKNOWN tiles
-        if (neighbor.geologicalType !== GeologicalType.UNKNOWN) {
-          continue;
-        }
-
-        // Check area limit
-        if (assignedArea + neighbor.area > maxArea) {
-          continue;
-        }
-
-        // Random chance to skip (adds irregularity)
-        if (Math.random() > BASIN_CONFIG.PROPAGATION_PROBABILITY) {
-          continue;
-        }
-
-        // Assign basin type
-        neighbor.geologicalType = GeologicalType.BASIN;
-        assigned.add(neighbor);
-        globalAssigned.add(neighbor);
-        assignedArea += neighbor.area;
-
-        // Add to next wave
-        nextWave.push(neighbor);
       }
-    }
 
-    currentWave = nextWave;
-  }
-
-  return assigned.size;
-}
-
-// ============================================================================
-// Foreland Basin Assignment at Convergent Boundaries
-// ============================================================================
-
-/**
- * Processes a single convergent boundary for foreland basin assignment.
- * For each continental plate on the boundary, navigates through orogeny
- * to find UNKNOWN tiles and starts basin propagation.
- */
-function assignForelandBasinsAtBoundary(
-  boundary: PlateBoundary,
-  tectonicSystem: TectonicSystem,
-  globalAssigned: Set<Tile>
-): number {
-  const plateA = boundary.plateA;
-  const plateB = boundary.plateB;
-
-  // Check if at least one plate is continental
-  const plateAisContinental = plateA.category === PlateCategory.CONTINENTAL;
-  const plateBisContinental = plateB.category === PlateCategory.CONTINENTAL;
-
-  if (!plateAisContinental && !plateBisContinental) {
-    return 0;
-  }
-
-  // Check if boundary has convergent edges
-  let hasConvergent = false;
-  for (const bEdge of boundary.boundaryEdges) {
-    if (bEdge.refinedType === BoundaryType.CONVERGENT) {
-      hasConvergent = true;
-      break;
+      wave = nextWave;
     }
   }
 
-  if (!hasConvergent) {
-    return 0;
-  }
-
-  // Estimate boundary length and compute starting point count
-  const boundaryLengthKm = estimateBoundaryLengthKm(boundary);
-  const startingPointCount = computeStartingPointCount(boundaryLengthKm);
-
-  let totalBasinTiles = 0;
-
-  // Process each continental plate on this boundary
-  const continentalPlates: Plate[] = [];
-  if (plateAisContinental) continentalPlates.push(plateA);
-  if (plateBisContinental) continentalPlates.push(plateB);
-
-  for (const continentalPlate of continentalPlates) {
-    // Select starting tiles at the boundary
-    const boundaryStartTiles = selectBoundaryStartingTiles(
-      boundary,
-      continentalPlate,
-      tectonicSystem,
-      startingPointCount
-    );
-
-    // For each starting tile, navigate through orogeny to find basin starting point
-    for (const boundaryTile of boundaryStartTiles) {
-      const basinStartTile = findBasinStartingTile(boundaryTile, tectonicSystem);
-
-      if (basinStartTile && !globalAssigned.has(basinStartTile)) {
-        // Propagate basin from this starting point (limited by plate area ratio)
-        const count = propagateBasin(basinStartTile, continentalPlate, tectonicSystem, globalAssigned);
-        totalBasinTiles += count;
-      }
-    }
-  }
-
-  return totalBasinTiles;
+  return totalAssigned;
 }
 
 // ============================================================================
@@ -357,27 +211,39 @@ function assignForelandBasinsAtBoundary(
 /**
  * Assigns Basin geological type - Case 1: Foreland Basins.
  *
- * For each convergent boundary where at least one plate is continental:
- * 1. Select starting points along the boundary
- * 2. Navigate into the continental plate, passing through orogeny
- * 3. When reaching UNKNOWN tiles, start Basin propagation
- * 4. Propagate in all directions with randomization (limited by area ratio per basin)
+ * Foreland basins form behind mountain ranges where compressional forces
+ * create downwarping of the crust. This function:
+ * 1. Collects all OROGEN tiles with MODERATE or lower intensity
+ * 2. Randomly selects some as starting points
+ * 3. Propagates to nearby tiles that are either:
+ *    - OROGEN with intensity <= MODERATE (converts to BASIN)
+ *    - UNKNOWN (assigns as BASIN)
+ *
+ * This function should be called after orogeny and fold-and-thrust assignment.
  */
 export function assignForelandBasins(tectonicSystem: TectonicSystem): void {
-  const globalAssigned = new Set<Tile>();
-  let totalBasinTiles = 0;
-  let basinCount = 0;
+  // Collect all OROGEN tiles with MODERATE or lower intensity
+  const eligibleTiles = collectLowModerateOrogenyTilesForBasin(tectonicSystem);
 
-  // Process each boundary
-  for (const boundary of tectonicSystem.boundaries) {
-    const tilesAssigned = assignForelandBasinsAtBoundary(boundary, tectonicSystem, globalAssigned);
-    if (tilesAssigned > 0) {
-      totalBasinTiles += tilesAssigned;
-      basinCount++;
-    }
+  if (eligibleTiles.length === 0) {
+    console.log('Assigned BASIN (foreland) to 0 tiles (no eligible orogeny tiles found)');
+    return;
   }
 
-  console.log(`Assigned BASIN (foreland) to ${totalBasinTiles} tiles in ${basinCount} basins`);
+  // Randomly select starting tiles
+  const startingTiles = selectBasinStartingTiles(eligibleTiles);
+
+  if (startingTiles.size === 0) {
+    console.log('Assigned BASIN (foreland) to 0 tiles (no starting tiles selected)');
+    return;
+  }
+
+  const globalAssigned = new Set<Tile>();
+
+  // Propagate basins from starting tiles
+  const totalAssigned = propagateForelandBasin(startingTiles, tectonicSystem, globalAssigned);
+
+  console.log(`Assigned BASIN (foreland) to ${totalAssigned} tiles (from ${startingTiles.size} starting points within orogeny)`);
 }
 
 // ============================================================================
