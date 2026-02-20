@@ -49,12 +49,12 @@ function assignGeologicalTypes(tectonicSystem: TectonicSystem): void {
   // Must be called right after orogeny so peripheral tiles are still UNKNOWN
   assignFoldAndThrustBelts(tectonicSystem);
 
-  // Assign igneous provinces (LIPs) - must be before oceanic crust so propagation stops at LIPs
-  assignIgneousProvinces(tectonicSystem);
-
   // Assign oceanic crust at oceanic/continental divergent boundaries
   // Propagation stops when meeting igneous provinces or other assigned types
   assignOceanicCrustType(tectonicSystem);
+
+  // Assign igneous provinces (LIPs) - must be before oceanic crust so propagation stops at LIPs
+  assignIgneousProvinces(tectonicSystem);
 
   // Assign transform boundary geology (pull-apart basins at releasing bends)
   assignTransformGeology(tectonicSystem);
