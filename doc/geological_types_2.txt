@@ -1,0 +1,19 @@
+Are fold-and-thrust belts and transpressional ridges really "geological types"?
+Not quite — they're more accurately tectonic structures or deformation styles rather than crustal/geological types. The distinction matters:
+
+Your core types (shield, platform, orogeny, basin, oceanic crust, etc.) describe the nature and age of the crust itself — its composition, thermal state, thickness, and history.
+Fold-and-thrust belts and transpressional ridges describe how the crust has been deformed, which is a process/structure overlay on top of a crustal type.
+
+In practice, a fold-and-thrust belt is usually orogenic crust undergoing a specific deformation regime. A transpressional ridge sits on crust that might be continental or oceanic depending on context. So they're better modeled as attributes, boundary tags, or sub-types rather than peer-level geological types.
+That said, for a simulation, if you find them useful as distinct gameplay/visual categories, keeping them is pragmatically fine — just be aware of the conceptual mismatch.
+
+Geological types you might be missing:
+A few candidates worth considering for a tectonics sim:
+
+Rift zone — actively thinning continental crust, distinct from a fully-formed basin; proto-oceanic, often with volcanism. Sits between "continental" and "basin" in a divergence sequence.
+Flood basalt / large igneous province (LIP) — your "igneous" type may cover this, but LIPs are areally massive and geologically distinct from arc igneous activity.
+Island arc / volcanic arc — oceanic crust with significant volcanic buildup; distinct from both normal oceanic crust and continental orogeny.
+Passive margin — thinned, sediment-laden continental crust at a non-active plate edge; geologically very different from active margins but often overlooked.
+Accretionary wedge / mélange — scraped-off oceanic material at subduction zones; technically part of orogeny but sometimes worth distinguishing.
+Craton — you have shield and platform, which together constitute a craton, so you're fine there if you treat them as the two faces of the same thing (exposed vs. sediment-covered).
+Ophiolite — obducted oceanic crust now on land, relevant if you model continent-continent collisions.
