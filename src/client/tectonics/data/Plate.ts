@@ -4,8 +4,6 @@ import { Halfedge } from '@core/Halfedge';
 export enum PlateCategory {
   CONTINENTAL = 'continental',
   OCEANIC = 'oceanic',
-  MICROPLATE = 'microplate',
-  DEFORMATION = 'deformation',
   UNKNOWN = 'unknown'
 }
 
@@ -151,6 +149,7 @@ export class Plate {
   borderEdge2TileMap: Map<Halfedge, Tile>;
   category: PlateCategory;
   system: TectonicSystem;
+  isMicroplate: boolean = false;
   centroid: THREE.Vector3;
   // Motion quantities units are irrelevant,
   // just use normalized magnitudes

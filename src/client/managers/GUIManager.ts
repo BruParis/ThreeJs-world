@@ -4,7 +4,7 @@ import { VisualizationManager } from './VisualizationManager';
 import { TectonicManager } from './TectonicManager';
 import { NoiseManager } from './NoiseManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
-import { PlateDisplayMode } from '../visualization/PlateColors';
+import { PlateDisplayMode, PLATE_VISUALIZATION_LEGEND, rgbToHex } from '../visualization/PlateColors';
 import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
 
 const MIN_DEGREE = 0;
@@ -125,6 +125,15 @@ export class GUIManager {
         if (value) this.tectonicManager.showBorderTiles();
         else this.tectonicManager.colorTectonicSystem(false);
       });
+
+    // Plate visualization color legend subfolder (includes categories + microplate)
+    const tectonicLegendGui = tectonicGui.addFolder('Legend');
+    for (const entry of PLATE_VISUALIZATION_LEGEND) {
+      const colorHex = rgbToHex(entry.color);
+      const colorObj = { color: colorHex };
+      tectonicLegendGui.addColor(colorObj, 'color').name(entry.label).listen();
+    }
+
     tectonicGui.open();
 
     // Geology

@@ -10,10 +10,11 @@ import {
   computeBoundaryDominance,
   logTileTransferEligibility,
   categorizePlates,
-  assignGeologicalTypes
+  assignGeologicalTypes,
+  createMicroplates
 } from '../tectonics/simulation/Tectonics';
 import { recomputeOrogenyForBoundary } from '../tectonics/simulation/Orogeny';
-import { PLATE_CATEGORY_COLORS, PlateDisplayMode } from '../visualization/PlateColors';
+import { getPlateColor, PlateDisplayMode } from '../visualization/PlateColors';
 import { getGeologicalColor } from '../visualization/GeologyColors';
 import {
   splitPlateFromTile,
@@ -151,6 +152,9 @@ export class TectonicManager {
 
     // Compute convergent dominance after plate categories are assigned
     computeBoundaryDominance(this.tectonicSystem);
+
+    // Create microplates at transform boundary bends
+    createMicroplates(this.tectonicSystem);
 
     // Assign geological types to tiles (orogeny at convergent boundaries)
     assignGeologicalTypes(this.tectonicSystem);
@@ -328,7 +332,7 @@ export class TectonicManager {
   }
 
   /**
-   * Colors the tectonic system by plate category (continental/oceanic).
+   * Colors the tectonic system by plate category (continental/oceanic/microplate).
    */
   public colorTectonicSystemByCategory(): void {
     const dualMesh = this.visualizationManager.getDualMesh();
@@ -344,14 +348,14 @@ export class TectonicManager {
     }
 
     for (const plate of this.tectonicSystem.plates) {
-      const [r, g, b] = PLATE_CATEGORY_COLORS[plate.category];
-      const categoryColor = new THREE.Color(r, g, b);
+      const [r, g, b] = getPlateColor(plate);
+      const plateColor = new THREE.Color(r, g, b);
 
       for (const tile of plate.tiles) {
         for (const auxHe of tile.loop()) {
           const origFaceIdx = dualMesh.geometry.userData.halfedge2FaceMap.get(auxHe.id);
           if (origFaceIdx !== undefined) {
-            assignColorToTriangle(dualMesh.geometry, origFaceIdx, categoryColor);
+            assignColorToTriangle(dualMesh.geometry, origFaceIdx, plateColor);
           } else {
             console.warn('No face found for halfedge id:', auxHe.id);
           }

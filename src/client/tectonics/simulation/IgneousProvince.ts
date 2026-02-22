@@ -171,6 +171,20 @@ function findMostIntensiveDivergentPoint(
   for (const bEdge of boundary.boundaryEdges) {
     if (bEdge.refinedType !== BoundaryType.DIVERGENT) continue;
 
+    // if the tiles on either side are already assigned to oceanic crust, skip
+    const tileA = tectonicSystem.edge2TileMap.get(bEdge.halfedge);
+    const tileB = tectonicSystem.edge2TileMap.get(bEdge.halfedge.twin);
+
+    if (!tileA || !tileB) {
+      console.error('Boundary edge missing adjacent tiles');
+      continue;
+    }
+
+    if ((tileA.geologicalType === GeologicalType.OCEANIC_CRUST) ||
+      (tileB.geologicalType === GeologicalType.OCEANIC_CRUST)) {
+      continue;
+    }
+
     const intensity = computeDivergentIntensity(bEdge, tectonicSystem);
     if (intensity > bestIntensity) {
       const tileA = tectonicSystem.edge2TileMap.get(bEdge.halfedge);

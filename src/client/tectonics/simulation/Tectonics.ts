@@ -13,6 +13,7 @@ import {
 } from '../data/PlateOperations';
 import { computeNetRotation, computeTectonicDynamics, caracterizeBoundaryEdge, computeConvergentDominance, computeTransformSlide } from '../dynamics/dynamics';
 import { assignGeologicalTypes } from './Geology';
+import { createMicroplates } from './Microplates';
 
 function _splitPlateAtBridgeTiles(tectonicSystem: TectonicSystem): void {
 
@@ -595,4 +596,4 @@ function categorizePlates(tectonicSystem: TectonicSystem, continentalRatio: numb
   console.log(`Plate categorization: target=${(continentalRatio * 100).toFixed(1)}%, actual=${(actualRatio * 100).toFixed(1)}%`);
 }
 
-export { buildTectonicSystem, computeTectonicMotion, computeNetRotation, computePlateBoundaries, caracterizePlateBoundaries, computeBoundaryDominance, logTileTransferEligibility, categorizePlates, assignGeologicalTypes };
+export { buildTectonicSystem, computeTectonicMotion, computeNetRotation, computePlateBoundaries, caracterizePlateBoundaries, computeBoundaryDominance, logTileTransferEligibility, categorizePlates, assignGeologicalTypes, createMicroplates };

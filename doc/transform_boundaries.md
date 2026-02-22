@@ -34,55 +34,53 @@ A **restraining bend** (compression across the fault) creates a transpressional 
 
 The crust flanking a long transform tends to be highly fractured and faulted — good territory for shield or platform types being cut and disrupted rather than newly formed.
 
-## Practical Implementation Rule
+## Current Implementation
 
-Along transforms, assign geology as follows:
+The transform boundary geology is implemented in `TransformGeology.ts`.
 
-| Geology Type | Probability | Trigger |
-|--------------|-------------|---------|
-| Basin | 20-30% | Favor tiles where local boundary direction shifts |
-| Minor orogeny / Fractured platform | Small fraction | Restraining bends |
-| Background geology | Most tiles | Inherit from plate |
+### Algorithm
 
-## Micro-Plates and Transform Boundaries
+1. **Collect transform segments**: Transform edges are grouped into connected segments along each boundary
+2. **Detect bends**: For consecutive edges in a segment, compute the angle between their directions
+3. **Filter releasing bends**: Only releasing bends (transtensional) can produce basins
+4. **Assign basins**: Tiles at releasing bends receive BASIN geology with probability scaled by bend angle
 
-Micro-plates naturally form in two main contexts, both involving transforms:
+### Configuration
 
-### 1. Ridge-Transform Intersections
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| BASIN_PROBABILITY | 0.25 (25%) | Base probability at releasing bends |
+| MIN_BEND_ANGLE | π/12 (~15°) | Minimum angle to consider a bend |
+| MAX_BEND_ANGLE | π/2 (90°) | Angle for maximum probability boost |
+| LARGE_BEND_PROBABILITY_BOOST | 2.0 | At 90° bends, probability doubles |
 
-Where a mid-ocean ridge is offset by a long transform, the geometry can isolate a small block of crust that rotates independently.
+### Releasing Bend Detection
 
-**Condition**: A divergent boundary that is offset (two divergent segments not perfectly aligned, connected by a transform).
+A bend is classified as "releasing" (transtensional) when:
+- The boundary curves in one direction (computed via cross product of edge directions)
+- The relative plate motion has a tangential component
+- The curve direction and slip direction align (their product is positive)
 
-**Behavior**: The micro-plate rotates because it's being pulled by spreading on both sides.
+This means the fault geometry opens up a gap, creating localized extension.
 
-**Real-world examples**:
-- Juan de Fuca plate
-- Easter microplate
-- Rivera plate
+### Probability Scaling
 
-### 2. Triple Junctions
+The final probability is: `BASIN_PROBABILITY × probabilityFactor`
 
-Where three plates meet, the junction is inherently unstable and tends to migrate or reorganize. A micro-plate can stabilize the geometry.
+Where probabilityFactor is:
+- 0 if bend angle < 15°
+- Linear interpolation from 1.0 (at 15°) to 2.0 (at 90°)
 
-**Detection**: Identify tiles at the meeting point of three or more plate boundaries and flag them as candidates for micro-plate nucleation.
+### What's NOT Implemented
 
-## Implementation Sketch
+- **Transpressional ridges** at restraining bends are not yet implemented
+- Tiles with existing geological types are skipped (preserves prior assignments)
 
-### Identifying Micro-Plate Candidates
+## Summary Table
 
-1. Find tiles at or near the intersection of:
-   - A transform with a divergent boundary, OR
-   - A transform with another transform
+| Geology Type | Status | Probability | Trigger |
+|--------------|--------|-------------|---------|
+| Basin | ✓ Implemented | 25-50% (scaled by angle) | Releasing bends ≥15° |
+| Minor orogeny / Transpressional ridge | ✗ Not implemented | — | Restraining bends |
+| Background geology | Default | — | Inherit from plate |
 
-2. "Carve out" a small cluster of those tiles into their own plate
-
-3. Derive an independent motion vector:
-   - Start with the average of the two neighboring plate motions
-   - Add a rotational component
-
-4. Re-evaluate boundaries — the micro-plate will likely end up with mixed convergent/divergent/transform boundary segments
-
-### Visual Benefit
-
-A long featureless transform is geologically boring, but one that spawns a small rotating micro-plate with its own basin and ridge system feels much more alive.

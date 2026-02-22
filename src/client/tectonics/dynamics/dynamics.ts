@@ -290,12 +290,9 @@ function caracterizeBoundaryEdge(tectonicSystem: TectonicSystem, bEdge: Boundary
  *    - Creates collision orogens affecting both plates (Himalayas, Alps)
  *    - Returns NEITHER - orogeny propagates into both plates
  *
- * 4. MICROPLATE interactions:
+ * 4. Microplate interactions (plates with isMicroplate=true):
  *    - Microplates typically subduct under larger plates
  *    - Treated as less dominant than major plates
- *
- * 5. DEFORMATION zones:
- *    - Complex behavior, treated as UNDETERMINED
  *
  * @param tectonicSystem The tectonic system context
  * @param bEdge The boundary edge to compute dominance for
@@ -318,56 +315,51 @@ function computeConvergentDominance(tectonicSystem: TectonicSystem, bEdge: Bound
     return;
   }
 
-  const thisCat = tile.plate.category;
-  const twinCat = twinTile.plate.category;
+  const thisPlate = tile.plate;
+  const twinPlate = twinTile.plate;
+  const thisCat = thisPlate.category;
+  const twinCat = twinPlate.category;
+  const thisIsMicro = thisPlate.isMicroplate;
+  const twinIsMicro = twinPlate.isMicroplate;
 
-  // Helper to determine dominance between two categories
+  // Helper to determine dominance
   // Returns: 1 if thisPlate dominates, -1 if twinPlate dominates, 0 if neither
-  const compareDominance = (cat1: PlateCategory, cat2: PlateCategory): number => {
+  const computeDominanceResult = (): number => {
+    // Microplate interactions: microplates subduct under non-microplates
+    if (thisIsMicro && !twinIsMicro) {
+      return -1; // Microplate subducts under major plate
+    }
+    if (twinIsMicro && !thisIsMicro) {
+      return 1; // Major plate dominates over microplate
+    }
 
+    // Microplate vs Microplate: use area
+    if (thisIsMicro && twinIsMicro) {
+      const area1 = thisPlate.area;
+      const area2 = twinPlate.area;
+      if (area1 > area2 * 1.2) return 1;
+      if (area2 > area1 * 1.2) return -1;
+      return 0;
+    }
+
+    // Non-microplate interactions based on category
     // Continental vs Oceanic: Continental always dominates
-    if (cat1 === PlateCategory.CONTINENTAL && cat2 === PlateCategory.OCEANIC) {
+    if (thisCat === PlateCategory.CONTINENTAL && twinCat === PlateCategory.OCEANIC) {
       return 1;
     }
-    if (cat1 === PlateCategory.OCEANIC && cat2 === PlateCategory.CONTINENTAL) {
+    if (thisCat === PlateCategory.OCEANIC && twinCat === PlateCategory.CONTINENTAL) {
       return -1;
     }
 
     // Continental vs Continental: Neither dominates (collision)
-    if (cat1 === PlateCategory.CONTINENTAL && cat2 === PlateCategory.CONTINENTAL) {
+    if (thisCat === PlateCategory.CONTINENTAL && twinCat === PlateCategory.CONTINENTAL) {
       return 0;
     }
 
     // Oceanic vs Oceanic: Neither dominates
     // In reality, the older/denser plate subducts, but without age tracking
     // we treat this as a symmetric case where orogeny can propagate to both sides
-    if (cat1 === PlateCategory.OCEANIC && cat2 === PlateCategory.OCEANIC) {
-      return 0; // Neither dominates - orogeny propagates to both plates
-    }
-
-    // Microplate interactions
-    if (cat1 === PlateCategory.MICROPLATE) {
-      if (cat2 === PlateCategory.CONTINENTAL || cat2 === PlateCategory.OCEANIC) {
-        return -1; // Microplate subducts under major plates
-      }
-    }
-    if (cat2 === PlateCategory.MICROPLATE) {
-      if (cat1 === PlateCategory.CONTINENTAL || cat1 === PlateCategory.OCEANIC) {
-        return 1; // Major plate dominates over microplate
-      }
-    }
-
-    // Microplate vs Microplate: use area
-    if (cat1 === PlateCategory.MICROPLATE && cat2 === PlateCategory.MICROPLATE) {
-      const area1 = tile.plate.area;
-      const area2 = twinTile.plate.area;
-      if (area1 > area2 * 1.2) return 1;
-      if (area2 > area1 * 1.2) return -1;
-      return 0;
-    }
-
-    // Deformation zones - complex, undetermined
-    if (cat1 === PlateCategory.DEFORMATION || cat2 === PlateCategory.DEFORMATION) {
+    if (thisCat === PlateCategory.OCEANIC && twinCat === PlateCategory.OCEANIC) {
       return 0;
     }
 
@@ -375,7 +367,7 @@ function computeConvergentDominance(tectonicSystem: TectonicSystem, bEdge: Bound
     return 0;
   };
 
-  const dominanceResult = compareDominance(thisCat, twinCat);
+  const dominanceResult = computeDominanceResult();
 
   if (dominanceResult > 0) {
     bEdge.dominance = ConvergentDominance.THIS_SIDE;
@@ -467,10 +459,68 @@ function computeTransformSlide(tectonicSystem: TectonicSystem, bEdge: BoundaryEd
   }
 }
 
+/**
+ * Enforces zero net rotation by only adjusting the motion of specified plates.
+ * Major plates remain unchanged; only the specified plates (typically microplates) are adjusted.
+ *
+ * @param platesToAdjust The plates whose motion can be modified (typically microplates)
+ * @param tectonicSystem The full tectonic system
+ */
+function enforceZeroNetRotationOnPlates(
+  platesToAdjust: Plate[],
+  tectonicSystem: TectonicSystem
+): void {
+  if (platesToAdjust.length === 0) return;
+
+  // Compute current net rotation of ALL plates
+  const { netRotation } = computeNetRotation(tectonicSystem.plates);
+
+  // Compute total area of plates to adjust
+  let adjustableArea = 0;
+  for (const plate of platesToAdjust) {
+    adjustableArea += plate.area;
+  }
+
+  if (adjustableArea <= 0) return;
+
+  // Distribute the correction only among the adjustable plates
+  // Each adjustable plate gets a correction proportional to its area
+  const correctionPerUnitArea = netRotation.clone().divideScalar(adjustableArea);
+
+  for (const plate of platesToAdjust) {
+    const plateCorrection = correctionPerUnitArea.clone().multiplyScalar(plate.area);
+    const rotationVec = plate.rotationAxis.clone().multiplyScalar(plate.rotationSpeed);
+    const correctedVec = rotationVec.sub(plateCorrection);
+
+    const newSpeed = correctedVec.length();
+    if (newSpeed > 1e-10) {
+      plate.rotationAxis = correctedVec.normalize();
+      plate.rotationSpeed = newSpeed;
+    } else {
+      plate.rotationAxis = new THREE.Vector3(0, 1, 0);
+      plate.rotationSpeed = 0;
+    }
+  }
+}
+
+/**
+ * Recomputes tile motion vectors for all plates in the system.
+ */
+function recomputeAllTileMotionVectors(tectonicSystem: TectonicSystem): void {
+  for (const plate of tectonicSystem.plates) {
+    for (const tile of plate.tiles) {
+      tile.motionVec = computeTileMotionSpeed(tile);
+    }
+  }
+  computeMotionStatistics(tectonicSystem);
+}
+
 export {
   computeNetRotation,
   computeTectonicDynamics,
   caracterizeBoundaryEdge,
   computeConvergentDominance,
-  computeTransformSlide
+  computeTransformSlide,
+  enforceZeroNetRotationOnPlates,
+  recomputeAllTileMotionVectors
 };
