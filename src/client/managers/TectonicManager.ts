@@ -162,27 +162,26 @@ export class TectonicManager {
     console.log('Generated tectonic network with', this.tectonicSystem.plates.size, 'plates.');
     this.refreshPlateDisplay();
 
-    // Update motion vector visualization
+    // Motion vector visualization - lazy loaded
+    // Only compute if visible; otherwise reset lazy flag
     const scene = this.sceneManager.getScene();
-    const motionVecLines = this.visualizationManager.getMotionVecLines();
-
-    let rotation: THREE.Euler | null = null;
-    if (motionVecLines) {
-      rotation = motionVecLines.rotation.clone();
-      scene.remove(motionVecLines);
+    const motionVecLinesMaterial = this.visualizationManager.getMotionVecLinesMaterial();
+    if (motionVecLinesMaterial.visible) {
+      this.computeMotionVecLines();
+    } else {
+      // Reset lazy flag so it will be computed when made visible
+      this.visualizationManager.resetMotionVecLinesComputed();
+      // Remove from scene if present
+      const motionVecLines = this.visualizationManager.getMotionVecLines();
+      if (motionVecLines) {
+        scene.remove(motionVecLines);
+      }
     }
-
-    makeLineSegments2ForTileMotionVec(this.tectonicSystem, motionVecLines);
-
-    if (rotation) {
-      motionVecLines.rotation.copy(rotation);
-    }
-
-    scene.add(motionVecLines);
 
     // Update all boundaries visualization (colored by type)
     const allBoundariesLines = this.visualizationManager.getAllBoundariesLines();
 
+    let rotation: THREE.Euler | null = null;
     if (allBoundariesLines) {
       rotation = allBoundariesLines.rotation.clone();
       scene.remove(allBoundariesLines);
@@ -587,6 +586,39 @@ export class TectonicManager {
     }
 
     logTileTransferEligibility(tile, this.tectonicSystem);
+  }
+
+  /**
+   * Computes motion vector lines on demand (lazy loading).
+   * Call this when the Motion Vectors checkbox is enabled.
+   */
+  public computeMotionVecLines(): void {
+    if (!this.tectonicSystem) {
+      return;
+    }
+
+    if (this.visualizationManager.isMotionVecLinesComputed()) {
+      return;
+    }
+
+    const scene = this.sceneManager.getScene();
+    const motionVecLines = this.visualizationManager.getMotionVecLines();
+
+    let rotation: THREE.Euler | null = null;
+    if (motionVecLines) {
+      rotation = motionVecLines.rotation.clone();
+      scene.remove(motionVecLines);
+    }
+
+    makeLineSegments2ForTileMotionVec(this.tectonicSystem, motionVecLines);
+
+    if (rotation) {
+      motionVecLines.rotation.copy(rotation);
+    }
+
+    scene.add(motionVecLines);
+    this.visualizationManager.setMotionVecLinesComputed(true);
+    console.log("Motion vector lines computed (lazy load)");
   }
 
   /**

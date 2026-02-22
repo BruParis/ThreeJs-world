@@ -63,12 +63,29 @@ export class GUIManager {
       .onChange((value: boolean) => this.interactionHandler.setSelectionMode(value));
 
     // View - consolidated visibility toggles
+    // Some elements are lazy-loaded when first enabled
     const viewGui = this.gui.addFolder('View');
     viewGui.add(dualMaterial, 'visible').name('Dual Mesh');
     viewGui.add(dualMaterial, 'wireframe').name('Wireframe');
     viewGui.add(icosahedronMaterial, 'visible').name('Icosahedron');
-    viewGui.add(graphLinesMaterial, 'visible').name('Graph Lines');
-    viewGui.add(motionVecLinesMaterial, 'visible').name('Motion Vectors');
+    viewGui
+      .add(graphLinesMaterial, 'visible')
+      .name('Graph Lines')
+      .onChange((value: boolean) => {
+        if (value) {
+          // Lazy load graph lines when first enabled
+          this.visualizationManager.computeHalfedgeGraphLines();
+        }
+      });
+    viewGui
+      .add(motionVecLinesMaterial, 'visible')
+      .name('Motion Vectors')
+      .onChange((value: boolean) => {
+        if (value) {
+          // Lazy load motion vectors when first enabled
+          this.tectonicManager.computeMotionVecLines();
+        }
+      });
     viewGui.add(neighborTilesLinesMaterial, 'visible').name('Neighbor Tiles');
 
     // Perlin Noise

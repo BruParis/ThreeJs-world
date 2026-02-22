@@ -57,6 +57,10 @@ export class VisualizationManager {
   private neighborTilesLines: LineSegments2;
   private noiseGradientLines: LineSegments2;
 
+  // Lazy loading flags - true when geometry has been computed
+  private halfedgeGraphLinesComputed: boolean = false;
+  private motionVecLinesComputed: boolean = false;
+
   // Halfedge graphs
   private icoHalfedgeGraph: HalfedgeGraph;
   private icoHalfedgeDualGraph: HalfedgeGraph;
@@ -266,19 +270,17 @@ export class VisualizationManager {
 
     scene.add(this.icosahedron);
 
-    // Rebuild halfedge graph lines
-    if (this.halfedgeGraphLines) {
-      rotation = this.halfedgeGraphLines.rotation.clone();
-      scene.remove(this.halfedgeGraphLines);
+    // Only rebuild halfedge graph lines if visible (lazy loading)
+    if (this.graphLinesMaterial.visible) {
+      this.computeHalfedgeGraphLines();
+    } else {
+      // Reset lazy flag so it will be computed when made visible
+      this.halfedgeGraphLinesComputed = false;
+      // Remove from scene if present
+      if (this.halfedgeGraphLines) {
+        scene.remove(this.halfedgeGraphLines);
+      }
     }
-
-    makeLineSegments2FromHalfedgeGraph(this.icoHalfedgeDualGraph, this.halfedgeGraphLines);
-
-    if (rotation) {
-      this.halfedgeGraphLines.rotation.copy(rotation);
-    }
-
-    scene.add(this.halfedgeGraphLines);
 
     // Rebuild dual mesh
     if (this.dualMesh) {
@@ -305,6 +307,63 @@ export class VisualizationManager {
     scene.add(this.dualMesh);
 
     console.log("Meshes rebuilt in", (performance.now() - start_time).toFixed(2), "ms");
+  }
+
+  /**
+   * Computes halfedge graph lines on demand (lazy loading).
+   * Call this when the Graph Lines checkbox is enabled.
+   */
+  public computeHalfedgeGraphLines(): void {
+    if (this.halfedgeGraphLinesComputed) {
+      return;
+    }
+
+    const scene = this.sceneManager.getScene();
+
+    let rotation: THREE.Euler | null = null;
+    if (this.halfedgeGraphLines) {
+      rotation = this.halfedgeGraphLines.rotation.clone();
+      scene.remove(this.halfedgeGraphLines);
+    }
+
+    makeLineSegments2FromHalfedgeGraph(this.icoHalfedgeDualGraph, this.halfedgeGraphLines);
+
+    if (rotation) {
+      this.halfedgeGraphLines.rotation.copy(rotation);
+    }
+
+    scene.add(this.halfedgeGraphLines);
+    this.halfedgeGraphLinesComputed = true;
+    console.log("Halfedge graph lines computed (lazy load)");
+  }
+
+  /**
+   * Resets lazy loading flags. Call this when graphs are rebuilt.
+   */
+  public resetLazyFlags(): void {
+    this.halfedgeGraphLinesComputed = false;
+    this.motionVecLinesComputed = false;
+  }
+
+  /**
+   * Checks if motion vector lines have been computed.
+   */
+  public isMotionVecLinesComputed(): boolean {
+    return this.motionVecLinesComputed;
+  }
+
+  /**
+   * Sets whether motion vector lines have been computed.
+   */
+  public setMotionVecLinesComputed(value: boolean): void {
+    this.motionVecLinesComputed = value;
+  }
+
+  /**
+   * Resets the motion vector lines computed flag.
+   */
+  public resetMotionVecLinesComputed(): void {
+    this.motionVecLinesComputed = false;
   }
 
   /**
