@@ -3,14 +3,14 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import { HalfedgeGraph } from '@core/HalfedgeGraph';
-import { Halfedge } from '@core/Halfedge';
+import { HalfedgeGraph } from '@core/halfedge/HalfedgeGraph';
+import { Halfedge } from '@core/halfedge/Halfedge';
 import { TectonicSystem, PlateBoundary, BoundaryEdge, Tile, Plate } from '../tectonics/data/Plate';
 import {
   makeBufferGeometryFromHalfedgeGraph,
   makeBufferGeometryFromLoops,
   makeLineSegments2FromHalfedgeGraph
-} from '@core/HalfedgeGraphUtils';
+} from '@core/halfedge/HalfedgeGraphUtils';
 import {
   makeLineSegments2FromTile,
   makeLineSegments2FromPlate,

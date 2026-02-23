@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { TectonicSystem, BoundaryType, GeologicalType, GeologicalIntensity } from '../tectonics/data/Plate';
-import { Halfedge } from '@core/Halfedge';
+import { Halfedge } from '@core/halfedge/Halfedge';
 import {
   buildTectonicSystem,
   computeTectonicMotion,

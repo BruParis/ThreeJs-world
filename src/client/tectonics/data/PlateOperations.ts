@@ -1,5 +1,5 @@
-import { Halfedge } from '@core/Halfedge';
-import { HalfedgeGraph } from '@core/HalfedgeGraph';
+import { Halfedge } from '@core/halfedge/Halfedge';
+import { HalfedgeGraph } from '@core/halfedge/HalfedgeGraph';
 import { Tile, Plate, TectonicSystem, PlateBoundary, BoundaryEdge, BoundaryType } from './Plate';
 import { kmToDistance } from '../../world/World';
 

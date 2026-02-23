@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { Vertex } from '@core/Vertex';
-import { Halfedge } from '@core/Halfedge';
-import { HalfedgeGraph } from '@core/HalfedgeGraph';
+import { Vertex } from '@core/halfedge/Vertex';
+import { Halfedge } from '@core/halfedge/Halfedge';
+import { HalfedgeGraph } from '@core/halfedge/HalfedgeGraph';
 import { Tile, Plate, PlateCategory, BoundaryEdge, BoundaryType, GeologicalType, GeologicalIntensity, TectonicSystem, makePlateBoundary } from '../data/Plate';
 import {
   buildAllTiles,

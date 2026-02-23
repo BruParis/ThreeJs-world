@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Halfedge } from '@core/Halfedge';
+import { Halfedge } from '@core/halfedge/Halfedge';
 
 export enum PlateCategory {
   CONTINENTAL = 'continental',

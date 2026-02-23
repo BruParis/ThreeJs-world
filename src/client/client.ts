@@ -1,4 +1,8 @@
-import { Application } from './Application';
+import { TabManager, WorldApplication, IcoTreeApplication } from './tabs';
 
-const app = new Application();
-app.initialize();
+// Create tab manager
+const tabManager = new TabManager();
+
+// Register applications
+tabManager.register('icotree', 'IcoTree', new IcoTreeApplication());
+tabManager.register('world', 'World', new WorldApplication());

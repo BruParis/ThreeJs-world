@@ -35,7 +35,13 @@ export class GUIManager {
     this.interactionHandler = interactionHandler;
     this.onResetCallback = onResetCallback;
 
-    this.gui = new GUI();
+    this.gui = new GUI({ autoPlace: false });
+    // Append GUI to content area
+    const contentArea = document.getElementById('content-area') || document.body;
+    contentArea.appendChild(this.gui.domElement);
+    this.gui.domElement.style.position = 'absolute';
+    this.gui.domElement.style.top = '0';
+    this.gui.domElement.style.right = '0';
     this.setupGUI();
   }
 

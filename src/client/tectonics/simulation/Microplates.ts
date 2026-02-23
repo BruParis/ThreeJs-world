@@ -464,7 +464,7 @@ function spawnMicroplate(
 // Boundary Edge Type Preservation
 // ============================================================================
 
-import { Halfedge } from '@core/Halfedge';
+import { Halfedge } from '@core/halfedge/Halfedge';
 import { ConvergentDominance, TransformSlide } from '../data/Plate';
 
 /**

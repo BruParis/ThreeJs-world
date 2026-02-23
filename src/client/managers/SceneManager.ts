@@ -24,10 +24,10 @@ export class SceneManager {
     this.axesHelper = new THREE.AxesHelper(2);
     this.scene.add(this.axesHelper);
 
-    // Initialize camera
+    // Initialize camera (aspect ratio will be corrected on first resize)
     this.camera = new THREE.PerspectiveCamera(
       75,
-      window.innerWidth / window.innerHeight,
+      window.innerWidth / (window.innerHeight - 40), // Account for tab bar
       0.1,
       1000
     );
@@ -35,16 +35,16 @@ export class SceneManager {
 
     // Initialize WebGL renderer
     this.renderer = new THREE.WebGLRenderer();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(this.renderer.domElement);
+    this.renderer.setSize(window.innerWidth, this.getViewportHeight());
+    this.getContentArea().appendChild(this.renderer.domElement);
 
     // Initialize label renderer (CSS2D)
     this.labelRenderer = new CSS2DRenderer();
-    this.labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    this.labelRenderer.setSize(window.innerWidth, this.getViewportHeight());
     this.labelRenderer.domElement.style.position = 'absolute';
     this.labelRenderer.domElement.style.top = '0px';
     this.labelRenderer.domElement.style.pointerEvents = 'none'; // Let mouse events pass through
-    document.body.appendChild(this.labelRenderer.domElement);
+    this.getContentArea().appendChild(this.labelRenderer.domElement);
 
     // Initialize orbit controls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -58,13 +58,32 @@ export class SceneManager {
   }
 
   /**
+   * Gets the content area element, or falls back to body.
+   */
+  private getContentArea(): HTMLElement {
+    return document.getElementById('content-area') || document.body;
+  }
+
+  /**
+   * Gets the viewport height accounting for tab bar.
+   */
+  private getViewportHeight(): number {
+    const contentArea = document.getElementById('content-area');
+    if (contentArea) {
+      return contentArea.clientHeight;
+    }
+    return window.innerHeight;
+  }
+
+  /**
    * Handles window resize events.
    */
   private onWindowResize(): void {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const height = this.getViewportHeight();
+    this.camera.aspect = window.innerWidth / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(window.innerWidth, height);
+    this.labelRenderer.setSize(window.innerWidth, height);
     this.render();
   }
 

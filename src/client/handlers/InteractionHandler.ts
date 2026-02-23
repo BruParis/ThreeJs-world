@@ -128,7 +128,7 @@ export class InteractionHandler {
    * Only displays a boundary if the clicked tile has boundary edges.
    * Finds the closest boundary edge belonging to the tile and displays that boundary.
    */
-  private handleBoundaryDisplayClick(clickedHe: import('@core/Halfedge').Halfedge, clickPoint: THREE.Vector3): void {
+  private handleBoundaryDisplayClick(clickedHe: import('@core/halfedge/Halfedge').Halfedge, clickPoint: THREE.Vector3): void {
     const tectonicSystem = this.tectonicManager.getTectonicSystem();
     if (!tectonicSystem) {
       console.warn('No tectonic system available for boundary display.');
@@ -147,7 +147,7 @@ export class InteractionHandler {
     const plate = tile.plate;
 
     // Collect boundary edges that belong to this tile
-    const tileBoundaryEdges: { halfedge: import('@core/Halfedge').Halfedge; boundary: import('../tectonics/data/Plate').PlateBoundary }[] = [];
+    const tileBoundaryEdges: { halfedge: import('@core/halfedge/Halfedge').Halfedge; boundary: import('../tectonics/data/Plate').PlateBoundary }[] = [];
     for (const he of tile.loop()) {
       if (plate.borderEdge2TileMap.has(he)) {
         const boundary = tectonicSystem.edge2BoundaryMap.get(he);

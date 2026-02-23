@@ -1,4 +1,4 @@
-import { HalfedgeGraph } from '@core/HalfedgeGraph';
+import { HalfedgeGraph } from '@core/halfedge/HalfedgeGraph';
 import {
   collectOriginalVertices,
   subdivideTrianglesLoop,
@@ -6,7 +6,7 @@ import {
   populateDualGraph,
   distortGraphLoop,
   makeFaceDistribution
-} from '@core/HalfedgeGraphUtils';
+} from '@core/halfedge/HalfedgeGraphUtils';
 import { populateIcosahedronHalfedgeGraph } from '@core/geometry/IcosahedronMesh';
 
 /**

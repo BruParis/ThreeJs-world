@@ -1,28 +1,10 @@
-import * as THREE from 'three';
-import { HalfedgeGraph } from '@core/HalfedgeGraph';
+import { HalfedgeGraph } from '@core/halfedge/HalfedgeGraph';
+import { ICOSAHEDRON_VERTICES, ICOSAHEDRON_EDGES } from './Icosahedron';
 
 function populateIcosahedronHalfedgeGraph(halfedgeGraph: HalfedgeGraph) {
-  var phi = (1.0 + Math.sqrt(5.0)) / 2.0;
-  var du = 1.0 / Math.sqrt(phi * phi + 1.0);
-  var dv = phi * du;
-
   halfedgeGraph.clear();
 
-  const points =
-    [
-      new THREE.Vector3(0, +dv, +du),
-      new THREE.Vector3(0, +dv, -du),
-      new THREE.Vector3(0, -dv, +du),
-      new THREE.Vector3(0, -dv, -du),
-      new THREE.Vector3(+du, 0, +dv),
-      new THREE.Vector3(-du, 0, +dv),
-      new THREE.Vector3(+du, 0, -dv),
-      new THREE.Vector3(-du, 0, -dv),
-      new THREE.Vector3(+dv, +du, 0),
-      new THREE.Vector3(+dv, -du, 0),
-      new THREE.Vector3(-dv, +du, 0),
-      new THREE.Vector3(-dv, -du, 0),
-    ];
+  const points = ICOSAHEDRON_VERTICES;
 
   const newVertexIds = new Array<number>();
   for (var i = 0; i < points.length; ++i) {
@@ -30,39 +12,7 @@ function populateIcosahedronHalfedgeGraph(halfedgeGraph: HalfedgeGraph) {
     newVertexIds.push(newVertex.id);
   }
 
-  const edgesVertexIdPairs =
-    [
-      [0, 1,],
-      [0, 4,],
-      [0, 5,],
-      [0, 8,],
-      [0, 10,],
-      [1, 6,],
-      [1, 7,],
-      [1, 8,],
-      [1, 10,],
-      [2, 3,],
-      [2, 4,],
-      [2, 5,],
-      [2, 9,],
-      [2, 11,],
-      [3, 6,],
-      [3, 7,],
-      [3, 9,],
-      [3, 11,],
-      [4, 5,],
-      [4, 8,],
-      [4, 9,],
-      [5, 10,],
-      [5, 11,],
-      [6, 7,],
-      [6, 8,],
-      [6, 9,],
-      [7, 10,],
-      [7, 11,],
-      [8, 9,],
-      [10, 11,]
-    ];
+  const edgesVertexIdPairs = ICOSAHEDRON_EDGES;
 
 
   const newEdgesIds = new Array<string>();
