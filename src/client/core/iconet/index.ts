@@ -31,3 +31,11 @@ export {
   type HexaVertex,
   type HexagonBuildResult,
 } from './HexaCell';
+
+export {
+  decodeHexaTreePath,
+  parsePathString,
+  generateHexagonVertices,
+  type HexaTreeDecodeResult,
+  type HexaTreeLevel,
+} from './HexaTreeEncoding';

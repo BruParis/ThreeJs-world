@@ -97,13 +97,11 @@ export class HexaTreeApplication implements TabApplication {
 
     // Interaction handler
     this.interactionHandler = new InteractionHandler(
-      this.sceneSetup.scene,
       this.sceneSetup.camera,
       this.sceneSetup.renderer.domElement,
       () => this.getContentArea(),
       this.mapRenderer
     );
-    this.interactionHandler.createHoverLabel();
 
     // GUI setup
     this.guiSetup = new GUISetup(

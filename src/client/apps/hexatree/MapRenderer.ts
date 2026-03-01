@@ -7,6 +7,8 @@ import {
   HexagonBuildResult,
   buildHexagons,
   HexaCell,
+  HexaTreeDecodeResult,
+  generateHexagonVertices,
 } from '../../core/iconet';
 
 export interface ViewParams {
@@ -41,6 +43,11 @@ export class MapRenderer {
   // Hexagon selection - individual triangle meshes for topology handling
   private hexagonSelectionMeshes: THREE.Mesh[] = [];
   private hexagonSelectionMaterial: THREE.MeshBasicMaterial | null = null;
+
+  // HexaTree encoding visualization
+  private hexaTreeGroup: THREE.Group | null = null;
+  private hexaTreePointMesh: THREE.Mesh | null = null;
+  private hexaTreeHexagonLines: THREE.LineSegments[] = [];
 
   constructor(private scene: THREE.Scene) {
     this.mapGroup = new THREE.Group();
@@ -406,9 +413,115 @@ export class MapRenderer {
   }
 
   /**
+   * Displays a HexaTree encoding result on the map.
+   * Shows a dot at the final position and parent hexagons at each level.
+   *
+   * @param result - The decoded HexaTree path result, or null to clear
+   */
+  displayHexaTreeEncoding(result: HexaTreeDecodeResult | null): void {
+    // Clear previous visualization
+    this.clearHexaTreeVisualization();
+
+    if (!result) {
+      return;
+    }
+
+    // Create group for HexaTree visualization
+    this.hexaTreeGroup = new THREE.Group();
+    this.mapGroup.add(this.hexaTreeGroup);
+
+    const y = 0.02; // Height above the map
+
+    // Draw parent hexagons at each level (from largest to smallest)
+    const colors = [
+      0xff0000, // Level 0 - red
+      0xff8800, // Level 1 - orange
+      0xffff00, // Level 2 - yellow
+      0x88ff00, // Level 3 - lime
+      0x00ff00, // Level 4 - green
+      0x00ff88, // Level 5 - cyan-green
+      0x00ffff, // Level 6 - cyan
+      0x0088ff, // Level 7 - light blue
+      0x0000ff, // Level 8 - blue
+      0x8800ff, // Level 9 - purple
+    ];
+
+    for (let i = 0; i < result.parentCentroids.length; i++) {
+      const level = result.parentCentroids[i];
+      const vertices = generateHexagonVertices(level.centroid, level.sideLength);
+
+      // Create line segments for the hexagon
+      const positions: number[] = [];
+      for (let j = 0; j < 6; j++) {
+        const v1 = vertices[j];
+        const v2 = vertices[(j + 1) % 6];
+        positions.push(v1.x, y + i * 0.002, v1.y);
+        positions.push(v2.x, y + i * 0.002, v2.y);
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+      const color = colors[i % colors.length];
+      const material = new THREE.LineBasicMaterial({
+        color,
+        linewidth: 2,
+        transparent: true,
+        opacity: 0.8 - i * 0.05, // Fade out higher levels
+      });
+
+      const lineSegments = new THREE.LineSegments(geometry, material);
+      this.hexaTreeHexagonLines.push(lineSegments);
+      this.hexaTreeGroup.add(lineSegments);
+    }
+
+    // Draw the final point
+    const pointGeometry = new THREE.SphereGeometry(0.02, 16, 16);
+    const pointMaterial = new THREE.MeshBasicMaterial({
+      color: 0xff00ff, // Magenta
+    });
+    this.hexaTreePointMesh = new THREE.Mesh(pointGeometry, pointMaterial);
+    this.hexaTreePointMesh.position.set(
+      result.position.x,
+      y + result.parentCentroids.length * 0.002,
+      result.position.y
+    );
+    this.hexaTreeGroup.add(this.hexaTreePointMesh);
+  }
+
+  /**
+   * Clears the HexaTree visualization.
+   */
+  private clearHexaTreeVisualization(): void {
+    if (this.hexaTreeGroup) {
+      this.mapGroup.remove(this.hexaTreeGroup);
+
+      // Dispose geometries and materials
+      for (const line of this.hexaTreeHexagonLines) {
+        line.geometry.dispose();
+        if (line.material instanceof THREE.Material) {
+          line.material.dispose();
+        }
+      }
+      this.hexaTreeHexagonLines = [];
+
+      if (this.hexaTreePointMesh) {
+        this.hexaTreePointMesh.geometry.dispose();
+        if (this.hexaTreePointMesh.material instanceof THREE.Material) {
+          this.hexaTreePointMesh.material.dispose();
+        }
+        this.hexaTreePointMesh = null;
+      }
+
+      this.hexaTreeGroup = null;
+    }
+  }
+
+  /**
    * Disposes of all resources.
    */
   dispose(): void {
+    this.clearHexaTreeVisualization();
     this.cleanup();
   }
 }

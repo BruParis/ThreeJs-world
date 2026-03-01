@@ -1,5 +1,5 @@
 import { GUI } from 'dat.gui';
-import { HexaCell } from '../../core/iconet';
+import { HexaCell, decodeHexaTreePath, parsePathString } from '../../core/iconet';
 import { MapRenderer, ViewParams } from './MapRenderer';
 import { InteractionHandler } from './InteractionHandler';
 
@@ -26,6 +26,7 @@ export class GUISetup {
     this.setupViewFolder();
     this.setupInfoFolder();
     this.setupHexagonSelectionFolder();
+    this.setupHexaTreeEncodingFolder();
     this.setupHoverInfoFolder();
   }
 
@@ -101,11 +102,6 @@ export class GUISetup {
           return;
         }
 
-        // print all the ids and complete/incomplete status of the hexagons to the console
-        for (const cell of this.mapRenderer.subdivision?.hexaCells ?? []) {
-          console.log(`Hexagon ID: ${cell.id}, Complete: ${cell.isComplete}`);
-        }
-
         const cell = this.mapRenderer.subdivision?.hexaCells.find((c: HexaCell) => c.id === id);
         if (cell) {
           this.mapRenderer.selectHexagon(cell);
@@ -118,6 +114,91 @@ export class GUISetup {
   }
 
   /**
+   * Sets up the HexaTree Encoding folder for coordinate conversion.
+   */
+  private setupHexaTreeEncodingFolder(): void {
+    const encodingFolder = this.gui.addFolder('HexaTree Encoding');
+
+    const encodingState = {
+      rootHexagonId: 0,
+      pathString: '0,1,2',
+      compute: () => this.computeHexaTreeEncoding(encodingState),
+      clear: () => this.mapRenderer.displayHexaTreeEncoding(null),
+    };
+
+    // Root hexagon selector
+    const maxId = (this.mapRenderer.subdivision?.hexaCells.length ?? 1) - 1;
+    encodingFolder
+      .add(encodingState, 'rootHexagonId', 0, maxId, 1)
+      .name('Root Hexagon ID');
+
+    // Path input
+    encodingFolder
+      .add(encodingState, 'pathString')
+      .name('Path (0-3)');
+
+    // Compute button
+    encodingFolder
+      .add(encodingState, 'compute')
+      .name('Compute & Display');
+
+    // Clear button
+    encodingFolder
+      .add(encodingState, 'clear')
+      .name('Clear');
+
+    encodingFolder.open();
+  }
+
+  /**
+   * Computes and displays the HexaTree encoding.
+   */
+  private computeHexaTreeEncoding(state: { rootHexagonId: number; pathString: string }): void {
+    const { rootHexagonId, pathString } = state;
+
+    // Find the root hexagon
+    const rootCell = this.mapRenderer.subdivision?.hexaCells.find(
+      (c: HexaCell) => c.id === rootHexagonId
+    );
+
+    if (!rootCell) {
+      console.error(`Root hexagon with ID ${rootHexagonId} not found`);
+      return;
+    }
+
+    // Parse the path string
+    let path: number[];
+    try {
+      path = parsePathString(pathString);
+    } catch (e) {
+      console.error('Invalid path string:', e);
+      return;
+    }
+
+    // Get the root centroid and compute a reasonable side length
+    // For complete hexagons, use the distance from center to a vertex
+    // For incomplete hexagons, use a default based on triangle size
+    const rootCentroid = rootCell.center;
+    const rootSideLength = this.mapRenderer.geometry?.triangleSize ?? 1.0;
+
+    // Decode the path
+    try {
+      const result = decodeHexaTreePath(rootCentroid, path, rootSideLength);
+
+      console.log('HexaTree Decode Result:', {
+        position: result.position,
+        intermediateCoords: result.intermediateCoords,
+        levels: result.parentCentroids.length,
+      });
+
+      // Display the result
+      this.mapRenderer.displayHexaTreeEncoding(result);
+    } catch (e) {
+      console.error('Error decoding HexaTree path:', e);
+    }
+  }
+
+  /**
    * Sets up the Hover Info folder with live data.
    */
   private setupHoverInfoFolder(): void {
@@ -125,6 +206,7 @@ export class GUISetup {
     const hoverFolder = this.gui.addFolder('Hover Info');
 
     hoverFolder.add(hoverInfo, 'triangleId').name('Triangle ID').listen();
+    hoverFolder.add(hoverInfo, 'hexagonId').name('Hexagon ID').listen();
     hoverFolder.add(hoverInfo, 'nearbyVertexId').name('Vertex ID').listen();
     hoverFolder.add(hoverInfo, 'latDisplay').name('Latitude').listen();
     hoverFolder.add(hoverInfo, 'lonDisplay').name('Longitude').listen();
