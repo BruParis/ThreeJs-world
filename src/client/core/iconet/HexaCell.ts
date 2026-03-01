@@ -1,356 +1,154 @@
 /**
- * HexaCell - Data structure representing a hexagonal cell (pentagon) in the icosahedral net.
+ * HexaCell - Hexagonal cells in the icosahedral net.
  *
- * Each cell is centered on a vertex of the original mesh and formed by connecting
- * the centroids of triangles sharing that vertex.
+ * Two types of hexagons:
+ * - Complete: Triangle-centered hexagons, one inside each triangle (6 vertices).
+ * - Incomplete: Vertex-centered hexagons around original triangle vertices (5-6 vertices).
  *
- * For the base icosahedron (no subdivision), all cells are pentagons since
- * each vertex is shared by exactly 5 triangles.
- *
- * Special cases:
- * - Pole cells: The 5 top row vertices all represent the North Pole, and the
- *   5 bottom row vertices all represent the South Pole. These form single pentagons.
- * - Edge wraparound: The leftmost and rightmost vertices in rows 1 and 2 are
- *   the same point (longitude 0° = 360°). Their cells must combine triangles
- *   from both sides.
+ * Due to the topology of the flattened grid, the same vertex on the sphere may have
+ * multiple corresponding 2D coordinates. This is handled via the vertexPositions map.
  */
 
 import { Vec2, IcoNetGeometry } from './IcoNetGeometry';
 
+// ============================================================================
+// Types
+// ============================================================================
+
 /**
- * Represents a hexagonal cell (pentagon in base icosahedron) in the net.
+ * A vertex in a hexagonal cell with its ID and position.
+ */
+export interface HexaVertex {
+  /** Vertex ID (unique within the hexagon, sequential 0-5 or 0-4) */
+  id: number;
+  /** 2D position in the flattened grid */
+  position: Vec2;
+}
+
+/**
+ * Represents a hexagonal cell.
  */
 export interface HexaCell {
-  /** Unique identifier for this cell */
+  /** Unique identifier */
   id: number;
 
-  /** 2D vertices forming the cell boundary (ordered for a closed loop) */
-  vertices: Vec2[];
+  /** The triangle this hexagon belongs to (-1 for vertex-centered) */
+  triangleId: number;
 
-  /** Triangle indices whose centroids form this cell's vertices */
-  triangleIndices: number[];
+  /** Whether this is a complete (triangle-centered) or incomplete (vertex-centered) hexagon */
+  isComplete: boolean;
 
-  /** Whether this is a pole cell (North or South) */
-  isPole: boolean;
+  /** For incomplete hexagons: the canonical vertex this hexagon is centered on */
+  centerVertexId?: number;
 
-  /** Whether this cell wraps around the horizontal edge of the net */
-  wrapsHorizontally: boolean;
+  /** Center position of the hexagon (centroid for complete, original vertex for incomplete) */
+  center: Vec2;
 
-  /** The row of the center vertex (0=North Pole, 1=Upper Ring, 2=Lower Ring, 3=South Pole) */
-  row: number;
+  /**
+   * Ordered vertices forming the boundary (closed loop).
+   * Each vertex has a local ID (0 to n-1) and its 2D position.
+   */
+  vertices: HexaVertex[];
 
-  /** The column index within the row (0 to numCols-1) */
-  col: number;
+  /**
+   * Maps vertex ID -> set of 2D positions.
+   * For complete hexagons: each ID maps to exactly one position.
+   * For incomplete border hexagons: some IDs may map to multiple positions
+   * (when the same 3D vertex appears at different 2D locations due to wrapping).
+   */
+  vertexPositions: Map<number, Vec2[]>;
+
+  /**
+   * Local center for each vertex, used for rendering triangles.
+   * - Complete hexagons: all centers are the same (centroid).
+   * - Incomplete hexagons: each vertex uses its associated original vertex position.
+   */
+  localCenters: Vec2[];
 }
 
 /**
- * Computes the centroid of a triangle.
+ * Result of building all hexagons.
  */
-function computeCentroid(v0: Vec2, v1: Vec2, v2: Vec2): Vec2 {
+export interface HexagonBuildResult {
+  /** All hexagonal cells (complete + incomplete) */
+  hexaCells: HexaCell[];
+
+  /** Complete hexagons only (triangle-centered) */
+  completeHexagons: HexaCell[];
+
+  /** Incomplete hexagons only (vertex-centered) */
+  incompleteHexagons: HexaCell[];
+}
+
+/**
+ * Internal: vertex created on an edge at t=1/3 or t=2/3.
+ */
+interface EdgeVertex {
+  id: number;
+  position: Vec2;
+  edge: [number, number];
+  t: number;
+}
+
+/**
+ * Internal: edge vertex with its associated original vertex info.
+ */
+interface EdgeVertexWithOrigin {
+  position: Vec2;
+  originalVertexId: number;
+  originalVertexPos: Vec2;
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+/**
+ * Builds all hexagons for the given geometry.
+ */
+export function buildHexagons(geometry: IcoNetGeometry): HexagonBuildResult {
+  // Create edge vertices (2 per edge at t=1/3 and t=2/3)
+  const { edgeVertices, edgeToVertices } = createEdgeVertices(geometry);
+
+  // Build both types of hexagons
+  const completeHexagons = buildCompleteHexagons(geometry, edgeVertices, edgeToVertices);
+  const incompleteHexagons = buildIncompleteHexagons(geometry, edgeVertices, edgeToVertices, geometry.faceCount);
+
   return {
-    x: (v0.x + v1.x + v2.x) / 3,
-    y: (v0.y + v1.y + v2.y) / 3,
+    hexaCells: [...completeHexagons, ...incompleteHexagons],
+    completeHexagons,
+    incompleteHexagons,
   };
 }
 
 /**
- * Computes centroids for all triangles in the geometry.
- */
-export function computeTriangleCentroids(geometry: IcoNetGeometry): Vec2[] {
-  const centroids: Vec2[] = [];
-
-  for (let i = 0; i < geometry.faceCount; i++) {
-    const [i0, i1, i2] = geometry.getFace(i);
-    const v0 = geometry.getVertex(i0);
-    const v1 = geometry.getVertex(i1);
-    const v2 = geometry.getVertex(i2);
-    centroids.push(computeCentroid(v0, v1, v2));
-  }
-
-  return centroids;
-}
-
-/**
- * Builds a mapping from vertex index to triangle indices that contain that vertex.
- */
-function buildVertexToTrianglesMap(geometry: IcoNetGeometry): Map<number, number[]> {
-  const map = new Map<number, number[]>();
-
-  for (let ti = 0; ti < geometry.faceCount; ti++) {
-    const [i0, i1, i2] = geometry.getFace(ti);
-    for (const vi of [i0, i1, i2]) {
-      if (!map.has(vi)) {
-        map.set(vi, []);
-      }
-      map.get(vi)!.push(ti);
-    }
-  }
-
-  return map;
-}
-
-/**
- * Orders triangle indices around a vertex to form a consistent loop.
- * Uses angle from vertex to centroid for ordering.
- */
-function orderTrianglesAroundVertex(
-  vertex: Vec2,
-  triangleIndices: number[],
-  centroids: Vec2[]
-): number[] {
-  return [...triangleIndices].sort((a, b) => {
-    const ca = centroids[a];
-    const cb = centroids[b];
-    const angleA = Math.atan2(ca.y - vertex.y, ca.x - vertex.x);
-    const angleB = Math.atan2(cb.y - vertex.y, cb.x - vertex.x);
-    return angleA - angleB;
-  });
-}
-
-/**
- * Creates the North Pole cell by combining all row 0 vertices.
- * The pole is shared by all 5 top triangles.
- */
-function createNorthPoleCell(
-  geometry: IcoNetGeometry,
-  centroids: Vec2[]
-): HexaCell {
-  const numCols = geometry.numCols;
-
-  // Top triangles are indices 0 to numCols-1
-  const triangleIndices: number[] = [];
-  for (let i = 0; i < numCols; i++) {
-    triangleIndices.push(i);
-  }
-
-  // Order by x-coordinate of centroid (left to right)
-  triangleIndices.sort((a, b) => centroids[a].x - centroids[b].x);
-
-  return {
-    id: 0,
-    vertices: triangleIndices.map(ti => centroids[ti]),
-    triangleIndices,
-    isPole: true,
-    wrapsHorizontally: true,
-    row: 0,
-    col: 0,
-  };
-}
-
-/**
- * Creates the South Pole cell by combining all row 3 vertices.
- * The pole is shared by all 5 bottom triangles.
- */
-function createSouthPoleCell(
-  geometry: IcoNetGeometry,
-  centroids: Vec2[],
-  cellId: number
-): HexaCell {
-  const numCols = geometry.numCols;
-
-  // Bottom triangles are the last numCols triangles
-  const bottomStart = geometry.faceCount - numCols;
-  const triangleIndices: number[] = [];
-  for (let i = 0; i < numCols; i++) {
-    triangleIndices.push(bottomStart + i);
-  }
-
-  // Order by x-coordinate of centroid (left to right)
-  triangleIndices.sort((a, b) => centroids[a].x - centroids[b].x);
-
-  return {
-    id: cellId,
-    vertices: triangleIndices.map(ti => centroids[ti]),
-    triangleIndices,
-    isPole: true,
-    wrapsHorizontally: true,
-    row: 3,
-    col: 0,
-  };
-}
-
-/**
- * Creates a cell for a row 1 vertex (upper ring).
- * Handles wraparound for vertices at the edges.
- */
-function createRow1Cell(
-  geometry: IcoNetGeometry,
-  centroids: Vec2[],
-  vertexToTriangles: Map<number, number[]>,
-  col: number,
-  cellId: number
-): HexaCell {
-  const numCols = geometry.numCols;
-  const { row1 } = geometry.rowStarts;
-
-  const wrapsHorizontally = col === 0;
-
-  // Primary vertex index
-  const primaryVertexIndex = row1 + col;
-
-  // Get triangles for this vertex
-  let triangleIndices = [...(vertexToTriangles.get(primaryVertexIndex) || [])];
-
-  // Handle wraparound: vertex at col=0 wraps with vertex at col=numCols
-  if (wrapsHorizontally) {
-    const wrapVertexIndex = row1 + numCols;
-    const wrapTriangles = vertexToTriangles.get(wrapVertexIndex) || [];
-    triangleIndices.push(...wrapTriangles);
-  }
-
-  // Compute virtual center for ordering (average of vertex positions)
-  let centerVertex = geometry.getVertex(primaryVertexIndex);
-  if (wrapsHorizontally) {
-    // For wraparound, use the average x position
-    const wrapVertex = geometry.getVertex(row1 + numCols);
-    centerVertex = {
-      x: (centerVertex.x + wrapVertex.x) / 2,
-      y: centerVertex.y,
-    };
-  }
-
-  // Order triangles around the vertex
-  triangleIndices = orderTrianglesAroundVertex(centerVertex, triangleIndices, centroids);
-
-  return {
-    id: cellId,
-    vertices: triangleIndices.map(ti => centroids[ti]),
-    triangleIndices,
-    isPole: false,
-    wrapsHorizontally,
-    row: 1,
-    col,
-  };
-}
-
-/**
- * Creates a cell for a row 2 vertex (lower ring).
- * Handles wraparound for vertices at the edges.
- */
-function createRow2Cell(
-  geometry: IcoNetGeometry,
-  centroids: Vec2[],
-  vertexToTriangles: Map<number, number[]>,
-  col: number,
-  cellId: number
-): HexaCell {
-  const numCols = geometry.numCols;
-  const { row2 } = geometry.rowStarts;
-
-  const wrapsHorizontally = col === 0;
-
-  // Primary vertex index
-  const primaryVertexIndex = row2 + col;
-
-  // Get triangles for this vertex
-  let triangleIndices = [...(vertexToTriangles.get(primaryVertexIndex) || [])];
-
-  // Handle wraparound: vertex at col=0 wraps with vertex at col=numCols
-  if (wrapsHorizontally) {
-    const wrapVertexIndex = row2 + numCols;
-    const wrapTriangles = vertexToTriangles.get(wrapVertexIndex) || [];
-    triangleIndices.push(...wrapTriangles);
-  }
-
-  // Compute virtual center for ordering
-  let centerVertex = geometry.getVertex(primaryVertexIndex);
-  if (wrapsHorizontally) {
-    const wrapVertex = geometry.getVertex(row2 + numCols);
-    centerVertex = {
-      x: (centerVertex.x + wrapVertex.x) / 2,
-      y: centerVertex.y,
-    };
-  }
-
-  // Order triangles around the vertex
-  triangleIndices = orderTrianglesAroundVertex(centerVertex, triangleIndices, centroids);
-
-  return {
-    id: cellId,
-    vertices: triangleIndices.map(ti => centroids[ti]),
-    triangleIndices,
-    isPole: false,
-    wrapsHorizontally,
-    row: 2,
-    col,
-  };
-}
-
-/**
- * Builds all HexaCells from the geometry.
- *
- * Returns 12 cells for the base icosahedron:
- * - 1 North Pole pentagon
- * - 5 upper ring pentagons
- * - 5 lower ring pentagons
- * - 1 South Pole pentagon
- */
-export function buildHexaCells(geometry: IcoNetGeometry): HexaCell[] {
-  const numCols = geometry.numCols;
-  const centroids = computeTriangleCentroids(geometry);
-  const vertexToTriangles = buildVertexToTrianglesMap(geometry);
-
-  const cells: HexaCell[] = [];
-  let cellId = 0;
-
-  // North Pole cell (id = 0)
-  cells.push(createNorthPoleCell(geometry, centroids));
-  cellId++;
-
-  // Row 1 cells (upper ring) - numCols cells (not numCols+1 due to wraparound)
-  for (let col = 0; col < numCols; col++) {
-    cells.push(createRow1Cell(geometry, centroids, vertexToTriangles, col, cellId));
-    cellId++;
-  }
-
-  // Row 2 cells (lower ring) - numCols cells
-  for (let col = 0; col < numCols; col++) {
-    cells.push(createRow2Cell(geometry, centroids, vertexToTriangles, col, cellId));
-    cellId++;
-  }
-
-  // South Pole cell
-  cells.push(createSouthPoleCell(geometry, centroids, cellId));
-
-  return cells;
-}
-
-/**
- * Tests if a point is inside a convex polygon using cross product method.
+ * Tests if a point is inside a convex polygon.
  */
 export function isPointInCell(point: Vec2, cell: HexaCell): boolean {
-  const vertices = cell.vertices;
+  const { vertices } = cell;
   const n = vertices.length;
-
   if (n < 3) return false;
 
-  // Check if point is on the same side of all edges
   let sign = 0;
-
   for (let i = 0; i < n; i++) {
-    const v1 = vertices[i];
-    const v2 = vertices[(i + 1) % n];
-
-    // Cross product of edge vector and point vector
+    const v1 = vertices[i].position;
+    const v2 = vertices[(i + 1) % n].position;
     const cross = (v2.x - v1.x) * (point.y - v1.y) - (v2.y - v1.y) * (point.x - v1.x);
 
-    if (Math.abs(cross) < 1e-10) continue; // On the edge
+    if (Math.abs(cross) < 1e-10) continue;
 
     const currentSign = cross > 0 ? 1 : -1;
-
     if (sign === 0) {
       sign = currentSign;
     } else if (sign !== currentSign) {
       return false;
     }
   }
-
   return true;
 }
 
 /**
  * Finds the cell containing the given point.
- * Returns null if the point is outside all cells.
  */
 export function findCellAtPoint(point: Vec2, cells: HexaCell[]): HexaCell | null {
   for (const cell of cells) {
@@ -361,19 +159,327 @@ export function findCellAtPoint(point: Vec2, cells: HexaCell[]): HexaCell | null
   return null;
 }
 
-/**
- * Computes the centroid of a cell (average of its vertices).
- */
-export function computeCellCentroid(cell: HexaCell): Vec2 {
-  const n = cell.vertices.length;
-  if (n === 0) return { x: 0, y: 0 };
+// ============================================================================
+// Edge Vertex Creation
+// ============================================================================
 
-  let sumX = 0;
-  let sumY = 0;
-  for (const v of cell.vertices) {
+/**
+ * Creates vertices on each edge at t=1/3 and t=2/3.
+ * These vertices form the corners of the hexagons.
+ */
+function createEdgeVertices(geometry: IcoNetGeometry): {
+  edgeVertices: EdgeVertex[];
+  edgeToVertices: Map<string, number[]>;
+} {
+  const edgeVertices: EdgeVertex[] = [];
+  const edgeToVertices = new Map<string, number[]>();
+  let vertexId = 0;
+
+  for (let ti = 0; ti < geometry.faceCount; ti++) {
+    const [i0, i1, i2] = geometry.getFace(ti);
+    const edges: [number, number][] = [[i0, i1], [i1, i2], [i2, i0]];
+
+    for (const [va, vb] of edges) {
+      const edgeKey = makeEdgeKey(va, vb);
+
+      if (!edgeToVertices.has(edgeKey)) {
+        const [startIdx, endIdx] = va < vb ? [va, vb] : [vb, va];
+        const startPos = geometry.getVertex(startIdx);
+        const endPos = geometry.getVertex(endIdx);
+
+        const v1: EdgeVertex = {
+          id: vertexId++,
+          position: lerp2D(startPos, endPos, 1 / 3),
+          edge: [startIdx, endIdx],
+          t: 1 / 3,
+        };
+
+        const v2: EdgeVertex = {
+          id: vertexId++,
+          position: lerp2D(startPos, endPos, 2 / 3),
+          edge: [startIdx, endIdx],
+          t: 2 / 3,
+        };
+
+        edgeVertices.push(v1, v2);
+        edgeToVertices.set(edgeKey, [v1.id, v2.id]);
+      }
+    }
+  }
+
+  return { edgeVertices, edgeToVertices };
+}
+
+// ============================================================================
+// Complete Hexagons (Triangle-Centered)
+// ============================================================================
+
+/**
+ * Builds complete hexagons: one inside each triangle.
+ * Each hexagon uses the 6 edge vertices around the triangle.
+ */
+function buildCompleteHexagons(
+  geometry: IcoNetGeometry,
+  edgeVertices: EdgeVertex[],
+  edgeToVertices: Map<string, number[]>
+): HexaCell[] {
+  const hexagons: HexaCell[] = [];
+
+  for (let ti = 0; ti < geometry.faceCount; ti++) {
+    const [i0, i1, i2] = geometry.getFace(ti);
+    const edges: [number, number][] = [[i0, i1], [i1, i2], [i2, i0]];
+
+    // Collect vertices in order around the hexagon
+    const positions: Vec2[] = [];
+    for (const [va, vb] of edges) {
+      const edgeKey = makeEdgeKey(va, vb);
+      const vertexIds = edgeToVertices.get(edgeKey)!;
+
+      // Determine traversal direction
+      if (va < vb) {
+        positions.push(edgeVertices[vertexIds[0]].position, edgeVertices[vertexIds[1]].position);
+      } else {
+        positions.push(edgeVertices[vertexIds[1]].position, edgeVertices[vertexIds[0]].position);
+      }
+    }
+
+    const centroid = computeCentroid(positions);
+
+    // Build vertices with IDs
+    const vertices: HexaVertex[] = positions.map((pos, idx) => ({
+      id: idx,
+      position: pos,
+    }));
+
+    // Build vertex positions map (each ID maps to exactly one position for complete hexagons)
+    const vertexPositions = new Map<number, Vec2[]>();
+    for (let i = 0; i < positions.length; i++) {
+      vertexPositions.set(i, [positions[i]]);
+    }
+
+    hexagons.push({
+      id: ti,
+      triangleId: ti,
+      isComplete: true,
+      center: centroid,
+      vertices,
+      vertexPositions,
+      localCenters: positions.map(() => centroid),
+    });
+  }
+
+  return hexagons;
+}
+
+// ============================================================================
+// Incomplete Hexagons (Vertex-Centered)
+// ============================================================================
+
+/**
+ * Vertex equivalence groups: vertices that are the same on the 3D icosahedron
+ * but appear at different positions in the 2D net.
+ */
+const VERTEX_EQUIVALENCES: number[][] = [
+  [0, 1, 2, 3, 4],      // North pole (pentagon)
+  [17, 18, 19, 20, 21], // South pole (pentagon)
+  [5, 10],              // Left/right wrap
+  [11, 16],             // Left/right wrap
+];
+
+/**
+ * Builds incomplete hexagons: one around each original vertex.
+ * Handles vertex equivalences (vertices that wrap around the net).
+ *
+ * For vertices that appear at multiple 2D positions (equivalence classes),
+ * we group edge vertices by their original vertex and sort within each group.
+ */
+function buildIncompleteHexagons(
+  geometry: IcoNetGeometry,
+  edgeVertices: EdgeVertex[],
+  edgeToVertices: Map<string, number[]>,
+  startId: number
+): HexaCell[] {
+  const hexagons: HexaCell[] = [];
+  const processedVertices = new Set<number>();
+  let currentId = startId;
+
+  for (let vi = 0; vi < geometry.vertexCount; vi++) {
+    const canonicalVi = getCanonicalVertex(vi);
+    if (processedVertices.has(canonicalVi)) continue;
+    processedVertices.add(canonicalVi);
+
+    const equivalentVertices = getEquivalentVertices(vi);
+    const edgeVertexInfos = collectEdgeVerticesAroundVertex(
+      equivalentVertices,
+      geometry,
+      edgeVertices,
+      edgeToVertices
+    );
+
+    if (edgeVertexInfos.length < 3) continue;
+
+    // Sort edge vertices properly based on their spatial distribution
+    const sorted = sortEdgeVerticesForHexagon(edgeVertexInfos, equivalentVertices, geometry);
+
+    // Build HexaVertex array with sequential IDs
+    const vertices: HexaVertex[] = sorted.map((info, idx) => ({
+      id: idx,
+      position: info.position,
+    }));
+
+    // Build vertex positions map
+    const vertexPositions = new Map<number, Vec2[]>();
+    for (let i = 0; i < sorted.length; i++) {
+      const positions = vertexPositions.get(i) || [];
+      positions.push(sorted[i].position);
+      vertexPositions.set(i, positions);
+    }
+
+    // Compute center as centroid of all equivalent vertex positions
+    const equivalentPositions = equivalentVertices.map(v => geometry.getVertex(v));
+    const center = computeCentroid(equivalentPositions);
+
+    hexagons.push({
+      id: currentId++,
+      triangleId: -1,
+      isComplete: false,
+      centerVertexId: canonicalVi,
+      center,
+      vertices,
+      vertexPositions,
+      localCenters: sorted.map(info => info.originalVertexPos),
+    });
+  }
+
+  return hexagons;
+}
+
+/**
+ * Collects edge vertices that are closest to the given original vertices.
+ */
+function collectEdgeVerticesAroundVertex(
+  originalVertices: number[],
+  geometry: IcoNetGeometry,
+  edgeVertices: EdgeVertex[],
+  edgeToVertices: Map<string, number[]>
+): EdgeVertexWithOrigin[] {
+  const result: EdgeVertexWithOrigin[] = [];
+
+  for (const origVi of originalVertices) {
+    const origPos = geometry.getVertex(origVi);
+
+    for (const [edgeKey, vertexIds] of edgeToVertices) {
+      const [v1, v2] = edgeKey.split('-').map(Number);
+
+      if (v1 === origVi || v2 === origVi) {
+        // Get the edge vertex closest to this original vertex
+        const edgeVertexIdx = origVi === v1 ? vertexIds[0] : vertexIds[1];
+
+        result.push({
+          position: edgeVertices[edgeVertexIdx].position,
+          originalVertexId: origVi,
+          originalVertexPos: origPos,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Sorts edge vertices for an incomplete hexagon.
+ * Groups vertices by their original vertex, sorts within each group by angle,
+ * then concatenates groups in spatial order.
+ */
+function sortEdgeVerticesForHexagon(
+  infos: EdgeVertexWithOrigin[],
+  equivalentVertices: number[],
+  geometry: IcoNetGeometry
+): EdgeVertexWithOrigin[] {
+  // Group edge vertices by their original vertex ID
+  const groups = new Map<number, EdgeVertexWithOrigin[]>();
+  for (const info of infos) {
+    const group = groups.get(info.originalVertexId) || [];
+    group.push(info);
+    groups.set(info.originalVertexId, group);
+  }
+
+  // Sort vertices within each group by angle around their original vertex
+  for (const [origVi, group] of groups) {
+    const origPos = geometry.getVertex(origVi);
+    group.sort((a, b) => {
+      const angleA = Math.atan2(a.position.y - origPos.y, a.position.x - origPos.x);
+      const angleB = Math.atan2(b.position.y - origPos.y, b.position.x - origPos.x);
+      return angleA - angleB;
+    });
+  }
+
+  // Order the groups by the x-coordinate of their original vertex (left to right)
+  const sortedOrigVertices = [...equivalentVertices].sort((a, b) => {
+    const posA = geometry.getVertex(a);
+    const posB = geometry.getVertex(b);
+    return posA.x - posB.x;
+  });
+
+  // Concatenate all groups in order
+  const result: EdgeVertexWithOrigin[] = [];
+  for (const origVi of sortedOrigVertices) {
+    const group = groups.get(origVi);
+    if (group) {
+      result.push(...group);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Returns the canonical (smallest) vertex ID in an equivalence group.
+ */
+function getCanonicalVertex(vi: number): number {
+  for (const group of VERTEX_EQUIVALENCES) {
+    if (group.includes(vi)) {
+      return Math.min(...group);
+    }
+  }
+  return vi;
+}
+
+/**
+ * Returns all vertices equivalent to the given vertex.
+ */
+function getEquivalentVertices(vi: number): number[] {
+  for (const group of VERTEX_EQUIVALENCES) {
+    if (group.includes(vi)) {
+      return group;
+    }
+  }
+  return [vi];
+}
+
+// ============================================================================
+// Utilities
+// ============================================================================
+
+function makeEdgeKey(v1: number, v2: number): string {
+  return v1 < v2 ? `${v1}-${v2}` : `${v2}-${v1}`;
+}
+
+function lerp2D(a: Vec2, b: Vec2, t: number): Vec2 {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+  };
+}
+
+function computeCentroid(vertices: Vec2[]): Vec2 {
+  if (vertices.length === 0) return { x: 0, y: 0 };
+
+  let sumX = 0, sumY = 0;
+  for (const v of vertices) {
     sumX += v.x;
     sumY += v.y;
   }
-
-  return { x: sumX / n, y: sumY / n };
+  return { x: sumX / vertices.length, y: sumY / vertices.length };
 }

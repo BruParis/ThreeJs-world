@@ -24,10 +24,10 @@ export {
 } from './HexaTriangle';
 
 export {
-  buildHexaCells,
-  computeTriangleCentroids,
+  buildHexagons,
   isPointInCell,
   findCellAtPoint,
-  computeCellCentroid,
   type HexaCell,
+  type HexaVertex,
+  type HexagonBuildResult,
 } from './HexaCell';
