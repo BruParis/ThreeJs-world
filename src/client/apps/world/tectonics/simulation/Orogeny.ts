@@ -1,5 +1,5 @@
 import { Tile, Plate, PlateCategory, BoundaryType, GeologicalType, GeologicalIntensity, TectonicSystem, PlateBoundary, BoundaryEdge } from '../data/Plate';
-import { kmToDistance } from '../../world/World';
+import { kmToDistance } from '../../../../shared/world/World';
 import { getMotionDecile, getAreaDecile, getNeighborTilesInPlate, getUnassignedTiles } from './GeologyUtils';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 

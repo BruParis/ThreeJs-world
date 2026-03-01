@@ -19,7 +19,7 @@ import {
   makeLineSegments2ForNeighborTilesInPlate
 } from '../visualization/TectonicsDrawingUtils';
 import { SceneManager } from './SceneManager';
-import { areaToKm2 } from '../world/World';
+import { areaToKm2 } from '../../../shared/world/World';
 
 /**
  * Manages all visualization elements: meshes, materials, lines, and rebuild logic.

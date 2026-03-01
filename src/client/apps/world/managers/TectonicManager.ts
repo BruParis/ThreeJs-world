@@ -24,7 +24,7 @@ import {
 import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType, makeLineSegments2ForAllBoundariesGradient, makeLineSegments2ForDominanceIndicators, makeLineSegments2ForTransformSlideIndicators } from '../visualization/TectonicsDrawingUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
-import { idToHSLColor, assignColorToTriangle } from '../utils/ColorUtils';
+import { idToHSLColor, assignColorToTriangle } from '../../../shared/utils/ColorUtils';
 
 /**
  * Manages the tectonic plate system, including building, coloring, and plate operations.

@@ -1,6 +1,6 @@
 import { Tile, Plate, PlateCategory, BoundaryType, GeologicalType, GeologicalIntensity, TectonicSystem, PlateBoundary } from '../data/Plate';
 import { getNeighborTilesInPlate, getMotionDecile, getAreaDecile } from './GeologyUtils';
-import { kmToDistance } from '../../world/World';
+import { kmToDistance } from '../../../../shared/world/World';
 
 // ============================================================================
 // Basin Assignment

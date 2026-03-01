@@ -4,7 +4,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 
 import { Tile, Plate, PlateBoundary, BoundaryType, BoundaryEdge, TectonicSystem, ConvergentDominance, TransformSlide } from '../tectonics/data/Plate';
 import { BOUNDARY_COLORS } from './BoundaryColors';
-import { kmToDistance } from '../world/World';
+import { kmToDistance } from '../../../shared/world/World';
 
 
 function makeLineSegments2FromTile(tile: Tile, lines: LineSegments2): void {

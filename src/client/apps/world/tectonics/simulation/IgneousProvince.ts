@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Tile, Plate, PlateCategory, BoundaryType, GeologicalType, TectonicSystem, PlateBoundary, BoundaryEdge } from '../data/Plate';
-import { kmToDistance, distanceToKm } from '../../world/World';
+import { kmToDistance, distanceToKm } from '../../../../shared/world/World';
 import { getNeighborTilesInPlate } from './GeologyUtils';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 

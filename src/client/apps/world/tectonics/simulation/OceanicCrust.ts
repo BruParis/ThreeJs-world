@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Tile, Plate, PlateCategory, BoundaryType, GeologicalType, TectonicSystem, PlateBoundary } from '../data/Plate';
-import { kmToDistance } from '../../world/World';
+import { kmToDistance } from '../../../../shared/world/World';
 import { getMotionDecile, getNeighborTilesInPlate } from './GeologyUtils';
 
 // ============================================================================

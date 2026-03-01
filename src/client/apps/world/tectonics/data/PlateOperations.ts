@@ -1,7 +1,7 @@
 import { Halfedge } from '@core/halfedge/Halfedge';
 import { HalfedgeGraph } from '@core/halfedge/HalfedgeGraph';
 import { Tile, Plate, TectonicSystem, PlateBoundary, BoundaryEdge, BoundaryType } from './Plate';
-import { kmToDistance } from '../../world/World';
+import { kmToDistance } from '../../../../shared/world/World';
 
 /**
  * Smoothing window half-width in kilometers for boundary type refinement.

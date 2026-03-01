@@ -10,7 +10,7 @@ import {
   GeologicalType,
   makePlateBoundary
 } from '../data/Plate';
-import { km2ToArea, areaToKm2 } from '../../world/World';
+import { km2ToArea, areaToKm2 } from '../../../../shared/world/World';
 import { refineBoundaryType } from '../data/PlateOperations';
 import {
   caracterizeBoundaryEdge,

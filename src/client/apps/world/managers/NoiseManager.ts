@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { Tile } from '../tectonics/data/Plate';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
-import { projectToTangentPlane } from '../utils/MathUtils';
+import { projectToTangentPlane } from '../../../shared/utils/MathUtils';
 import { makeLineSegments2ForGradients } from '../visualization/NoiseDrawingUtils';
-import { assignColorToTriangle } from '../utils/ColorUtils';
+import { assignColorToTriangle } from '../../../shared/utils/ColorUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
 
