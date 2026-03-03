@@ -33,9 +33,9 @@ w(3)= (1, 0)
 compute (i,j) intermediary coordinates with:
 (i,j) = sum_k=0_k⁼n-1 ((2^k) . w(a_k+1))
 
-if 2 * j-i > 2^(n-1) then j = j - 2^(n-1)
-else if (-i-j) > 2^(n-1) then i = i+ 2^(n-1) and j = j + 2^(n-1)
-else if (2*i -j)> 2^(n-1) then i = i-2^(n-1)
+if 2 * j-i > 2^n then j = j - 2^n
+else if (-i-j) > 2^n then i = i+ 2^n and j = j + 2^n
+else if (2*i -j)> 2^n then i = i-2^n
 
 compute (x,y) 2D-hexaongal lattices coordinates as:
 (x,y) = M x (i,j) with M the 2x2 matrix:

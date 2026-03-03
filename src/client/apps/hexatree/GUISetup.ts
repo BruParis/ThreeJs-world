@@ -1,6 +1,6 @@
 import { GUI } from 'dat.gui';
 import { HexaCell, decodeHexaTreePath, parsePathString } from '../../core/iconet';
-import { MapRenderer, ViewParams } from './MapRenderer';
+import { MapRenderer, ViewParams, HexaTreeDisplayData } from './MapRenderer';
 import { InteractionHandler } from './InteractionHandler';
 
 export interface GUIParams extends ViewParams {}
@@ -120,8 +120,8 @@ export class GUISetup {
     const encodingFolder = this.gui.addFolder('HexaTree Encoding');
 
     const encodingState = {
-      rootHexagonId: 0,
-      pathString: '0,1,2',
+      rootHexagonId: 8,
+      pathString: '12',
       compute: () => this.computeHexaTreeEncoding(encodingState),
       clear: () => this.mapRenderer.displayHexaTreeEncoding(null),
     };
@@ -132,10 +132,10 @@ export class GUISetup {
       .add(encodingState, 'rootHexagonId', 0, maxId, 1)
       .name('Root Hexagon ID');
 
-    // Path input
+    // Path input (digits 0-3 only)
     encodingFolder
       .add(encodingState, 'pathString')
-      .name('Path (0-3)');
+      .name('Path');
 
     // Compute button
     encodingFolder
@@ -179,20 +179,24 @@ export class GUISetup {
     // For complete hexagons, use the distance from center to a vertex
     // For incomplete hexagons, use a default based on triangle size
     const rootCentroid = rootCell.center;
-    const rootSideLength = this.mapRenderer.geometry?.triangleSize ?? 1.0;
+    const triangleSideLength = this.mapRenderer.geometry?.triangleSize ?? 1.0;
 
-    // Decode the path
+    // Decode the path to get centroids at each level
     try {
-      const result = decodeHexaTreePath(rootCentroid, path, rootSideLength);
+      const centroids = decodeHexaTreePath(rootCentroid, path, triangleSideLength);
 
       console.log('HexaTree Decode Result:', {
-        position: result.position,
-        intermediateCoords: result.intermediateCoords,
-        levels: result.parentCentroids.length,
+        finalPosition: centroids[centroids.length - 1],
+        levels: centroids.length,
       });
 
-      // Display the result
-      this.mapRenderer.displayHexaTreeEncoding(result);
+      // Build display data and show
+      const rootSideLength = triangleSideLength / 3.0;
+      const displayData: HexaTreeDisplayData = {
+        centroids,
+        rootSideLength,
+      };
+      this.mapRenderer.displayHexaTreeEncoding(displayData);
     } catch (e) {
       console.error('Error decoding HexaTree path:', e);
     }

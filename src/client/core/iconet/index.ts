@@ -35,7 +35,4 @@ export {
 export {
   decodeHexaTreePath,
   parsePathString,
-  generateHexagonVertices,
-  type HexaTreeDecodeResult,
-  type HexaTreeLevel,
 } from './HexaTreeEncoding';

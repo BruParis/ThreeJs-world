@@ -7,9 +7,31 @@ import {
   HexagonBuildResult,
   buildHexagons,
   HexaCell,
-  HexaTreeDecodeResult,
-  generateHexagonVertices,
+  Vec2,
 } from '../../core/iconet';
+
+/**
+ * Display data for HexaTree visualization (app-level structure)
+ */
+export interface HexaTreeDisplayData {
+  centroids: Vec2[];
+  rootSideLength: number;
+}
+
+/**
+ * Generates vertices for a regular hexagon centered at a point.
+ */
+function generateHexagonVertices(center: Vec2, sideLength: number): Vec2[] {
+  const vertices: Vec2[] = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = (i * Math.PI) / 3;
+    vertices.push({
+      x: center.x + sideLength * Math.cos(angle),
+      y: center.y + sideLength * Math.sin(angle),
+    });
+  }
+  return vertices;
+}
 
 export interface ViewParams {
   showFaces: boolean;
@@ -414,15 +436,15 @@ export class MapRenderer {
 
   /**
    * Displays a HexaTree encoding result on the map.
-   * Shows a dot at the final position and parent hexagons at each level.
+   * Shows a dot at the final position and hexagons at each level.
    *
-   * @param result - The decoded HexaTree path result, or null to clear
+   * @param data - Display data with centroids and root side length, or null to clear
    */
-  displayHexaTreeEncoding(result: HexaTreeDecodeResult | null): void {
+  displayHexaTreeEncoding(data: HexaTreeDisplayData | null): void {
     // Clear previous visualization
     this.clearHexaTreeVisualization();
 
-    if (!result) {
+    if (!data || data.centroids.length === 0) {
       return;
     }
 
@@ -432,7 +454,7 @@ export class MapRenderer {
 
     const y = 0.02; // Height above the map
 
-    // Draw parent hexagons at each level (from largest to smallest)
+    // Colors for each level
     const colors = [
       0xff0000, // Level 0 - red
       0xff8800, // Level 1 - orange
@@ -446,28 +468,32 @@ export class MapRenderer {
       0x8800ff, // Level 9 - purple
     ];
 
-    for (let i = 0; i < result.parentCentroids.length; i++) {
-      const level = result.parentCentroids[i];
-      const vertices = generateHexagonVertices(level.centroid, level.sideLength);
+    // Draw hexagon at each level
+    console.log('Displaying HexaTree encoding with centroids:', data.centroids.length);
+    for (let level = 1; level <= data.centroids.length; level++) {
+      const idx = level - 1;
+      const centroid = data.centroids[idx];
+      const sideLength = data.rootSideLength * Math.pow(0.5, level);
+      const vertices = generateHexagonVertices(centroid, sideLength);
 
       // Create line segments for the hexagon
       const positions: number[] = [];
       for (let j = 0; j < 6; j++) {
         const v1 = vertices[j];
         const v2 = vertices[(j + 1) % 6];
-        positions.push(v1.x, y + i * 0.002, v1.y);
-        positions.push(v2.x, y + i * 0.002, v2.y);
+        positions.push(v1.x, y + level * 0.002, v1.y);
+        positions.push(v2.x, y + level * 0.002, v2.y);
       }
 
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
-      const color = colors[i % colors.length];
+      const color = colors[idx % colors.length];
       const material = new THREE.LineBasicMaterial({
         color,
         linewidth: 2,
         transparent: true,
-        opacity: 0.8 - i * 0.05, // Fade out higher levels
+        opacity: 0.8 - level * 0.05,
       });
 
       const lineSegments = new THREE.LineSegments(geometry, material);
@@ -475,16 +501,17 @@ export class MapRenderer {
       this.hexaTreeGroup.add(lineSegments);
     }
 
-    // Draw the final point
+    // Draw the final point at the last centroid
+    const finalCentroid = data.centroids[data.centroids.length - 1];
     const pointGeometry = new THREE.SphereGeometry(0.02, 16, 16);
     const pointMaterial = new THREE.MeshBasicMaterial({
       color: 0xff00ff, // Magenta
     });
     this.hexaTreePointMesh = new THREE.Mesh(pointGeometry, pointMaterial);
     this.hexaTreePointMesh.position.set(
-      result.position.x,
-      y + result.parentCentroids.length * 0.002,
-      result.position.y
+      finalCentroid.x,
+      y + data.centroids.length * 0.002,
+      finalCentroid.y
     );
     this.hexaTreeGroup.add(this.hexaTreePointMesh);
   }

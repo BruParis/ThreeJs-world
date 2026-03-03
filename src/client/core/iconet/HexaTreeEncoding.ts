@@ -1,10 +1,9 @@
 /**
  * HexaTree Encoding System
  *
- * Converts encoding scheme to x,y coordinates on a 2D hexagonal lattice.
+ * Decodes a hierarchical path to x,y coordinates on a 2D hexagonal lattice.
  *
  * Encoding format:
- * - root: ID of the root hexagon
  * - path: array of values in {0, 1, 2, 3} representing the hierarchical path
  */
 
@@ -18,212 +17,131 @@ const W_VECTORS: Vec2[] = [
   { x: 1, y: 0 },   // w(3)
 ];
 
-/**
- * Result of decoding a HexaTree path
- */
-export interface HexaTreeDecodeResult {
-  /** Final (x, y) coordinates on the 2D lattice */
-  position: Vec2;
-
-  /** Intermediate (i, j) coordinates before matrix transformation */
-  intermediateCoords: Vec2;
-
-  /** Parent hexagon centroids at each resolution level */
-  parentCentroids: HexaTreeLevel[];
-}
+const SQRT3_OVER_3 = Math.sqrt(3) / 3;
 
 /**
- * Information about a hexagon at a specific resolution level
- */
-export interface HexaTreeLevel {
-  /** Resolution level (0 = root, n-1 = leaf) */
-  level: number;
-
-  /** Centroid position at this level */
-  centroid: Vec2;
-
-  /** Side length of the hexagon at this level */
-  sideLength: number;
-
-  /** The path prefix up to this level */
-  pathPrefix: number[];
-}
-
-/**
- * Decodes a HexaTree encoding to 2D coordinates.
+ * Decodes a HexaTree path to 2D centroid coordinates at each level.
+ *
+ * Algorithm (3 passes):
+ *   1. Compute intermediate (i, j) at each level
+ *   2. Apply boundary translation to each (i, j)
+ *   3. Transform each translated (i, j) to (x, y)
  *
  * @param rootCentroid - The centroid position of the root hexagon
  * @param path - Array of values in {0, 1, 2, 3}
- * @param rootSideLength - Side length of the root hexagon (L)
- * @returns Decoded position and parent hexagon information
+ * @param triangleSideLength - Side length of triangles
+ * @returns Array of centroids, one per level
  */
 export function decodeHexaTreePath(
   rootCentroid: Vec2,
   path: number[],
-  rootSideLength: number
-): HexaTreeDecodeResult {
-  const n = path.length;
+  triangleSideLength: number
+): Vec2[] {
+  console.log("===============================");
 
-  if (n === 0) {
-    return {
-      position: { ...rootCentroid },
-      intermediateCoords: { x: 0, y: 0 },
-      parentCentroids: [{
-        level: 0,
-        centroid: { ...rootCentroid },
-        sideLength: rootSideLength,
-        pathPrefix: [],
-      }],
-    };
-  }
-
-  // Compute intermediate (i, j) coordinates
-  // (i, j) = sum_{k=0}^{n-1} (2^k * w(a_k))
-  let i = 0;
-  let j = 0;
-
-  for (let k = 0; k < n; k++) {
+  // Validate path
+  for (let k = 0; k < path.length; k++) {
     const a = path[k];
     if (a < 0 || a > 3) {
       throw new Error(`Invalid path value at index ${k}: ${a}. Must be 0, 1, 2, or 3.`);
     }
-
-    const w = W_VECTORS[a];
-    const scale = Math.pow(2, k);
-    i += scale * w.x;
-    j += scale * w.y;
   }
 
-  // Apply boundary corrections using 2^(n-1)
-  const twoNminus1 = Math.pow(2, n - 1);
-
-  if (2 * (j - i) > twoNminus1) {
-    j = j - twoNminus1;
-  } else if (-i - j > twoNminus1) {
-    i = i + twoNminus1;
-    j = j - twoNminus1;
-  } else if (2 * i - j > twoNminus1) {
-    i = i - twoNminus1;
+  if (path.length === 0) {
+    throw new Error('Path cannot be empty. Must have at least one level.');
   }
 
-  const intermediateCoords: Vec2 = { x: i, y: j };
+  const len = path.length;
+  console.log("path: ", path);
 
-  // Transform to (x, y) using matrix M
-  // M = [[M00, 0], [M10, M11]]
-  // where:
-  //   M00 = (1/2)^n
-  //   M10 = -(sqrt(3)/3) * (1/2)^n * L
-  //   M11 = (sqrt(3)/3) * (1/2)^(n-1) * L
-  const L = rootSideLength;
-  const sqrt3over3 = Math.sqrt(3) / 3;
-  const halfPowN = Math.pow(0.5, n);
-  const halfPowNminus1 = Math.pow(0.5, n - 1);
-
-  const M00 = halfPowN;
-  const M10 = -sqrt3over3 * halfPowN * L;
-  const M11 = sqrt3over3 * halfPowNminus1 * L;
-
-  const x = M00 * i;
-  const y = M10 * i + M11 * j;
-
-  // Final position relative to root centroid
-  const position: Vec2 = {
-    x: rootCentroid.x + x,
-    y: rootCentroid.y + y,
-  };
-
-  // Compute parent centroids at each level
-  const parentCentroids: HexaTreeLevel[] = [];
-
-  for (let level = 0; level <= n; level++) {
-    const pathPrefix = path.slice(0, level);
-    const levelResult = computeLevelCentroid(rootCentroid, pathPrefix, rootSideLength);
-
-    parentCentroids.push({
-      level,
-      centroid: levelResult.centroid,
-      sideLength: levelResult.sideLength,
-      pathPrefix,
-    });
-  }
-
-  return {
-    position,
-    intermediateCoords,
-    parentCentroids,
-  };
-}
-
-/**
- * Computes the centroid and side length for a hexagon at a specific level.
- */
-function computeLevelCentroid(
-  rootCentroid: Vec2,
-  pathPrefix: number[],
-  rootSideLength: number
-): { centroid: Vec2; sideLength: number } {
-  const n = pathPrefix.length;
-
-  if (n === 0) {
-    return {
-      centroid: { ...rootCentroid },
-      sideLength: rootSideLength,
-    };
-  }
-
-  // Compute intermediate coordinates for this prefix
+  // ========================================
+  // Pass 1: Compute (i, j) at each level
+  // ========================================
+  const ijCoords: Vec2[] = [];
   let i = 0;
   let j = 0;
 
-  for (let k = 0; k < n; k++) {
-    const a = pathPrefix[k];
+  for (let level = 1; level <= len; level++) {
+    const idx = level - 1;
+    const a = path[idx];
     const w = W_VECTORS[a];
-    const scale = Math.pow(2, k);
+    const scale = Math.pow(2, level);
     i += scale * w.x;
     j += scale * w.y;
+    ijCoords.push({ x: i, y: j });
   }
 
-  // Apply boundary corrections using 2^(n-1)
-  const twoNminus1 = Math.pow(2, n - 1);
-
-  if (2 * j - i > twoNminus1) {
-    j = j - twoNminus1;
-  } else if (-i - j > twoNminus1) {
-    i = i + twoNminus1;
-    j = j + twoNminus1;
-  } else if (2 * i - j > twoNminus1) {
-    i = i - twoNminus1;
+  console.log("Pass 1 - (i, j) coords:");
+  for (let k = 0; k < ijCoords.length; k++) {
+    console.log(`  level ${k + 1}: (i,j)=(${ijCoords[k].x}, ${ijCoords[k].y})`);
   }
 
-  // Transform to (x, y)
-  const L = rootSideLength;
-  const sqrt3over3 = Math.sqrt(3) / 3;
-  const halfPowN = Math.pow(0.5, n);
-  const halfPowNminus1 = Math.pow(0.5, n - 1);
+  // ========================================
+  // Pass 2: Apply boundary translation
+  // ========================================
+  const ijTranslated: Vec2[] = [];
 
-  const M00 = halfPowN;
-  const M10 = -sqrt3over3 * halfPowN * L;
-  const M11 = sqrt3over3 * halfPowNminus1 * L;
+  for (let level = 1; level <= len; level++) {
+    const idx = level - 1;
+    const { x: i, y: j } = ijCoords[idx];
+    const threshold = Math.pow(2, level);
 
-  const x = M00 * i;
-  const y = M10 * i + M11 * j;
+    let iTrans = i;
+    let jTrans = j;
 
-  // Side length decreases by factor of 2 at each level
-  const sideLength = rootSideLength * Math.pow(0.5, n);
+    if (2 * j - i > threshold) {
+      jTrans = j - threshold;
+    } else if (-i - j > threshold) {
+      iTrans = i + threshold;
+      jTrans = j + threshold;
+    } else if (2 * i - j > threshold) {
+      iTrans = i - threshold;
+    }
 
-  return {
-    centroid: {
+    ijTranslated.push({ x: iTrans, y: jTrans });
+  }
+  console.log("Pass 2 - translated (i, j):");
+  for (let k = 0; k < ijTranslated.length; k++) {
+    console.log(`  level ${k + 1}: (${ijTranslated[k].x}, ${ijTranslated[k].y})`);
+  }
+
+  // ========================================
+  // Pass 3: Transform (i, j) -> (x, y)
+  // ========================================
+  const centroids: Vec2[] = [];
+
+  for (let level = 1; level <= len; level++) {
+    const idx = level - 1;
+    const { x: i, y: j } = ijTranslated[idx];
+
+    const halfPowNPlus1 = Math.pow(0.5, level + 1);
+    const halfPowN = Math.pow(0.5, level);
+
+    const M00 = halfPowNPlus1;
+    const M10 = -SQRT3_OVER_3 * halfPowNPlus1 * triangleSideLength;
+    const M11 = SQRT3_OVER_3 * halfPowN * triangleSideLength;
+
+    const x = M00 * i;
+    const y = M10 * i + M11 * j;
+
+    centroids.push({
       x: rootCentroid.x + x,
       y: rootCentroid.y + y,
-    },
-    sideLength,
-  };
+    });
+  }
+
+  console.log("Pass 3 - centroids (x, y):");
+  for (let k = 0; k < centroids.length; k++) {
+    console.log(`  level ${k + 1}: (${centroids[k].x.toFixed(4)}, ${centroids[k].y.toFixed(4)})`);
+  }
+
+  return centroids;
 }
 
 /**
- * Parses a comma-separated string of path values.
+ * Parses a path string containing only digits 0-3.
  *
- * @param pathString - String like "0,1,2,3" or "0123"
+ * @param pathString - String like "0123" (only 0, 1, 2, 3 allowed)
  * @returns Array of path values
  */
 export function parsePathString(pathString: string): number[] {
@@ -232,46 +150,10 @@ export function parsePathString(pathString: string): number[] {
     return [];
   }
 
-  // Try comma-separated format first
-  if (trimmed.includes(',')) {
-    return trimmed.split(',').map(s => {
-      const n = parseInt(s.trim(), 10);
-      if (isNaN(n) || n < 0 || n > 3) {
-        throw new Error(`Invalid path value: ${s}. Must be 0, 1, 2, or 3.`);
-      }
-      return n;
-    });
+  if (!/^[0-3]+$/.test(trimmed)) {
+    throw new Error('Path must contain only digits 0, 1, 2, or 3.');
   }
 
-  // Try digit-by-digit format
-  return trimmed.split('').map(c => {
-    const n = parseInt(c, 10);
-    if (isNaN(n) || n < 0 || n > 3) {
-      throw new Error(`Invalid path value: ${c}. Must be 0, 1, 2, or 3.`);
-    }
-    return n;
-  });
+  return trimmed.split('').map(c => parseInt(c, 10));
 }
 
-/**
- * Generates vertices for a regular hexagon centered at a point.
- *
- * @param center - Center position
- * @param sideLength - Side length of the hexagon
- * @returns Array of 6 vertices
- */
-export function generateHexagonVertices(center: Vec2, sideLength: number): Vec2[] {
-  const vertices: Vec2[] = [];
-
-  // Angle offset = 0 for flat-top hexagon (horizontal edges at top and bottom)
-  // This matches the orientation of root hexagons in the 2D lattice
-  for (let i = 0; i < 6; i++) {
-    const angle = (i * Math.PI) / 3;
-    vertices.push({
-      x: center.x + sideLength * Math.cos(angle),
-      y: center.y + sideLength * Math.sin(angle),
-    });
-  }
-
-  return vertices;
-}
