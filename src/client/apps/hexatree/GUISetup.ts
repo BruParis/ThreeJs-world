@@ -1,6 +1,6 @@
 import { GUI } from 'dat.gui';
-import { HexaCell, decodeHexaTreePath, parsePathString } from '../../core/iconet';
-import { MapRenderer, ViewParams, HexaTreeDisplayData } from './MapRenderer';
+import { HexaCell, decodeIcoTreePath, parseIcoTreePathString } from '../../core/iconet';
+import { MapRenderer, ViewParams } from './MapRenderer';
 import { InteractionHandler } from './InteractionHandler';
 
 export interface GUIParams extends ViewParams {}
@@ -26,7 +26,7 @@ export class GUISetup {
     this.setupViewFolder();
     this.setupInfoFolder();
     this.setupHexagonSelectionFolder();
-    this.setupHexaTreeEncodingFolder();
+    this.setupIcoTreeEncodingFolder();
     this.setupHoverInfoFolder();
   }
 
@@ -114,28 +114,21 @@ export class GUISetup {
   }
 
   /**
-   * Sets up the HexaTree Encoding folder for coordinate conversion.
+   * Sets up the IcoTree Encoding folder for triangle-based coordinate encoding.
    */
-  private setupHexaTreeEncodingFolder(): void {
-    const encodingFolder = this.gui.addFolder('HexaTree Encoding');
+  private setupIcoTreeEncodingFolder(): void {
+    const encodingFolder = this.gui.addFolder('IcoTree Encoding');
 
     const encodingState = {
-      rootHexagonId: 8,
-      pathString: '12',
-      compute: () => this.computeHexaTreeEncoding(encodingState),
-      clear: () => this.mapRenderer.displayHexaTreeEncoding(null),
+      pathString: '0:123',
+      compute: () => this.computeIcoTreeEncoding(encodingState),
+      clear: () => this.mapRenderer.displayIcoTreeEncoding(null),
     };
 
-    // Root hexagon selector
-    const maxId = (this.mapRenderer.subdivision?.hexaCells.length ?? 1) - 1;
-    encodingFolder
-      .add(encodingState, 'rootHexagonId', 0, maxId, 1)
-      .name('Root Hexagon ID');
-
-    // Path input (digits 0-3 only)
+    // Path input in format "rootId:path"
     encodingFolder
       .add(encodingState, 'pathString')
-      .name('Path');
+      .name('Path (rootId:codes)');
 
     // Compute button
     encodingFolder
@@ -151,54 +144,50 @@ export class GUISetup {
   }
 
   /**
-   * Computes and displays the HexaTree encoding.
+   * Computes and displays the IcoTree encoding.
    */
-  private computeHexaTreeEncoding(state: { rootHexagonId: number; pathString: string }): void {
-    const { rootHexagonId, pathString } = state;
-
-    // Find the root hexagon
-    const rootCell = this.mapRenderer.subdivision?.hexaCells.find(
-      (c: HexaCell) => c.id === rootHexagonId
-    );
-
-    if (!rootCell) {
-      console.error(`Root hexagon with ID ${rootHexagonId} not found`);
-      return;
-    }
+  private computeIcoTreeEncoding(state: { pathString: string }): void {
+    const { pathString } = state;
 
     // Parse the path string
+    let rootId: number;
     let path: number[];
     try {
-      path = parsePathString(pathString);
+      const parsed = parseIcoTreePathString(pathString);
+      rootId = parsed.rootId;
+      path = parsed.path;
     } catch (e) {
       console.error('Invalid path string:', e);
       return;
     }
 
-    // Get the root centroid and compute a reasonable side length
-    // For complete hexagons, use the distance from center to a vertex
-    // For incomplete hexagons, use a default based on triangle size
-    const rootCentroid = rootCell.center;
-    const triangleSideLength = this.mapRenderer.geometry?.triangleSize ?? 1.0;
+    // Find the root triangle
+    const rootTriangle = this.mapRenderer.triangles[rootId];
+    if (!rootTriangle) {
+      console.error(`Root triangle with ID ${rootId} not found`);
+      return;
+    }
 
-    // Decode the path to get centroids at each level
+    if (path.length === 0) {
+      console.log('Empty path - showing root triangle only');
+      this.mapRenderer.displayIcoTreeEncoding(null);
+      return;
+    }
+
+    // Decode the path
     try {
-      const centroids = decodeHexaTreePath(rootCentroid, path, triangleSideLength);
+      const result = decodeIcoTreePath(rootTriangle, path);
 
-      console.log('HexaTree Decode Result:', {
-        finalPosition: centroids[centroids.length - 1],
-        levels: centroids.length,
+      console.log('IcoTree Decode Result:', {
+        rootTriangleId: rootId,
+        levels: result.levels.length,
+        finalCentroid: result.levels[result.levels.length - 1].centroid,
+        finalOrientation: result.levels[result.levels.length - 1].isUpPointing ? 'up' : 'down',
       });
 
-      // Build display data and show
-      const rootSideLength = triangleSideLength / 3.0;
-      const displayData: HexaTreeDisplayData = {
-        centroids,
-        rootSideLength,
-      };
-      this.mapRenderer.displayHexaTreeEncoding(displayData);
+      this.mapRenderer.displayIcoTreeEncoding(result);
     } catch (e) {
-      console.error('Error decoding HexaTree path:', e);
+      console.error('Error decoding IcoTree path:', e);
     }
   }
 

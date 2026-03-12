@@ -1,5 +1,5 @@
 /**
- * HexaTriangle - Data structure representing a triangle in the icosahedral net.
+ * RootTriangle - Data structure representing a triangle in the icosahedral net.
  *
  * Each triangle stores its ID, vertex indices, and 2D coordinates.
  * Provides utility methods for point-in-triangle testing and barycentric interpolation.
@@ -9,9 +9,56 @@ import { Vec2, IcoNetGeometry } from './IcoNetGeometry';
 import { LatLon, IcoNetCoordinates } from './IcoNetCoordinates';
 
 /**
+ * Triangle adjacency mapping for the icosahedral net.
+ * Each triangle has 3 neighbors indexed as: [left edge, right edge, base edge]
+ */
+export const ROOT_TRIANGLE_ADJACENCY: ReadonlyArray<readonly [number, number, number]> = [
+  [4, 1, 5],    // 0
+  [0, 2, 7],    // 1
+  [1, 3, 9],    // 2
+  [2, 4, 11],   // 3
+  [3, 0, 13],   // 4
+  [6, 14, 0],   // 5
+  [5, 7, 15],   // 6
+  [8, 6, 1],    // 7
+  [7, 9, 16],   // 8
+  [10, 8, 2],   // 9
+  [9, 11, 17],  // 10
+  [12, 10, 3],  // 11
+  [11, 13, 18], // 12
+  [14, 12, 4],  // 13
+  [13, 5, 19],  // 14
+  [16, 19, 6],  // 15
+  [17, 15, 8],  // 16
+  [18, 16, 10], // 17
+  [19, 17, 12], // 18
+  [15, 18, 14], // 19
+] as const;
+
+/**
+ * Neighbor information for a root triangle
+ */
+export interface RootTriangleNeighbors {
+  /** Neighbor across the left edge */
+  left: number;
+  /** Neighbor across the right edge */
+  right: number;
+  /** Neighbor across the base edge */
+  base: number;
+}
+
+/**
+ * Gets the neighboring triangle IDs for a given root triangle.
+ */
+export function getRootTriangleNeighbors(triangleId: number): RootTriangleNeighbors {
+  const [left, right, base] = ROOT_TRIANGLE_ADJACENCY[triangleId];
+  return { left, right, base };
+}
+
+/**
  * Represents a single triangle in the icosahedral net.
  */
-export interface HexaTriangle {
+export interface RootTriangle {
   /** Unique identifier for this triangle */
   id: number;
 
@@ -35,10 +82,10 @@ export interface HexaTriangle {
 }
 
 /**
- * Creates HexaTriangle objects from IcoNetGeometry.
+ * Creates RootTriangle objects from IcoNetGeometry.
  */
-export function buildHexaTriangles(geometry: IcoNetGeometry): HexaTriangle[] {
-  const triangles: HexaTriangle[] = [];
+export function buildRootTriangles(geometry: IcoNetGeometry): RootTriangle[] {
+  const triangles: RootTriangle[] = [];
 
   for (let i = 0; i < geometry.faceCount; i++) {
     const [i0, i1, i2] = geometry.getFace(i);
@@ -72,7 +119,7 @@ function signedArea(p1: Vec2, p2: Vec2, p3: Vec2): number {
  * Tests if a point is inside a triangle using barycentric coordinates.
  * Returns true if the point is inside or on the edge of the triangle.
  */
-export function isPointInTriangle(point: Vec2, triangle: HexaTriangle): boolean {
+export function isPointInTriangle(point: Vec2, triangle: RootTriangle): boolean {
   const { v0, v1, v2 } = triangle;
 
   const d1 = signedArea(point, v0, v1);
@@ -92,7 +139,7 @@ export function isPointInTriangle(point: Vec2, triangle: HexaTriangle): boolean 
  * The coordinates can be used for interpolation:
  * interpolatedValue = u * valueAtV0 + v * valueAtV1 + w * valueAtV2
  */
-export function computeBarycentricCoordinates(point: Vec2, triangle: HexaTriangle): [number, number, number] {
+export function computeBarycentricCoordinates(point: Vec2, triangle: RootTriangle): [number, number, number] {
   const { v0, v1, v2 } = triangle;
 
   const totalArea = signedArea(v0, v1, v2);
@@ -118,7 +165,7 @@ export function computeBarycentricCoordinates(point: Vec2, triangle: HexaTriangl
  */
 export function interpolateLatLon(
   point: Vec2,
-  triangle: HexaTriangle,
+  triangle: RootTriangle,
   coordinates: IcoNetCoordinates
 ): LatLon {
   const [u, v, w] = computeBarycentricCoordinates(point, triangle);
@@ -157,7 +204,7 @@ export function interpolateLatLon(
  * Finds the triangle containing the given point.
  * Returns null if the point is outside all triangles.
  */
-export function findTriangleAtPoint(point: Vec2, triangles: HexaTriangle[]): HexaTriangle | null {
+export function findTriangleAtPoint(point: Vec2, triangles: RootTriangle[]): RootTriangle | null {
   for (const triangle of triangles) {
     if (isPointInTriangle(point, triangle)) {
       return triangle;

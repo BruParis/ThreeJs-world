@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   IcoNetCoordinates,
-  HexaTriangle,
+  RootTriangle,
   findTriangleAtPoint,
   interpolateLatLon,
   findCellAtPoint,
@@ -107,7 +107,7 @@ export class InteractionHandler {
    */
   private handleTriangleHover(
     point2D: { x: number; y: number },
-    triangles: HexaTriangle[],
+    triangles: RootTriangle[],
     coordinates: IcoNetCoordinates
   ): void {
     const triangle = findTriangleAtPoint(point2D, triangles);
@@ -140,7 +140,7 @@ export class InteractionHandler {
   /**
    * Finds the nearest vertex within the proximity threshold.
    */
-  private findNearbyVertex(point: Vec2, triangle: HexaTriangle): NearbyVertex | null {
+  private findNearbyVertex(point: Vec2, triangle: RootTriangle): NearbyVertex | null {
     const vertices = [
       { id: triangle.vertexIndices[0], pos: triangle.v0 },
       { id: triangle.vertexIndices[1], pos: triangle.v1 },

@@ -15,13 +15,16 @@ export {
 } from './IcoNetCoordinates';
 
 export {
-  buildHexaTriangles,
+  buildRootTriangles,
   isPointInTriangle,
   computeBarycentricCoordinates,
   interpolateLatLon,
   findTriangleAtPoint,
-  type HexaTriangle,
-} from './HexaTriangle';
+  getRootTriangleNeighbors,
+  ROOT_TRIANGLE_ADJACENCY,
+  type RootTriangle,
+  type RootTriangleNeighbors,
+} from './RootTriangle';
 
 export {
   buildHexagons,
@@ -36,3 +39,10 @@ export {
   decodeHexaTreePath,
   parsePathString,
 } from './HexaTreeEncoding';
+
+export {
+  decodeIcoTreePath,
+  parseIcoTreePathString,
+  type IcoTreeLevel,
+  type IcoTreeDecodeResult,
+} from './IcoTreeEncoding';

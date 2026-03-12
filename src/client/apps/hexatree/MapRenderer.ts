@@ -2,12 +2,14 @@ import * as THREE from 'three';
 import {
   IcoNetGeometry,
   IcoNetCoordinates,
-  HexaTriangle,
-  buildHexaTriangles,
+  RootTriangle,
+  buildRootTriangles,
   HexagonBuildResult,
   buildHexagons,
   HexaCell,
   Vec2,
+  getRootTriangleNeighbors,
+  IcoTreeDecodeResult,
 } from '../../core/iconet';
 
 /**
@@ -49,7 +51,7 @@ export class MapRenderer {
   // Geometry data
   public geometry: IcoNetGeometry | null = null;
   public coordinates: IcoNetCoordinates | null = null;
-  public triangles: HexaTriangle[] = [];
+  public triangles: RootTriangle[] = [];
   public subdivision: HexagonBuildResult | null = null;
 
   // Visual elements
@@ -58,9 +60,19 @@ export class MapRenderer {
   private vertexMarkers: THREE.Points | null = null;
   private hexagonEdges: THREE.LineSegments | null = null;
 
-  // Triangle highlight
-  private triangleHighlightMesh: THREE.Mesh | null = null;
-  private triangleHighlightMaterial: THREE.MeshBasicMaterial | null = null;
+  // Triangle highlighting via vertex colors
+  private rowColors = [
+    new THREE.Color(0x4488ff), // Top row: blue
+    new THREE.Color(0x44ff88), // Middle row: green
+    new THREE.Color(0xff8844), // Bottom row: orange
+  ];
+  private highlightColors = {
+    hovered: new THREE.Color(0xffff00),    // Yellow for hovered
+    left: new THREE.Color(0xff4444),       // Red for left neighbor
+    right: new THREE.Color(0x44ff44),      // Green for right neighbor
+    base: new THREE.Color(0x4444ff),       // Blue for base neighbor
+  };
+  private currentlyHighlightedIds: number[] = [];
 
   // Hexagon selection - individual triangle meshes for topology handling
   private hexagonSelectionMeshes: THREE.Mesh[] = [];
@@ -70,6 +82,11 @@ export class MapRenderer {
   private hexaTreeGroup: THREE.Group | null = null;
   private hexaTreePointMesh: THREE.Mesh | null = null;
   private hexaTreeHexagonLines: THREE.LineSegments[] = [];
+
+  // IcoTree encoding visualization
+  private icoTreeGroup: THREE.Group | null = null;
+  private icoTreePointMesh: THREE.Mesh | null = null;
+  private icoTreeTriangleLines: THREE.LineSegments[] = [];
 
   constructor(private scene: THREE.Scene) {
     this.mapGroup = new THREE.Group();
@@ -86,7 +103,7 @@ export class MapRenderer {
     // Build geometry data
     this.geometry = new IcoNetGeometry({ triangleSize: 1.0, numCols: 5 });
     this.coordinates = new IcoNetCoordinates(this.geometry);
-    this.triangles = buildHexaTriangles(this.geometry);
+    this.triangles = buildRootTriangles(this.geometry);
     this.subdivision = buildHexagons(this.geometry);
 
     // Create visual elements
@@ -94,7 +111,6 @@ export class MapRenderer {
     this.createTriangleMesh(threeGeometry, params);
     this.createWireframe(params);
     this.createVertexMarkers(params);
-    this.createTriangleHighlightMesh();
     this.createHexagonEdges(params);
     this.createHexagonSelectionMesh();
 
@@ -149,15 +165,9 @@ export class MapRenderer {
     const geo = this.geometry!;
 
     const colors: number[] = [];
-    const rowColors = [
-      new THREE.Color(0x4488ff), // Top row: blue
-      new THREE.Color(0x44ff88), // Middle row: green
-      new THREE.Color(0xff8844), // Bottom row: orange
-    ];
-
     for (let fi = 0; fi < geo.faceCount; fi++) {
       const row = geo.getFaceRow(fi);
-      const color = rowColors[row];
+      const color = this.rowColors[row];
       for (let j = 0; j < 3; j++) {
         colors.push(color.r, color.g, color.b);
       }
@@ -231,28 +241,6 @@ export class MapRenderer {
     this.vertexMarkers = new THREE.Points(geometry, material);
     this.vertexMarkers.visible = params.showVertices;
     this.mapGroup.add(this.vertexMarkers);
-  }
-
-  /**
-   * Creates the triangle highlight mesh.
-   */
-  private createTriangleHighlightMesh(): void {
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(9);
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-    this.triangleHighlightMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffff00,
-      transparent: true,
-      opacity: 0.5,
-      side: THREE.DoubleSide,
-      depthTest: false,
-    });
-
-    this.triangleHighlightMesh = new THREE.Mesh(geometry, this.triangleHighlightMaterial);
-    this.triangleHighlightMesh.renderOrder = 999;
-    this.triangleHighlightMesh.visible = false;
-    this.mapGroup.add(this.triangleHighlightMesh);
   }
 
   /**
@@ -333,25 +321,64 @@ export class MapRenderer {
   }
 
   /**
-   * Highlights the given triangle.
+   * Highlights the given triangle and its neighbors by modifying vertex colors.
+   * Hovered triangle: yellow
+   * Left neighbor: red
+   * Right neighbor: green
+   * Base neighbor: blue
    */
-  highlightTriangle(triangle: HexaTriangle | null): void {
-    if (!this.triangleHighlightMesh) return;
+  highlightTriangle(triangle: RootTriangle | null): void {
+    if (!this.triangleMesh) return;
 
+    const colorAttr = this.triangleMesh.geometry.attributes.color as THREE.BufferAttribute;
+
+    // Reset previously highlighted triangles to their original colors
+    for (const id of this.currentlyHighlightedIds) {
+      this.setTriangleColor(colorAttr, id, this.getOriginalColor(id));
+    }
+    this.currentlyHighlightedIds = [];
+
+    // If no triangle to highlight, just mark update and return
     if (!triangle) {
-      this.triangleHighlightMesh.visible = false;
+      colorAttr.needsUpdate = true;
       return;
     }
 
-    const positions = this.triangleHighlightMesh.geometry.attributes.position as THREE.BufferAttribute;
-    const y = 0.005;
+    // Get neighbors
+    const neighbors = getRootTriangleNeighbors(triangle.id);
 
-    positions.setXYZ(0, triangle.v0.x, y, triangle.v0.y);
-    positions.setXYZ(1, triangle.v1.x, y, triangle.v1.y);
-    positions.setXYZ(2, triangle.v2.x, y, triangle.v2.y);
-    positions.needsUpdate = true;
+    // Set highlight colors
+    this.setTriangleColor(colorAttr, triangle.id, this.highlightColors.hovered);
+    this.setTriangleColor(colorAttr, neighbors.left, this.highlightColors.left);
+    this.setTriangleColor(colorAttr, neighbors.right, this.highlightColors.right);
+    this.setTriangleColor(colorAttr, neighbors.base, this.highlightColors.base);
 
-    this.triangleHighlightMesh.visible = true;
+    // Track highlighted triangles for reset
+    this.currentlyHighlightedIds = [triangle.id, neighbors.left, neighbors.right, neighbors.base];
+
+    colorAttr.needsUpdate = true;
+  }
+
+  /**
+   * Sets the color of a triangle in the vertex color buffer.
+   * Each triangle has 3 vertices, each with RGB components.
+   */
+  private setTriangleColor(colorAttr: THREE.BufferAttribute, triangleId: number, color: THREE.Color): void {
+    const baseIndex = triangleId * 3 * 3; // 3 vertices * 3 components
+    for (let v = 0; v < 3; v++) {
+      const idx = baseIndex + v * 3;
+      colorAttr.array[idx] = color.r;
+      colorAttr.array[idx + 1] = color.g;
+      colorAttr.array[idx + 2] = color.b;
+    }
+  }
+
+  /**
+   * Gets the original (row-based) color for a triangle.
+   */
+  private getOriginalColor(triangleId: number): THREE.Color {
+    const row = this.geometry!.getFaceRow(triangleId);
+    return this.rowColors[row];
   }
 
   /**
@@ -545,10 +572,122 @@ export class MapRenderer {
   }
 
   /**
+   * Displays an IcoTree encoding result on the map.
+   * Shows triangles at each subdivision level with different colors.
+   *
+   * @param result - Decode result from decodeIcoTreePath, or null to clear
+   */
+  displayIcoTreeEncoding(result: IcoTreeDecodeResult | null): void {
+    // Clear previous visualization
+    this.clearIcoTreeVisualization();
+
+    if (!result || result.levels.length === 0) {
+      return;
+    }
+
+    // Create group for IcoTree visualization
+    this.icoTreeGroup = new THREE.Group();
+    this.mapGroup.add(this.icoTreeGroup);
+
+    const baseY = 0.02; // Height above the map
+
+    // Colors for each level (cycling through)
+    const colors = [
+      0xff0000, // Level 1 - red
+      0xff8800, // Level 2 - orange
+      0xffff00, // Level 3 - yellow
+      0x88ff00, // Level 4 - lime
+      0x00ff00, // Level 5 - green
+      0x00ff88, // Level 6 - cyan-green
+      0x00ffff, // Level 7 - cyan
+      0x0088ff, // Level 8 - light blue
+      0x0000ff, // Level 9 - blue
+      0x8800ff, // Level 10 - purple
+    ];
+
+    console.log('Displaying IcoTree encoding with levels:', result.levels.length);
+
+    // Draw triangle at each level
+    for (let level = 0; level < result.levels.length; level++) {
+      const levelData = result.levels[level];
+      const [v0, v1, v2] = levelData.vertices;
+      const y = baseY + (level + 1) * 0.002;
+
+      // Create line segments for the triangle
+      const positions: number[] = [
+        v0.x, y, v0.y,
+        v1.x, y, v1.y,
+        v1.x, y, v1.y,
+        v2.x, y, v2.y,
+        v2.x, y, v2.y,
+        v0.x, y, v0.y,
+      ];
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+      const color = colors[level % colors.length];
+      const material = new THREE.LineBasicMaterial({
+        color,
+        linewidth: 2,
+        transparent: true,
+        opacity: Math.max(0.3, 0.9 - level * 0.05),
+      });
+
+      const lineSegments = new THREE.LineSegments(geometry, material);
+      this.icoTreeTriangleLines.push(lineSegments);
+      this.icoTreeGroup.add(lineSegments);
+    }
+
+    // Draw the final point at the last centroid
+    const finalLevel = result.levels[result.levels.length - 1];
+    const pointGeometry = new THREE.SphereGeometry(0.015, 16, 16);
+    const pointMaterial = new THREE.MeshBasicMaterial({
+      color: 0xff00ff, // Magenta
+    });
+    this.icoTreePointMesh = new THREE.Mesh(pointGeometry, pointMaterial);
+    this.icoTreePointMesh.position.set(
+      finalLevel.centroid.x,
+      baseY + result.levels.length * 0.002 + 0.01,
+      finalLevel.centroid.y
+    );
+    this.icoTreeGroup.add(this.icoTreePointMesh);
+  }
+
+  /**
+   * Clears the IcoTree visualization.
+   */
+  private clearIcoTreeVisualization(): void {
+    if (this.icoTreeGroup) {
+      this.mapGroup.remove(this.icoTreeGroup);
+
+      // Dispose geometries and materials
+      for (const line of this.icoTreeTriangleLines) {
+        line.geometry.dispose();
+        if (line.material instanceof THREE.Material) {
+          line.material.dispose();
+        }
+      }
+      this.icoTreeTriangleLines = [];
+
+      if (this.icoTreePointMesh) {
+        this.icoTreePointMesh.geometry.dispose();
+        if (this.icoTreePointMesh.material instanceof THREE.Material) {
+          this.icoTreePointMesh.material.dispose();
+        }
+        this.icoTreePointMesh = null;
+      }
+
+      this.icoTreeGroup = null;
+    }
+  }
+
+  /**
    * Disposes of all resources.
    */
   dispose(): void {
     this.clearHexaTreeVisualization();
+    this.clearIcoTreeVisualization();
     this.cleanup();
   }
 }
