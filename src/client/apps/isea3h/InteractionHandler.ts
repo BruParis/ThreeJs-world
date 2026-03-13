@@ -50,13 +50,14 @@ function octahedronPointToCell(octPoint: THREE.Vector3, n: number): ISEA3HCell {
 }
 
 /**
- * Gets the full hierarchy of cells from level n down to level 0.
+ * Gets the full hierarchy of cells from level n down to level 1.
+ * Level 0 is not included as it doesn't display hexagons.
  */
 function getCellHierarchy(cell: ISEA3HCell): ISEA3HCell[] {
   const hierarchy: ISEA3HCell[] = [cell];
   let currentCell = cell;
 
-  while (currentCell.n > 0) {
+  while (currentCell.n > 1) {
     // Get central cell if not already central
     let cellForParent = currentCell;
     if (!isCentralChild(currentCell)) {
@@ -117,9 +118,10 @@ export class InteractionHandler {
 
   /**
    * Sets the resolution level for coordinate computation.
+   * Minimum is 1 (resolution 0 doesn't display hexagons).
    */
   setResolutionLevel(n: number): void {
-    this.resolutionLevel = Math.max(0, Math.min(6, Math.round(n)));
+    this.resolutionLevel = Math.max(1, Math.min(6, Math.round(n)));
   }
 
   /**

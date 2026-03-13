@@ -168,7 +168,7 @@ export class GUISetup {
     };
 
     this.hoverFolder
-      .add(hoverState, 'resolutionLevel', 0, 6, 1)
+      .add(hoverState, 'resolutionLevel', 1, 6, 1)
       .name('Resolution Level')
       .onChange((value: number) => {
         this.interactionHandler?.setResolutionLevel(value);
@@ -199,7 +199,7 @@ export class GUISetup {
     };
 
     // Input controls
-    this.encodingFolder.add(encodingState, 'n', 0, 6, 1).name('Level (n)');
+    this.encodingFolder.add(encodingState, 'n', 1, 6, 1).name('Level (n)');
     this.encodingFolder.add(encodingState, 'abc').name('a, b, c');
 
     // Action buttons
@@ -289,12 +289,12 @@ export class GUISetup {
     state.neighborCount = result.neighbors.length;
     state.isCentral = isCentralChild(cell) ? 'Yes' : 'No';
 
-    // Compute parent info
+    // Compute parent info (level 1 is minimum displayable level)
     const parent = getParentCell(cell);
-    if (parent) {
+    if (parent && parent.n >= 1) {
       state.parentInfo = formatCell(parent);
-    } else if (cell.n === 0) {
-      state.parentInfo = 'Base level';
+    } else if (cell.n <= 1) {
+      state.parentInfo = 'Minimum level';
     } else {
       const centralForParent = getCentralCellForParent(cell);
       state.parentInfo = `Via ${formatCell(centralForParent)}`;
@@ -324,13 +324,13 @@ export class GUISetup {
   }
 
   /**
-   * Displays the hierarchy of enclosing hexagons from the given cell up to level 0.
+   * Displays the hierarchy of enclosing hexagons from the given cell up to level 1.
    */
   private displayHierarchy(startCell: ISEA3HCell): void {
     let currentCell = startCell;
     let levelIndex = 1; // Start at 1 since the main cell is already displayed
 
-    while (currentCell.n > 0) {
+    while (currentCell.n > 1) {
       // Get the central cell if not already central (Rule 6)
       let cellForParent = currentCell;
       if (!isCentralChild(currentCell)) {
@@ -368,8 +368,8 @@ export class GUISetup {
     isCentral: string;
     parentInfo: string;
   }): void {
-    if (!this.currentCell || this.currentCell.n === 0) {
-      state.status = 'Cannot go up: at base level';
+    if (!this.currentCell || this.currentCell.n <= 1) {
+      state.status = 'Cannot go up: at minimum level';
       return;
     }
 
@@ -405,10 +405,10 @@ export class GUISetup {
     state.isCentral = isCentralChild(parent) ? 'Yes' : 'No';
 
     const grandParent = getParentCell(parent);
-    if (grandParent) {
+    if (grandParent && grandParent.n >= 1) {
       state.parentInfo = formatCell(grandParent);
-    } else if (parent.n === 0) {
-      state.parentInfo = 'Base level';
+    } else if (parent.n <= 1) {
+      state.parentInfo = 'Minimum level';
     } else {
       const centralForParent = getCentralCellForParent(parent);
       state.parentInfo = `Via ${formatCell(centralForParent)}`;

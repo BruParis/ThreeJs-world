@@ -109,11 +109,13 @@ export function getNeighbors(cell: ISEA3HCell): ISEA3HCell[] {
   const { n, a, b, c } = cell;
   const neighbors: ISEA3HCell[] = [];
   const normFactor = getNormalizationFactor(n);
+  console.log("Get neighbors for cell:", formatCell(cell), "with normFactor:", normFactor);
 
   // Check if this is a square cell
   if (isSquareCell(cell)) {
     // Square cells have 4 neighbors
     // They are at octahedron vertices, so we need special handling
+    console.log("   -> is a square cell, using special neighbor logic");
     return getSquareCellNeighbors(cell);
   }
 
@@ -151,7 +153,9 @@ export function getNeighbors(cell: ISEA3HCell): ISEA3HCell[] {
     ];
 
     for (const [da, db, dc] of deltas) {
+      console.log("delta:", da, db, dc);
       const neighbor = computeNeighborWithSignConvention(n, a, b, c, da, db, dc, normFactor);
+      console.log("   neighbor:", neighbor ? formatCell(neighbor) : "invalid");
       if (neighbor) {
         neighbors.push(neighbor);
       }
@@ -318,6 +322,7 @@ export function getCentralCellForParent(cell: ISEA3HCell): ISEA3HCell {
 
   // Find the closest neighboring cell that is central
   const neighbors = getNeighbors(cell);
+
   const cellBarycenter = computeBarycenter(cell);
 
   let closestCentral: ISEA3HCell | null = null;
@@ -368,10 +373,18 @@ export function computeISEA3HCell(cell: ISEA3HCell): ISEA3HCellResult {
   const barycenter = computeBarycenter(cell);
   const squareCell = isSquareCell(cell);
   const neighbors = getNeighbors(cell);
+
+  console.log("Resolution level n:", cell.n);
+  console.log("Number of neighbors:", neighbors.length);
+  for (const neighbor of neighbors) {
+    console.log("Neighbor:", formatCell(neighbor));
+  }
+
   const neighborBarycenters = neighbors.map(n => computeBarycenter(n));
 
   // Compute cell vertices from neighbor edge midpoints
-  const cellVertices = computeCellVertices(barycenter, neighborBarycenters);
+  // Don't compute vertices at resolution 0 (base octahedron faces)
+  const cellVertices = cell.n === 0 ? [] : computeCellVertices(barycenter, neighborBarycenters);
 
   return {
     cell,
@@ -386,26 +399,45 @@ export function computeISEA3HCell(cell: ISEA3HCell): ISEA3HCellResult {
 }
 
 /**
- * Computes the vertices of a cell (hexagon or square) from the midpoints
- * of edges to neighboring cells.
+ * Computes the vertices of a cell (hexagon or square).
+ *
+ * The hexagon vertices are at the centers of triangles formed by the cell's
+ * barycenter and two consecutive neighbor barycenters, projected onto the
+ * octahedron surface (L1 normalized).
  */
 function computeCellVertices(
   barycenter: THREE.Vector3,
   neighborBarycenters: THREE.Vector3[]
 ): THREE.Vector3[] {
+  const numNeighbors = neighborBarycenters.length;
+  if (numNeighbors < 3) return [];
+
+  // Step 1: Sort neighbor barycenters by angle around the cell's barycenter
+  const sortedNeighbors = [...neighborBarycenters];
+  sortVerticesByAngle(barycenter, sortedNeighbors);
+
+  // Step 2: For each consecutive pair of neighbors, compute the center of the
+  // triangle (neighbor_i, barycenter, neighbor_{i+1}), then normalize to L1=1
   const vertices: THREE.Vector3[] = [];
+  for (let i = 0; i < numNeighbors; i++) {
+    const nextIdx = (i + 1) % numNeighbors;
+    const neighbor_i = sortedNeighbors[i];
+    const neighbor_next = sortedNeighbors[nextIdx];
 
-  for (const neighborCenter of neighborBarycenters) {
-    // The vertex is at the midpoint between this cell and its neighbor
-    const midpoint = new THREE.Vector3()
-      .addVectors(barycenter, neighborCenter)
-      .multiplyScalar(0.5);
-    vertices.push(midpoint);
-  }
+    // Center of triangle (neighbor_i, barycenter, neighbor_{i+1})
+    const triangleCenter = new THREE.Vector3()
+      .add(neighbor_i)
+      .add(barycenter)
+      .add(neighbor_next)
+      .divideScalar(3);
 
-  // Sort vertices by angle around barycenter for proper polygon ordering
-  if (vertices.length > 2) {
-    sortVerticesByAngle(barycenter, vertices);
+    // Normalize to L1=1 to project onto octahedron surface
+    const l1Norm = Math.abs(triangleCenter.x) + Math.abs(triangleCenter.y) + Math.abs(triangleCenter.z);
+    if (l1Norm > 0) {
+      triangleCenter.divideScalar(l1Norm);
+    }
+
+    vertices.push(triangleCenter);
   }
 
   return vertices;
