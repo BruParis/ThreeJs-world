@@ -15,7 +15,7 @@ according to:
 - if n is even:
 (1 / 3^(n/2)) * (a, b, c)), |a| + |b| + |z| = 3^(n/2)
 - if n is odd:
-(1 / 3^((n+1)/2)) * (a, b, c)), |a| + |b| + |z| = 3^((n+1)/2)
+(1 / 3^((n+1)/2)) * (a, b, c)), |a| + |b| + |z| = 3^((n+1)/2), with |a|, |b|, |c| all congruent modulo 3
 
 ## Rule 2 - vertices of tessellation:
 

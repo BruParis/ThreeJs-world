@@ -89,6 +89,20 @@ export function validateISEA3HCell(cell: ISEA3HCell): { isValid: boolean; messag
     };
   }
 
+  // For odd n: |a|, |b|, |c| must all be congruent to each other modulo 3
+  if (n % 2 === 1) {
+    const modAbsA = Math.abs(a) % 3;
+    const modAbsB = Math.abs(b) % 3;
+    const modAbsC = Math.abs(c) % 3;
+
+    if (modAbsA !== modAbsB || modAbsB !== modAbsC) {
+      return {
+        isValid: false,
+        message: `For odd n, |a|, |b|, |c| must be congruent mod 3. Got |a|≡${modAbsA}, |b|≡${modAbsB}, |c|≡${modAbsC} (mod 3)`
+      };
+    }
+  }
+
   return { isValid: true, message: 'Valid cell' };
 }
 
@@ -415,20 +429,32 @@ export function computeISEA3HCell(cell: ISEA3HCell): ISEA3HCellResult {
 
 /**
  * Computes cell display info for a single cell.
+ *
+ * Cell vertices are the barycenters of the central child's neighbors:
+ * 1. Get the central child of the original cell (at level n+1)
+ * 2. Get the neighbors of that central child (at level n+1)
+ * 3. The barycenters of those neighbors are the cell vertices
+ * 4. Sort by angle and connect i -> i+1
+ *
+ * neighborBarycenters are the original cell's neighbors (at level n) for debug display.
  */
 function computeCellDisplayInfo(cell: ISEA3HCell, isSelected: boolean): ISEA3HCellDisplayInfo {
   const barycenter = computeBarycenter(cell);
   const squareCell = isSquareCell(cell);
 
+  // Get the original cell's neighbors (at level n) - for debug display as points
+  const originalNeighbors = getNeighbors(cell);
+  const neighborBarycenters = originalNeighbors.map(n => computeBarycenter(n));
+
   // Get the central child at level n+1
   const centralChild = getCentralChild(cell);
 
-  // Get neighbors of central child - these become the vertices for this cell
+  // Get neighbors of central child (at level n+1) - their barycenters are the cell vertices
   const centralChildNeighbors = getNeighbors(centralChild);
-  const neighborBarycenters = centralChildNeighbors.map(n => computeBarycenter(n));
+  const centralChildNeighborBarycenters = centralChildNeighbors.map(n => computeBarycenter(n));
 
   // Sort vertices by angle for proper polygon rendering
-  const cellVertices = [...neighborBarycenters];
+  const cellVertices = [...centralChildNeighborBarycenters];
   if (cellVertices.length >= 3) {
     sortVerticesByAngle(barycenter, cellVertices);
   }
@@ -438,7 +464,7 @@ function computeCellDisplayInfo(cell: ISEA3HCell, isSelected: boolean): ISEA3HCe
     barycenter,
     isSquareCell: squareCell,
     cellVertices,
-    neighborBarycenters,
+    neighborBarycenters,  // Original cell's neighbors for debug
     isSelected,
   };
 }
@@ -637,7 +663,7 @@ function isPointInPolygon(point: THREE.Vector3, vertices: THREE.Vector3[]): bool
 
 /**
  * Computes the cell vertices for a given cell (for enclosure testing).
- * This duplicates some logic from computeDisplayHierarchy but is needed for the enclosure test.
+ * Uses the same approach as computeCellDisplayInfo.
  */
 function computeCellVerticesForEnclosure(cell: ISEA3HCell): THREE.Vector3[] {
   const barycenter = computeBarycenter(cell);
@@ -647,7 +673,6 @@ function computeCellVerticesForEnclosure(cell: ISEA3HCell): THREE.Vector3[] {
 
   if (neighborBarycenters.length < 3) return [];
 
-  // Sort vertices by angle
   const vertices = [...neighborBarycenters];
   sortVerticesByAngle(barycenter, vertices);
 

@@ -19,9 +19,129 @@ export interface GUIParams {
 const GREAT_ARC_SEGMENTS = 16;
 // Offset to lift lines above the sphere surface
 const SPHERE_LINE_OFFSET = 0.005;
+// Offset to lift lines above the octahedron surface
+const OCTAHEDRON_LINE_OFFSET = 0.005;
 // Line widths for marker lines
 const BARYCENTER_LINE_WIDTH = 4;
 const NEIGHBOR_LINE_WIDTH = 2;
+
+/**
+ * Gets the octahedron face signature for a point.
+ * Returns a string like "++-" indicating the signs of (x, y, z).
+ */
+function getOctahedronFace(point: THREE.Vector3): string {
+  const sx = point.x >= 0 ? '+' : '-';
+  const sy = point.y >= 0 ? '+' : '-';
+  const sz = point.z >= 0 ? '+' : '-';
+  return `${sx}${sy}${sz}`;
+}
+
+/**
+ * Projects a point onto the octahedron surface.
+ * The octahedron is defined by |x| + |y| + |z| = 1.
+ */
+function projectToOctahedron(point: THREE.Vector3, offset: number = 0): THREE.Vector3 {
+  const sum = Math.abs(point.x) + Math.abs(point.y) + Math.abs(point.z);
+  if (sum === 0) return new THREE.Vector3(1, 0, 0); // Fallback
+
+  const scale = (1 + offset) / sum;
+  return new THREE.Vector3(point.x * scale, point.y * scale, point.z * scale);
+}
+
+/**
+ * Interpolates along the octahedron surface between two points.
+ * Handles face crossings by finding edge intersections.
+ * Returns an array of points along the path.
+ */
+function interpolateOctahedronPath(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  offset: number = 0
+): THREE.Vector3[] {
+  const startFace = getOctahedronFace(start);
+  const endFace = getOctahedronFace(end);
+
+  // If same face, just return the two endpoints projected onto the surface
+  if (startFace === endFace) {
+    return [
+      projectToOctahedron(start, offset),
+      projectToOctahedron(end, offset)
+    ];
+  }
+
+  // Find which coordinates change sign between start and end
+  const crossings: { axis: 'x' | 'y' | 'z'; t: number }[] = [];
+
+  if (Math.sign(start.x) !== Math.sign(end.x) && start.x !== 0 && end.x !== 0) {
+    // Find t where x = 0: start.x + t * (end.x - start.x) = 0
+    const t = -start.x / (end.x - start.x);
+    if (t > 0 && t < 1) {
+      crossings.push({ axis: 'x', t });
+    }
+  }
+  if (Math.sign(start.y) !== Math.sign(end.y) && start.y !== 0 && end.y !== 0) {
+    const t = -start.y / (end.y - start.y);
+    if (t > 0 && t < 1) {
+      crossings.push({ axis: 'y', t });
+    }
+  }
+  if (Math.sign(start.z) !== Math.sign(end.z) && start.z !== 0 && end.z !== 0) {
+    const t = -start.z / (end.z - start.z);
+    if (t > 0 && t < 1) {
+      crossings.push({ axis: 'z', t });
+    }
+  }
+
+  // Sort crossings by t value
+  crossings.sort((a, b) => a.t - b.t);
+
+  // Build the path with crossing points
+  const path: THREE.Vector3[] = [projectToOctahedron(start, offset)];
+
+  for (const crossing of crossings) {
+    const t = crossing.t;
+    const crossPoint = new THREE.Vector3(
+      start.x + t * (end.x - start.x),
+      start.y + t * (end.y - start.y),
+      start.z + t * (end.z - start.z)
+    );
+    path.push(projectToOctahedron(crossPoint, offset));
+  }
+
+  path.push(projectToOctahedron(end, offset));
+
+  return path;
+}
+
+/**
+ * Creates a polygon path on the octahedron surface, handling face crossings.
+ */
+function createOctahedronPolygonPath(
+  vertices: THREE.Vector3[],
+  offset: number = 0
+): THREE.Vector3[] {
+  const path: THREE.Vector3[] = [];
+  const n = vertices.length;
+
+  for (let i = 0; i < n; i++) {
+    const start = vertices[i];
+    const end = vertices[(i + 1) % n];
+
+    const segmentPath = interpolateOctahedronPath(start, end, offset);
+
+    // Add all points except the last (to avoid duplicates at joints)
+    for (let j = 0; j < segmentPath.length - 1; j++) {
+      path.push(segmentPath[j]);
+    }
+  }
+
+  // Close the loop
+  if (path.length > 0) {
+    path.push(path[0].clone());
+  }
+
+  return path;
+}
 
 /**
  * Renders an octahedron with vertices at (±1,0,0), (0,±1,0), (0,0,±1).
@@ -403,10 +523,10 @@ export class OctahedronRenderer {
    * Displays the barycenter as a thick line extending from the surface.
    */
   private displayBarycenter(position: THREE.Vector3, color: number, height: number = 0.08): void {
-    // Project to sphere if in sphere mode
+    // Project to appropriate surface
     const basePos = this.sphereMode
       ? this.projectToSphere(position, SPHERE_LINE_OFFSET)
-      : position;
+      : projectToOctahedron(position, OCTAHEDRON_LINE_OFFSET);
 
     // Create line extending outward from the surface
     const direction = basePos.clone().normalize();
@@ -435,10 +555,10 @@ export class OctahedronRenderer {
     if (positions.length === 0) return;
 
     for (const pos of positions) {
-      // Project to sphere if in sphere mode
+      // Project to appropriate surface
       const basePos = this.sphereMode
         ? this.projectToSphere(pos, SPHERE_LINE_OFFSET)
-        : pos;
+        : projectToOctahedron(pos, OCTAHEDRON_LINE_OFFSET);
 
       // Create line extending outward from the surface
       const direction = basePos.clone().normalize();
@@ -474,7 +594,8 @@ export class OctahedronRenderer {
 
   /**
    * Creates a cell outline from vertices.
-   * In sphere mode, uses great arc segments; otherwise, straight lines.
+   * In sphere mode, uses great arc segments.
+   * In octahedron mode, follows the octahedron surface handling face crossings.
    */
   private createCellOutline(vertices: THREE.Vector3[], color: number): THREE.Line | null {
     if (vertices.length < 3) return null;
@@ -483,15 +604,17 @@ export class OctahedronRenderer {
       return this.createGreatArcPolygon(vertices, color, SPHERE_LINE_OFFSET);
     }
 
-    // Octahedron mode: straight line loop
+    // Octahedron mode: follow the surface, handling face crossings
+    const path = createOctahedronPolygonPath(vertices, OCTAHEDRON_LINE_OFFSET);
+
+    if (path.length < 2) return null;
+
     const geometry = new THREE.BufferGeometry();
     const posArray: number[] = [];
 
-    for (const v of vertices) {
-      posArray.push(v.x, v.y, v.z);
+    for (const p of path) {
+      posArray.push(p.x, p.y, p.z);
     }
-    // Close the loop
-    posArray.push(vertices[0].x, vertices[0].y, vertices[0].z);
 
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(posArray, 3));
 
@@ -549,6 +672,13 @@ export class OctahedronRenderer {
   }
 
   /**
+   * Gets the octahedron mesh for raycasting.
+   */
+  getOctahedronMesh(): THREE.Mesh | null {
+    return this.octahedronMesh;
+  }
+
+  /**
    * Displays a hover cell outline.
    */
   displayHoverCell(displayInfo: ISEA3HCellDisplayInfo, color: number): void {
@@ -572,10 +702,10 @@ export class OctahedronRenderer {
       this.hoverBarycenterMarker = null;
     }
 
-    // Project to sphere if in sphere mode
+    // Project to appropriate surface
     const basePos = this.sphereMode
       ? this.projectToSphere(position, SPHERE_LINE_OFFSET)
-      : position;
+      : projectToOctahedron(position, OCTAHEDRON_LINE_OFFSET);
 
     // Create line extending outward from the surface
     const direction = basePos.clone().normalize();
@@ -612,10 +742,10 @@ export class OctahedronRenderer {
     if (positions.length === 0) return;
 
     for (const pos of positions) {
-      // Project to sphere if in sphere mode
+      // Project to appropriate surface
       const basePos = this.sphereMode
         ? this.projectToSphere(pos, SPHERE_LINE_OFFSET)
-        : pos;
+        : projectToOctahedron(pos, OCTAHEDRON_LINE_OFFSET);
 
       // Create line extending outward from the surface
       const direction = basePos.clone().normalize();
