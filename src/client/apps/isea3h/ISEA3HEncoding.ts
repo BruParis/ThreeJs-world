@@ -140,13 +140,11 @@ export function getNeighbors(cell: ISEA3HCell): ISEA3HCell[] {
   const { n, a, b, c } = cell;
   const neighbors: ISEA3HCell[] = [];
   const normFactor = getNormalizationFactor(n);
-  console.log("Get neighbors for cell:", formatCell(cell), "with normFactor:", normFactor);
 
   // Check if this is a square cell
   if (isSquareCell(cell)) {
     // Square cells have 4 neighbors
     // They are at octahedron vertices, so we need special handling
-    console.log("   -> is a square cell, using special neighbor logic");
     return getSquareCellNeighbors(cell);
   }
 
@@ -184,9 +182,7 @@ export function getNeighbors(cell: ISEA3HCell): ISEA3HCell[] {
     ];
 
     for (const [da, db, dc] of deltas) {
-      console.log("delta:", da, db, dc);
       const neighbor = computeNeighborWithSignConvention(n, a, b, c, da, db, dc, normFactor);
-      console.log("   neighbor:", neighbor ? formatCell(neighbor) : "invalid");
       if (neighbor) {
         neighbors.push(neighbor);
       }
@@ -235,7 +231,6 @@ function computeNeighborWithSignConvention(
 
   // Validate the neighbor
   const absSum = Math.abs(newA) + Math.abs(newB) + Math.abs(newC);
-  console.log("   new neighbor coords:", newA, newB, newC, "absSum:", absSum);
   if (absSum !== normFactor) {
     return null;
   }
@@ -310,10 +305,11 @@ export function isCentralChild(cell: ISEA3HCell): boolean {
   if (n === 0) return true; // Base level is always "central"
 
   if (n % 2 === 0) {
-    // Even n: a, b, c are congruent modulo 3
-    const modA = ((a % 3) + 3) % 3;
-    const modB = ((b % 3) + 3) % 3;
-    const modC = ((c % 3) + 3) % 3;
+    // Even n: a, b, c are congruent to each other modulo 3
+    const modA = Math.abs(a) % 3;
+    const modB = Math.abs(b) % 3;
+    const modC = Math.abs(c) % 3;
+
     return modA === modB && modB === modC;
   } else {
     // Odd n: a, b, c are congruent to 0 modulo 3
@@ -328,7 +324,7 @@ export function isCentralChild(cell: ISEA3HCell): boolean {
 export function getParentCell(cell: ISEA3HCell): ISEA3HCell | null {
   const { n, a, b, c } = cell;
 
-  if (n === 0) return null; // No parent for base level
+  if (n === 1) return null; // No parent for base level
 
   if (n % 2 === 0) {
     // Even n: parent has same coordinates
@@ -361,9 +357,7 @@ export function getCentralCellForParent(cell: ISEA3HCell): ISEA3HCell {
   let closestDistance = Infinity;
 
   for (const neighbor of neighbors) {
-    console.log("formatCell(neighbor):", formatCell(neighbor));
     if (isCentralChild(neighbor)) {
-      console.log("   -> is central");
       const neighborBarycenter = computeBarycenter(neighbor);
       const distance = cellBarycenter.distanceTo(neighborBarycenter);
 

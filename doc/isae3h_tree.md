@@ -62,7 +62,7 @@ If something is substracted from 0, then the other signs in the ordered triple c
 
 2. Cell (a, b, c) is a central child if and only if:
 - if n is even:
-a, b, c are congruent modulo 3
+|a|, |b|, |c| are congruent modulo 3
 - if n is odd:
 a, b, c, are congruent to 0 modulo 3
 
