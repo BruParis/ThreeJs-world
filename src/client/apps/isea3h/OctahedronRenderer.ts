@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { ISEA3HCellResult } from './ISEA3HEncoding';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { ISEA3HCellDisplayInfo } from './ISEA3HEncoding';
 import {
   projectToSphereSnyder,
   interpolateGreatArcSnyder,
@@ -16,6 +19,9 @@ export interface GUIParams {
 const GREAT_ARC_SEGMENTS = 16;
 // Offset to lift lines above the sphere surface
 const SPHERE_LINE_OFFSET = 0.005;
+// Line widths for marker lines
+const BARYCENTER_LINE_WIDTH = 4;
+const NEIGHBOR_LINE_WIDTH = 2;
 
 /**
  * Renders an octahedron with vertices at (±1,0,0), (0,±1,0), (0,0,±1).
@@ -36,13 +42,20 @@ export class OctahedronRenderer {
   private sphereMesh: THREE.Mesh | null = null;
 
   // Cell visualization (from GUI input)
-  private cellBarycenterMarker: THREE.Points | null = null;
+  private cellBarycenterMarker: Line2 | null = null;
   private cellOutline: THREE.Line | null = null;
-  private neighborMarkers: THREE.Points | null = null;
+  private neighborMarkers: Line2[] = [];
   private parentCellOutlines: THREE.Line[] = [];
 
   // Hover visualization
   private hoverCellOutlines: THREE.Line[] = [];
+  private hoverNeighborMarkers: Line2[] = [];
+  private hoverBarycenterMarker: Line2 | null = null;
+
+  // Snyder projection debug visualization
+  private snyderDebugOctPoints: THREE.Points | null = null;
+  private snyderDebugSpherePoints: THREE.Points | null = null;
+  private snyderDebugLines: THREE.LineSegments | null = null;
 
   // Octahedron vertices
   public readonly vertices: THREE.Vector3[] = [
@@ -362,90 +375,91 @@ export class OctahedronRenderer {
   /**
    * Displays an ISEA3H cell with its barycenter, outline, and neighbors.
    */
-  displayCell(result: ISEA3HCellResult): void {
+  displayCell(displayInfo: ISEA3HCellDisplayInfo): void {
     this.clearCellDisplay();
 
-    if (!result.isValid) {
-      return;
-    }
-
-    // Display barycenter
-    this.displayBarycenter(result.barycenter, 0xff0000, 0.08);
+    // Display barycenter (yellow to distinguish from red octahedron vertices)
+    this.displayBarycenter(displayInfo.barycenter, 0xffff00, 0.08);
 
     // Display neighbor barycenters
-    this.displayNeighborMarkers(result.neighborBarycenters);
+    this.displayNeighborMarkers(displayInfo.neighborBarycenters);
 
     // Display cell outline
-    this.displayCellOutline(result.cellVertices, 0x00ff00);
+    this.displayCellOutline(displayInfo.cellVertices, 0x00ff00);
   }
 
   /**
    * Displays a cell at a higher level (parent) with different styling.
    */
-  displayParentCell(result: ISEA3HCellResult, color: number = 0xffff00): void {
-    if (!result.isValid) {
-      return;
-    }
-
+  displayParentCell(displayInfo: ISEA3HCellDisplayInfo, color: number = 0xffff00): void {
     // Create parent outline with different color
-    const outline = this.createCellOutline(result.cellVertices, color);
+    const outline = this.createCellOutline(displayInfo.cellVertices, color);
     if (outline) {
       this.parentCellOutlines.push(outline);
     }
   }
 
   /**
-   * Displays the barycenter as a point.
+   * Displays the barycenter as a thick line extending from the surface.
    */
-  private displayBarycenter(position: THREE.Vector3, color: number, size: number): void {
-    const geometry = new THREE.BufferGeometry();
-
+  private displayBarycenter(position: THREE.Vector3, color: number, height: number = 0.08): void {
     // Project to sphere if in sphere mode
-    const displayPos = this.sphereMode
+    const basePos = this.sphereMode
       ? this.projectToSphere(position, SPHERE_LINE_OFFSET)
       : position;
 
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
-      displayPos.x, displayPos.y, displayPos.z
-    ], 3));
+    // Create line extending outward from the surface
+    const direction = basePos.clone().normalize();
+    const endPos = basePos.clone().addScaledVector(direction, height);
 
-    const material = new THREE.PointsMaterial({
+    const geometry = new LineGeometry();
+    geometry.setPositions([
+      basePos.x, basePos.y, basePos.z,
+      endPos.x, endPos.y, endPos.z
+    ]);
+
+    const material = new LineMaterial({
       color,
-      size,
-      sizeAttenuation: true,
+      linewidth: BARYCENTER_LINE_WIDTH,
+      resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
     });
 
-    this.cellBarycenterMarker = new THREE.Points(geometry, material);
+    this.cellBarycenterMarker = new Line2(geometry, material);
     this.scene.add(this.cellBarycenterMarker);
   }
 
   /**
-   * Displays neighbor barycenters as small points.
+   * Displays neighbor barycenters as thick lines extending from the surface.
    */
-  private displayNeighborMarkers(positions: THREE.Vector3[]): void {
+  private displayNeighborMarkers(positions: THREE.Vector3[], height: number = 0.04): void {
     if (positions.length === 0) return;
-
-    const geometry = new THREE.BufferGeometry();
-    const posArray: number[] = [];
 
     for (const pos of positions) {
       // Project to sphere if in sphere mode
-      const displayPos = this.sphereMode
+      const basePos = this.sphereMode
         ? this.projectToSphere(pos, SPHERE_LINE_OFFSET)
         : pos;
-      posArray.push(displayPos.x, displayPos.y, displayPos.z);
+
+      // Create line extending outward from the surface
+      const direction = basePos.clone().normalize();
+      const endPos = basePos.clone().addScaledVector(direction, height);
+
+      const geometry = new LineGeometry();
+      geometry.setPositions([
+        basePos.x, basePos.y, basePos.z,
+        endPos.x, endPos.y, endPos.z
+      ]);
+
+      const material = new LineMaterial({
+        color: 0x0088ff,
+        linewidth: NEIGHBOR_LINE_WIDTH,
+        resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+      });
+
+      const line = new Line2(geometry, material);
+      this.neighborMarkers.push(line);
+      this.scene.add(line);
     }
-
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(posArray, 3));
-
-    const material = new THREE.PointsMaterial({
-      color: 0x0088ff,
-      size: 0.05,
-      sizeAttenuation: true,
-    });
-
-    this.neighborMarkers = new THREE.Points(geometry, material);
-    this.scene.add(this.neighborMarkers);
   }
 
   /**
@@ -505,12 +519,12 @@ export class OctahedronRenderer {
       this.cellOutline = null;
     }
 
-    if (this.neighborMarkers) {
-      this.neighborMarkers.geometry.dispose();
-      (this.neighborMarkers.material as THREE.Material).dispose();
-      this.scene.remove(this.neighborMarkers);
-      this.neighborMarkers = null;
+    for (const marker of this.neighborMarkers) {
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+      this.scene.remove(marker);
     }
+    this.neighborMarkers = [];
 
     this.clearParentCellDisplay();
   }
@@ -537,12 +551,91 @@ export class OctahedronRenderer {
   /**
    * Displays a hover cell outline.
    */
-  displayHoverCell(result: ISEA3HCellResult, color: number): void {
-    if (!result.isValid || result.cellVertices.length < 3) return;
+  displayHoverCell(displayInfo: ISEA3HCellDisplayInfo, color: number): void {
+    if (displayInfo.cellVertices.length < 3) return;
 
-    const outline = this.createCellOutline(result.cellVertices, color);
+    const outline = this.createCellOutline(displayInfo.cellVertices, color);
     if (outline) {
       this.hoverCellOutlines.push(outline);
+    }
+  }
+
+  /**
+   * Displays the barycenter of the hovered cell as a thick line extending from the surface.
+   */
+  displayHoverBarycenter(position: THREE.Vector3, color: number = 0xff0000, height: number = 0.08): void {
+    // Clear previous hover barycenter marker
+    if (this.hoverBarycenterMarker) {
+      this.hoverBarycenterMarker.geometry.dispose();
+      (this.hoverBarycenterMarker.material as THREE.Material).dispose();
+      this.scene.remove(this.hoverBarycenterMarker);
+      this.hoverBarycenterMarker = null;
+    }
+
+    // Project to sphere if in sphere mode
+    const basePos = this.sphereMode
+      ? this.projectToSphere(position, SPHERE_LINE_OFFSET)
+      : position;
+
+    // Create line extending outward from the surface
+    const direction = basePos.clone().normalize();
+    const endPos = basePos.clone().addScaledVector(direction, height);
+
+    const geometry = new LineGeometry();
+    geometry.setPositions([
+      basePos.x, basePos.y, basePos.z,
+      endPos.x, endPos.y, endPos.z
+    ]);
+
+    const material = new LineMaterial({
+      color,
+      linewidth: BARYCENTER_LINE_WIDTH,
+      resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+    });
+
+    this.hoverBarycenterMarker = new Line2(geometry, material);
+    this.scene.add(this.hoverBarycenterMarker);
+  }
+
+  /**
+   * Displays neighbor barycenters for hover mode as thick lines extending from the surface.
+   */
+  displayHoverNeighborBarycenters(positions: THREE.Vector3[], color: number = 0xff00ff, height: number = 0.04): void {
+    // Clear previous hover neighbor markers
+    for (const marker of this.hoverNeighborMarkers) {
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+      this.scene.remove(marker);
+    }
+    this.hoverNeighborMarkers = [];
+
+    if (positions.length === 0) return;
+
+    for (const pos of positions) {
+      // Project to sphere if in sphere mode
+      const basePos = this.sphereMode
+        ? this.projectToSphere(pos, SPHERE_LINE_OFFSET)
+        : pos;
+
+      // Create line extending outward from the surface
+      const direction = basePos.clone().normalize();
+      const endPos = basePos.clone().addScaledVector(direction, height);
+
+      const geometry = new LineGeometry();
+      geometry.setPositions([
+        basePos.x, basePos.y, basePos.z,
+        endPos.x, endPos.y, endPos.z
+      ]);
+
+      const material = new LineMaterial({
+        color,
+        linewidth: NEIGHBOR_LINE_WIDTH,
+        resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+      });
+
+      const line = new Line2(geometry, material);
+      this.hoverNeighborMarkers.push(line);
+      this.scene.add(line);
     }
   }
 
@@ -556,6 +649,161 @@ export class OctahedronRenderer {
       this.scene.remove(outline);
     }
     this.hoverCellOutlines = [];
+
+    for (const marker of this.hoverNeighborMarkers) {
+      marker.geometry.dispose();
+      (marker.material as THREE.Material).dispose();
+      this.scene.remove(marker);
+    }
+    this.hoverNeighborMarkers = [];
+
+    if (this.hoverBarycenterMarker) {
+      this.hoverBarycenterMarker.geometry.dispose();
+      (this.hoverBarycenterMarker.material as THREE.Material).dispose();
+      this.scene.remove(this.hoverBarycenterMarker);
+      this.hoverBarycenterMarker = null;
+    }
+  }
+
+  /**
+   * Displays debug visualization for the Snyder projection.
+   * Samples points regularly on the octahedron and shows their projection on the sphere.
+   * @param subdivisions Number of subdivisions per edge of each octahedron face
+   */
+  displaySnyderDebug(subdivisions: number = 10): void {
+    this.clearSnyderDebug();
+
+    const octPoints: THREE.Vector3[] = [];
+    const octPointsOffset: THREE.Vector3[] = [];
+    const spherePoints: THREE.Vector3[] = [];
+    const linePositions: number[] = [];
+
+    // Offset to lift points above the octahedron surface
+    const OCT_POINT_OFFSET = 0.01;
+
+    // Sample each octahedron face using barycentric coordinates
+    for (const face of this.faces) {
+      const v0 = this.vertices[face[0]];
+      const v1 = this.vertices[face[1]];
+      const v2 = this.vertices[face[2]];
+
+      // Compute face normal for offset
+      const edge1 = new THREE.Vector3().subVectors(v1, v0);
+      const edge2 = new THREE.Vector3().subVectors(v2, v0);
+      const faceNormal = new THREE.Vector3().crossVectors(edge1, edge2).normalize();
+
+      // Generate points using barycentric subdivision
+      for (let i = 0; i <= subdivisions; i++) {
+        for (let j = 0; j <= subdivisions - i; j++) {
+          const k = subdivisions - i - j;
+
+          // Barycentric coordinates (normalized)
+          const u = i / subdivisions;
+          const v = j / subdivisions;
+          const w = k / subdivisions;
+
+          // Point on octahedron face
+          const octPoint = new THREE.Vector3(
+            u * v0.x + v * v1.x + w * v2.x,
+            u * v0.y + v * v1.y + w * v2.y,
+            u * v0.z + v * v1.z + w * v2.z
+          );
+
+          // Offset point along face normal
+          const octPointWithOffset = octPoint.clone().addScaledVector(faceNormal, OCT_POINT_OFFSET);
+
+          // Project to sphere using Snyder projection
+          const spherePoint = this.projectToSphere(octPoint, SPHERE_LINE_OFFSET);
+
+          octPoints.push(octPoint);
+          octPointsOffset.push(octPointWithOffset);
+          spherePoints.push(spherePoint);
+
+          // Add line from octahedron point (with offset) to sphere point
+          linePositions.push(octPointWithOffset.x, octPointWithOffset.y, octPointWithOffset.z);
+          linePositions.push(spherePoint.x, spherePoint.y, spherePoint.z);
+        }
+      }
+    }
+
+    // Create points on octahedron surface (with offset)
+    const octPointsGeometry = new THREE.BufferGeometry();
+    const octPointPositions: number[] = [];
+
+    for (const p of octPointsOffset) {
+      octPointPositions.push(p.x, p.y, p.z);
+    }
+
+    octPointsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(octPointPositions, 3));
+
+    const octPointsMaterial = new THREE.PointsMaterial({
+      color: 0xff0000,
+      size: 0.02,
+      sizeAttenuation: true,
+    });
+
+    this.snyderDebugOctPoints = new THREE.Points(octPointsGeometry, octPointsMaterial);
+    this.scene.add(this.snyderDebugOctPoints);
+
+    // Create points on sphere (projected positions)
+    const spherePointsGeometry = new THREE.BufferGeometry();
+    const spherePointPositions: number[] = [];
+
+    for (const p of spherePoints) {
+      spherePointPositions.push(p.x, p.y, p.z);
+    }
+
+    spherePointsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(spherePointPositions, 3));
+
+    const spherePointsMaterial = new THREE.PointsMaterial({
+      color: 0x00ffff,
+      size: 0.02,
+      sizeAttenuation: true,
+    });
+
+    this.snyderDebugSpherePoints = new THREE.Points(spherePointsGeometry, spherePointsMaterial);
+    this.scene.add(this.snyderDebugSpherePoints);
+
+    // Create lines connecting octahedron points to their projections
+    const linesGeometry = new THREE.BufferGeometry();
+    linesGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+
+    const linesMaterial = new THREE.LineBasicMaterial({
+      color: 0xff8800,
+      transparent: true,
+      opacity: 0.3,
+    });
+
+    this.snyderDebugLines = new THREE.LineSegments(linesGeometry, linesMaterial);
+    this.scene.add(this.snyderDebugLines);
+
+    console.log(`Snyder debug: ${spherePoints.length} points sampled`);
+  }
+
+  /**
+   * Clears the Snyder projection debug visualization.
+   */
+  clearSnyderDebug(): void {
+    if (this.snyderDebugOctPoints) {
+      this.snyderDebugOctPoints.geometry.dispose();
+      (this.snyderDebugOctPoints.material as THREE.Material).dispose();
+      this.scene.remove(this.snyderDebugOctPoints);
+      this.snyderDebugOctPoints = null;
+    }
+
+    if (this.snyderDebugSpherePoints) {
+      this.snyderDebugSpherePoints.geometry.dispose();
+      (this.snyderDebugSpherePoints.material as THREE.Material).dispose();
+      this.scene.remove(this.snyderDebugSpherePoints);
+      this.snyderDebugSpherePoints = null;
+    }
+
+    if (this.snyderDebugLines) {
+      this.snyderDebugLines.geometry.dispose();
+      (this.snyderDebugLines.material as THREE.Material).dispose();
+      this.scene.remove(this.snyderDebugLines);
+      this.snyderDebugLines = null;
+    }
   }
 
   /**
@@ -564,6 +812,7 @@ export class OctahedronRenderer {
   dispose(): void {
     this.clearHoverDisplay();
     this.clearCellDisplay();
+    this.clearSnyderDebug();
 
     if (this.octahedronMesh) {
       this.octahedronMesh.geometry.dispose();

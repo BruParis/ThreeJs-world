@@ -4,10 +4,9 @@ import { OctahedronRenderer } from './OctahedronRenderer';
 import { sphereToOctahedron } from './ISEA3HSnyderProjection';
 import {
   ISEA3HCell,
-  computeISEA3HCell,
+  computeDisplayHierarchy,
+  ISEA3HDisplayHierarchy,
   getNormalizationFactor,
-  getParentCell,
-  getCentralCellForParent,
   isCentralChild,
 } from './ISEA3HEncoding';
 
@@ -47,32 +46,6 @@ function octahedronPointToCell(octPoint: THREE.Vector3, n: number): ISEA3HCell {
   }
 
   return { n, a, b, c };
-}
-
-/**
- * Gets the full hierarchy of cells from level n down to level 1.
- * Level 0 is not included as it doesn't display hexagons.
- */
-function getCellHierarchy(cell: ISEA3HCell): ISEA3HCell[] {
-  const hierarchy: ISEA3HCell[] = [cell];
-  let currentCell = cell;
-
-  while (currentCell.n > 1) {
-    // Get central cell if not already central
-    let cellForParent = currentCell;
-    if (!isCentralChild(currentCell)) {
-      cellForParent = getCentralCellForParent(currentCell);
-    }
-
-    // Get parent
-    const parent = getParentCell(cellForParent);
-    if (!parent) break;
-
-    hierarchy.push(parent);
-    currentCell = parent;
-  }
-
-  return hierarchy;
 }
 
 /**
@@ -200,12 +173,12 @@ export class InteractionHandler {
       // Get cell at current resolution level
       const cell = octahedronPointToCell(octPoint, this.resolutionLevel);
 
-      // Get the full hierarchy
-      const hierarchy = getCellHierarchy(cell);
+      // Compute the display hierarchy with hover point for choosing central neighbors
+      const displayHierarchy = computeDisplayHierarchy(cell, octPoint);
 
       // Compute and display the cells
-      this.displayCellInfo(hitPoint, hierarchy);
-      this.highlightCells(hierarchy);
+      this.displayCellInfo(hitPoint, displayHierarchy);
+      this.highlightCells(displayHierarchy);
     } else {
       this.hideLabel();
       this.octahedronRenderer.clearHoverDisplay();
@@ -223,17 +196,16 @@ export class InteractionHandler {
   /**
    * Displays cell information in the label.
    */
-  private displayCellInfo(position: THREE.Vector3, hierarchy: ISEA3HCell[]): void {
+  private displayCellInfo(position: THREE.Vector3, hierarchy: ISEA3HDisplayHierarchy): void {
     if (!this.label || !this.labelDiv) return;
 
     // Build the label text
     const lines: string[] = ['Cell Hierarchy:'];
 
-    for (const cell of hierarchy) {
-      const result = computeISEA3HCell(cell);
-      const type = result.isSquareCell ? '□' : '⬡';
-      const central = isCentralChild(cell) ? '●' : '○';
-      lines.push(`${central} ${type} ${formatCellShort(cell)}`);
+    for (const level of hierarchy.levels) {
+      const type = level.isSquareCell ? '□' : '⬡';
+      const central = isCentralChild(level.cell) ? '●' : '○';
+      lines.push(`${central} ${type} ${formatCellShort(level.cell)}`);
     }
 
     this.labelDiv.textContent = lines.join('\n');
@@ -264,12 +236,12 @@ export class InteractionHandler {
   /**
    * Highlights the cells in the hierarchy.
    */
-  private highlightCells(hierarchy: ISEA3HCell[]): void {
+  private highlightCells(hierarchy: ISEA3HDisplayHierarchy): void {
     // Clear previous hover display
     this.octahedronRenderer.clearHoverDisplay();
 
-    // Display each cell in the hierarchy with different colors
-    const colors = [
+    // Colors for selected cells at each level
+    const selectedColors = [
       0x00ff00, // Level n (current) - green
       0xffff00, // Level n-1 - yellow
       0xff8800, // Level n-2 - orange
@@ -279,13 +251,42 @@ export class InteractionHandler {
       0x00ffff, // Level n-6 - cyan
     ];
 
-    for (let i = 0; i < hierarchy.length; i++) {
-      const cell = hierarchy[i];
-      const result = computeISEA3HCell(cell);
+    // Colors for alternative (non-selected) cells - dimmer versions
+    const alternativeColors = [
+      0x006600, // Level n - dim green
+      0x666600, // Level n-1 - dim yellow
+      0x664400, // Level n-2 - dim orange
+      0x660044, // Level n-3 - dim pink
+      0x440066, // Level n-4 - dim purple
+      0x004466, // Level n-5 - dim blue
+      0x006666, // Level n-6 - dim cyan
+    ];
 
-      if (result.isValid) {
-        const color = colors[i % colors.length];
-        this.octahedronRenderer.displayHoverCell(result, color);
+    // First pass: display alternative cells (so they render behind selected cells)
+    for (let i = 0; i < hierarchy.levels.length; i++) {
+      const level = hierarchy.levels[i];
+      const alternativeColor = alternativeColors[i % alternativeColors.length];
+
+      if (level.alternativeCells) {
+        for (const altCell of level.alternativeCells) {
+          this.octahedronRenderer.displayHoverCell(altCell, alternativeColor);
+        }
+      }
+    }
+
+    // Second pass: display selected cells (so they render on top)
+    for (let i = 0; i < hierarchy.levels.length; i++) {
+      const level = hierarchy.levels[i];
+      const selectedColor = selectedColors[i % selectedColors.length];
+
+      this.octahedronRenderer.displayHoverCell(level, selectedColor);
+
+      // Display barycenter and neighbor barycenters for the current resolution level (first cell)
+      if (i === 0) {
+        this.octahedronRenderer.displayHoverBarycenter(level.barycenter, 0xffff00);
+        if (level.neighborBarycenters.length > 0) {
+          this.octahedronRenderer.displayHoverNeighborBarycenters(level.neighborBarycenters, 0xff00ff);
+        }
       }
     }
   }

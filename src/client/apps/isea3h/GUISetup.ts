@@ -4,8 +4,11 @@ import { InteractionHandler } from './InteractionHandler';
 import {
   ISEA3HCell,
   computeISEA3HCell,
+  computeDisplayHierarchy,
   getParentCell,
   getCentralCellForParent,
+  getCentralChild,
+  getNeighbors,
   formatCell,
   isCentralChild,
 } from './ISEA3HEncoding';
@@ -68,7 +71,6 @@ export class GUISetup {
       .onChange((value: boolean) => {
         octahedronRenderer.setVisibility('vertices', value);
       });
-    viewFolder.open();
 
     // Info folder
     const infoFolder = this.gui.addFolder('Info');
@@ -78,7 +80,6 @@ export class GUISetup {
     };
     infoFolder.add(info, 'vertices').name('Vertices').listen();
     infoFolder.add(info, 'faces').name('Faces').listen();
-    infoFolder.open();
 
     // Mode selection folder
     this.setupModeFolder();
@@ -88,6 +89,9 @@ export class GUISetup {
 
     // ISEA3H Encoding folder (initially hidden)
     this.setupISEA3HEncodingFolder();
+
+    // Debug folder
+    this.setupDebugFolder();
 
     // Apply initial mode
     this.updateModeVisibility();
@@ -221,6 +225,40 @@ export class GUISetup {
   }
 
   /**
+   * Sets up the Debug folder for projection visualization.
+   */
+  private setupDebugFolder(): void {
+    const debugFolder = this.gui.addFolder('Debug');
+
+    const debugState = {
+      showSnyderProjection: false,
+      snyderSubdivisions: 10,
+    };
+
+    debugFolder
+      .add(debugState, 'showSnyderProjection')
+      .name('Snyder Projection')
+      .onChange((value: boolean) => {
+        if (value) {
+          this.octahedronRenderer.displaySnyderDebug(debugState.snyderSubdivisions);
+        } else {
+          this.octahedronRenderer.clearSnyderDebug();
+        }
+      });
+
+    debugFolder
+      .add(debugState, 'snyderSubdivisions', 2, 30, 1)
+      .name('Subdivisions')
+      .onChange((value: number) => {
+        if (debugState.showSnyderProjection) {
+          this.octahedronRenderer.displaySnyderDebug(value);
+        }
+      });
+
+    debugFolder.open();
+  }
+
+  /**
    * Parses the a,b,c string into three integers.
    * Accepts formats like "1,1,1" or "1, 1, 1" or "1 1 1".
    */
@@ -252,6 +290,17 @@ export class GUISetup {
     0x8800ff,  // Level 4 - purple
     0x0088ff,  // Level 5 - blue
     0x00ffff,  // Level 6 - cyan
+  ];
+
+  // Dimmer colors for alternative (non-enclosing) parent cells
+  private static readonly ALTERNATIVE_COLORS = [
+    0x006600,  // Level 0 - dim green
+    0x666600,  // Level 1 - dim yellow
+    0x664400,  // Level 2 - dim orange
+    0x660044,  // Level 3 - dim pink
+    0x440066,  // Level 4 - dim purple
+    0x004466,  // Level 5 - dim blue
+    0x006666,  // Level 6 - dim cyan
   ];
 
   /**
@@ -286,7 +335,17 @@ export class GUISetup {
     // Update status fields
     state.status = result.isValid ? 'Valid' : result.validationMessage;
     state.cellType = result.isSquareCell ? 'Square (4 sides)' : 'Hexagon (6 sides)';
-    state.neighborCount = result.neighbors.length;
+
+    // Get neighbor count from central child's neighbors
+    console.log("cell: ", formatCell(cell));
+    const centralChild = getCentralChild(cell);
+    console.log("central child:", formatCell(centralChild));
+    const centralChildNeighbors = getNeighbors(centralChild);
+    for (const neighbor of centralChildNeighbors) {
+      console.log('   central child Neighbor:', formatCell(neighbor));
+    }
+
+    state.neighborCount = centralChildNeighbors.length;
     state.isCentral = isCentralChild(cell) ? 'Yes' : 'No';
 
     // Compute parent info (level 1 is minimum displayable level)
@@ -308,52 +367,39 @@ export class GUISetup {
     // Store current cell for go-up functionality
     this.currentCell = cell;
 
-    // Display the cell
-    this.octahedronRenderer.displayCell(result);
+    // Compute and display the full hierarchy
+    const displayHierarchy = computeDisplayHierarchy(cell);
 
-    // Display the full hierarchy of enclosing hexagons up to level 0
-    this.displayHierarchy(cell);
+    // Display the main cell (first in hierarchy)
+    if (displayHierarchy.levels.length > 0) {
+      this.octahedronRenderer.displayCell(displayHierarchy.levels[0]);
+    }
+
+    // First pass: display alternative cells (so they render behind selected cells)
+    for (let i = 1; i < displayHierarchy.levels.length; i++) {
+      const level = displayHierarchy.levels[i];
+      if (level.alternativeCells) {
+        const altColor = GUISetup.ALTERNATIVE_COLORS[i % GUISetup.ALTERNATIVE_COLORS.length];
+        for (const altCell of level.alternativeCells) {
+          this.octahedronRenderer.displayParentCell(altCell, altColor);
+        }
+      }
+    }
+
+    // Second pass: display selected parent cells (so they render on top)
+    for (let i = 1; i < displayHierarchy.levels.length; i++) {
+      const level = displayHierarchy.levels[i];
+      const color = GUISetup.LEVEL_COLORS[i % GUISetup.LEVEL_COLORS.length];
+      this.octahedronRenderer.displayParentCell(level, color);
+    }
 
     console.log('ISEA3H Cell:', {
       cell: formatCell(cell),
       barycenter: result.barycenter,
       isSquare: result.isSquareCell,
-      neighbors: result.neighbors.map(n => formatCell(n)),
+      centralChildNeighborCount: centralChildNeighbors.length,
       isCentral: isCentralChild(cell),
     });
-  }
-
-  /**
-   * Displays the hierarchy of enclosing hexagons from the given cell up to level 1.
-   */
-  private displayHierarchy(startCell: ISEA3HCell): void {
-    let currentCell = startCell;
-    let levelIndex = 1; // Start at 1 since the main cell is already displayed
-
-    while (currentCell.n > 1) {
-      // Get the central cell if not already central (Rule 6)
-      let cellForParent = currentCell;
-      if (!isCentralChild(currentCell)) {
-        cellForParent = getCentralCellForParent(currentCell);
-      }
-
-      // Get parent
-      const parentCell = getParentCell(cellForParent);
-      if (!parentCell) {
-        break;
-      }
-
-      // Compute and display the parent cell
-      const parentResult = computeISEA3HCell(parentCell);
-      if (parentResult.isValid) {
-        const color = GUISetup.LEVEL_COLORS[levelIndex % GUISetup.LEVEL_COLORS.length];
-        this.octahedronRenderer.displayParentCell(parentResult, color);
-      }
-
-      // Move up to the parent for the next iteration
-      currentCell = parentCell;
-      levelIndex++;
-    }
   }
 
   /**
@@ -389,9 +435,34 @@ export class GUISetup {
       return;
     }
 
+    // Compute display hierarchy for parent
+    const displayHierarchy = computeDisplayHierarchy(parent);
+    if (displayHierarchy.levels.length === 0) {
+      state.status = 'Cannot display parent';
+      return;
+    }
+
     // Display parent cell
-    const parentResult = computeISEA3HCell(parent);
-    this.octahedronRenderer.displayParentCell(parentResult);
+    this.octahedronRenderer.clearCellDisplay();
+    this.octahedronRenderer.displayCell(displayHierarchy.levels[0]);
+
+    // First pass: display alternative cells (so they render behind selected cells)
+    for (let i = 1; i < displayHierarchy.levels.length; i++) {
+      const level = displayHierarchy.levels[i];
+      if (level.alternativeCells) {
+        const altColor = GUISetup.ALTERNATIVE_COLORS[i % GUISetup.ALTERNATIVE_COLORS.length];
+        for (const altCell of level.alternativeCells) {
+          this.octahedronRenderer.displayParentCell(altCell, altColor);
+        }
+      }
+    }
+
+    // Second pass: display selected parent cells (so they render on top)
+    for (let i = 1; i < displayHierarchy.levels.length; i++) {
+      const level = displayHierarchy.levels[i];
+      const color = GUISetup.LEVEL_COLORS[i % GUISetup.LEVEL_COLORS.length];
+      this.octahedronRenderer.displayParentCell(level, color);
+    }
 
     // Update state to show parent
     state.n = parent.n;
@@ -399,9 +470,14 @@ export class GUISetup {
     this.currentCell = parent;
 
     // Update status display
+    const parentResult = computeISEA3HCell(parent);
     state.status = 'Valid (parent level)';
     state.cellType = parentResult.isSquareCell ? 'Square (4 sides)' : 'Hexagon (6 sides)';
-    state.neighborCount = parentResult.neighbors.length;
+
+    // Get neighbor count from central child's neighbors
+    const centralChild = getCentralChild(parent);
+    const centralChildNeighbors = getNeighbors(centralChild);
+    state.neighborCount = centralChildNeighbors.length;
     state.isCentral = isCentralChild(parent) ? 'Yes' : 'No';
 
     const grandParent = getParentCell(parent);
@@ -432,7 +508,30 @@ export class GUISetup {
     if (this.currentCell) {
       const result = computeISEA3HCell(this.currentCell);
       if (result.isValid) {
-        this.octahedronRenderer.displayCell(result);
+        // Compute display hierarchy and redisplay
+        const displayHierarchy = computeDisplayHierarchy(this.currentCell);
+        if (displayHierarchy.levels.length > 0) {
+          this.octahedronRenderer.clearCellDisplay();
+          this.octahedronRenderer.displayCell(displayHierarchy.levels[0]);
+
+          // First pass: display alternative cells (so they render behind selected cells)
+          for (let i = 1; i < displayHierarchy.levels.length; i++) {
+            const level = displayHierarchy.levels[i];
+            if (level.alternativeCells) {
+              const altColor = GUISetup.ALTERNATIVE_COLORS[i % GUISetup.ALTERNATIVE_COLORS.length];
+              for (const altCell of level.alternativeCells) {
+                this.octahedronRenderer.displayParentCell(altCell, altColor);
+              }
+            }
+          }
+
+          // Second pass: display selected parent cells (so they render on top)
+          for (let i = 1; i < displayHierarchy.levels.length; i++) {
+            const level = displayHierarchy.levels[i];
+            const color = GUISetup.LEVEL_COLORS[i % GUISetup.LEVEL_COLORS.length];
+            this.octahedronRenderer.displayParentCell(level, color);
+          }
+        }
       }
     }
   }
