@@ -4,15 +4,22 @@ import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { ISEA3HCellDisplayInfo } from './ISEA3HEncoding';
 import {
-  projectToSphereSnyder,
-  interpolateGreatArcSnyder,
+  ProjectionMode,
+  setProjectionMode,
+  getProjectionMode,
+  projectToSphere as projectToSphereAPI,
+  interpolateGreatArc as interpolateGreatArcAPI,
 } from './ISEA3HSnyderProjection';
+
+// Re-export ProjectionMode for convenience
+export { ProjectionMode } from './ISEA3HSnyderProjection';
 
 export interface GUIParams {
   showFaces: boolean;
   showWireframe: boolean;
   showVertices: boolean;
   sphereMode: boolean;
+  projectionMode: ProjectionMode;
 }
 
 // Number of segments to subdivide great arcs
@@ -172,10 +179,11 @@ export class OctahedronRenderer {
   private hoverNeighborMarkers: Line2[] = [];
   private hoverBarycenterMarker: Line2 | null = null;
 
-  // Snyder projection debug visualization
-  private snyderDebugOctPoints: THREE.Points | null = null;
-  private snyderDebugSpherePoints: THREE.Points | null = null;
-  private snyderDebugLines: THREE.LineSegments | null = null;
+  // Projection debug visualization
+  private projectionDebugOctPoints: THREE.Points | null = null;
+  private projectionDebugSpherePoints: THREE.Points | null = null;
+  private projectionDebugLines: THREE.LineSegments | null = null;
+  private projectionDebugSubdivisions: number = 0; // 0 means debug is disabled
 
   // Octahedron vertices
   public readonly vertices: THREE.Vector3[] = [
@@ -211,6 +219,7 @@ export class OctahedronRenderer {
    */
   build(params: GUIParams): void {
     this.sphereMode = params.sphereMode;
+    setProjectionMode(params.projectionMode);
 
     this.buildOctahedronMesh();
     this.buildWireframe();
@@ -273,17 +282,52 @@ export class OctahedronRenderer {
   }
 
   /**
+   * Updates the projection mode (Snyder or normalization).
+   * Rebuilds visualizations that depend on the projection.
+   */
+  updateProjectionMode(mode: ProjectionMode): void {
+    setProjectionMode(mode);
+
+    // Rebuild the sphere wireframe with the new projection
+    const existingWireframe = this.sphereWireframeMesh;
+    if (existingWireframe) {
+      const wasVisible = existingWireframe.visible;
+      existingWireframe.geometry.dispose();
+      (existingWireframe.material as THREE.Material).dispose();
+      this.scene.remove(existingWireframe);
+      this.sphereWireframeMesh = null;
+      this.buildSphereWireframe();
+      // buildSphereWireframe() sets this.sphereWireframeMesh
+      if (this.sphereWireframeMesh !== null) {
+        (this.sphereWireframeMesh as THREE.LineSegments).visible = wasVisible;
+      }
+    }
+
+    // Refresh projection debug if it was enabled
+    if (this.projectionDebugSubdivisions > 0) {
+      this.displayProjectionDebug(this.projectionDebugSubdivisions);
+    }
+  }
+
+  /**
+   * Gets the current projection mode.
+   */
+  getProjectionMode(): ProjectionMode {
+    return getProjectionMode();
+  }
+
+  /**
    * Projects a point from the octahedron surface onto the unit sphere
-   * using the Snyder equal-area projection.
+   * using the current projection mode (Snyder or normalization).
    */
   private projectToSphere(point: THREE.Vector3, offset: number = 0): THREE.Vector3 {
-    return projectToSphereSnyder(point, offset);
+    return projectToSphereAPI(point, offset);
   }
 
   /**
    * Interpolates along a great arc between two points.
    * The input points are on the octahedron surface and are projected
-   * to the sphere using the Snyder equal-area projection.
+   * to the sphere using the current projection mode.
    * Returns an array of points along the arc on the sphere.
    */
   private interpolateGreatArc(
@@ -292,7 +336,7 @@ export class OctahedronRenderer {
     segments: number,
     offset: number = 0
   ): THREE.Vector3[] {
-    return interpolateGreatArcSnyder(start, end, segments, offset);
+    return interpolateGreatArcAPI(start, end, segments, offset);
   }
 
   /**
@@ -796,12 +840,13 @@ export class OctahedronRenderer {
   }
 
   /**
-   * Displays debug visualization for the Snyder projection.
+   * Displays debug visualization for the current projection mode.
    * Samples points regularly on the octahedron and shows their projection on the sphere.
    * @param subdivisions Number of subdivisions per edge of each octahedron face
    */
-  displaySnyderDebug(subdivisions: number = 10): void {
-    this.clearSnyderDebug();
+  displayProjectionDebug(subdivisions: number = 10): void {
+    this.clearProjectionDebug();
+    this.projectionDebugSubdivisions = subdivisions;
 
     const octPoints: THREE.Vector3[] = [];
     const octPointsOffset: THREE.Vector3[] = [];
@@ -842,7 +887,7 @@ export class OctahedronRenderer {
           // Offset point along face normal
           const octPointWithOffset = octPoint.clone().addScaledVector(faceNormal, OCT_POINT_OFFSET);
 
-          // Project to sphere using Snyder projection
+          // Project to sphere using current projection mode
           const spherePoint = this.projectToSphere(octPoint, SPHERE_LINE_OFFSET);
 
           octPoints.push(octPoint);
@@ -872,8 +917,8 @@ export class OctahedronRenderer {
       sizeAttenuation: true,
     });
 
-    this.snyderDebugOctPoints = new THREE.Points(octPointsGeometry, octPointsMaterial);
-    this.scene.add(this.snyderDebugOctPoints);
+    this.projectionDebugOctPoints = new THREE.Points(octPointsGeometry, octPointsMaterial);
+    this.scene.add(this.projectionDebugOctPoints);
 
     // Create points on sphere (projected positions)
     const spherePointsGeometry = new THREE.BufferGeometry();
@@ -891,8 +936,8 @@ export class OctahedronRenderer {
       sizeAttenuation: true,
     });
 
-    this.snyderDebugSpherePoints = new THREE.Points(spherePointsGeometry, spherePointsMaterial);
-    this.scene.add(this.snyderDebugSpherePoints);
+    this.projectionDebugSpherePoints = new THREE.Points(spherePointsGeometry, spherePointsMaterial);
+    this.scene.add(this.projectionDebugSpherePoints);
 
     // Create lines connecting octahedron points to their projections
     const linesGeometry = new THREE.BufferGeometry();
@@ -904,36 +949,52 @@ export class OctahedronRenderer {
       opacity: 0.3,
     });
 
-    this.snyderDebugLines = new THREE.LineSegments(linesGeometry, linesMaterial);
-    this.scene.add(this.snyderDebugLines);
+    this.projectionDebugLines = new THREE.LineSegments(linesGeometry, linesMaterial);
+    this.scene.add(this.projectionDebugLines);
 
-    console.log(`Snyder debug: ${spherePoints.length} points sampled`);
+    console.log(`Projection debug (${getProjectionMode()}): ${spherePoints.length} points sampled`);
   }
 
   /**
-   * Clears the Snyder projection debug visualization.
+   * Clears the projection debug visualization.
    */
-  clearSnyderDebug(): void {
-    if (this.snyderDebugOctPoints) {
-      this.snyderDebugOctPoints.geometry.dispose();
-      (this.snyderDebugOctPoints.material as THREE.Material).dispose();
-      this.scene.remove(this.snyderDebugOctPoints);
-      this.snyderDebugOctPoints = null;
+  clearProjectionDebug(): void {
+    this.projectionDebugSubdivisions = 0;
+
+    if (this.projectionDebugOctPoints) {
+      this.projectionDebugOctPoints.geometry.dispose();
+      (this.projectionDebugOctPoints.material as THREE.Material).dispose();
+      this.scene.remove(this.projectionDebugOctPoints);
+      this.projectionDebugOctPoints = null;
     }
 
-    if (this.snyderDebugSpherePoints) {
-      this.snyderDebugSpherePoints.geometry.dispose();
-      (this.snyderDebugSpherePoints.material as THREE.Material).dispose();
-      this.scene.remove(this.snyderDebugSpherePoints);
-      this.snyderDebugSpherePoints = null;
+    if (this.projectionDebugSpherePoints) {
+      this.projectionDebugSpherePoints.geometry.dispose();
+      (this.projectionDebugSpherePoints.material as THREE.Material).dispose();
+      this.scene.remove(this.projectionDebugSpherePoints);
+      this.projectionDebugSpherePoints = null;
     }
 
-    if (this.snyderDebugLines) {
-      this.snyderDebugLines.geometry.dispose();
-      (this.snyderDebugLines.material as THREE.Material).dispose();
-      this.scene.remove(this.snyderDebugLines);
-      this.snyderDebugLines = null;
+    if (this.projectionDebugLines) {
+      this.projectionDebugLines.geometry.dispose();
+      (this.projectionDebugLines.material as THREE.Material).dispose();
+      this.scene.remove(this.projectionDebugLines);
+      this.projectionDebugLines = null;
     }
+  }
+
+  /**
+   * Checks if projection debug is currently enabled.
+   */
+  isProjectionDebugEnabled(): boolean {
+    return this.projectionDebugSubdivisions > 0;
+  }
+
+  /**
+   * Gets the current projection debug subdivisions setting.
+   */
+  getProjectionDebugSubdivisions(): number {
+    return this.projectionDebugSubdivisions;
   }
 
   /**
@@ -942,7 +1003,7 @@ export class OctahedronRenderer {
   dispose(): void {
     this.clearHoverDisplay();
     this.clearCellDisplay();
-    this.clearSnyderDebug();
+    this.clearProjectionDebug();
 
     if (this.octahedronMesh) {
       this.octahedronMesh.geometry.dispose();

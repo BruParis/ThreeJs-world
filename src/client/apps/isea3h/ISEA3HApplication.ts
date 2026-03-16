@@ -19,6 +19,7 @@ export class ISEA3HApplication implements TabApplication {
     showWireframe: true,
     showVertices: true,
     sphereMode: true,
+    projectionMode: 'snyder',
   };
 
   private initialized = false;

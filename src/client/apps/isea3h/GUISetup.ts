@@ -1,6 +1,7 @@
 import { GUI } from 'dat.gui';
 import { OctahedronRenderer, GUIParams } from './OctahedronRenderer';
 import { InteractionHandler } from './InteractionHandler';
+import { ProjectionMode } from './ISEA3HSnyderProjection';
 import {
   ISEA3HCell,
   computeISEA3HCell,
@@ -50,9 +51,24 @@ export class GUISetup {
       .name('Sphere Mode')
       .onChange((value: boolean) => {
         octahedronRenderer.updateSphereMode(value);
-        // Refresh cell display if there's a current cell
+        // Clear hover display and refresh cell display
+        octahedronRenderer.clearHoverDisplay();
         this.refreshCellDisplay();
       });
+
+    // Projection mode dropdown
+    const projectionModeState = { projectionMode: params.projectionMode };
+    viewFolder
+      .add(projectionModeState, 'projectionMode', ['snyder', 'normalization'] as ProjectionMode[])
+      .name('Projection')
+      .onChange((value: ProjectionMode) => {
+        params.projectionMode = value;
+        octahedronRenderer.updateProjectionMode(value);
+        // Clear hover display and refresh cell display
+        octahedronRenderer.clearHoverDisplay();
+        this.refreshCellDisplay();
+      });
+
     viewFolder
       .add(params, 'showFaces')
       .name('Show Faces')
@@ -172,7 +188,7 @@ export class GUISetup {
     };
 
     this.hoverFolder
-      .add(hoverState, 'resolutionLevel', 1, 6, 1)
+      .add(hoverState, 'resolutionLevel', 1, 9, 1)
       .name('Resolution Level')
       .onChange((value: number) => {
         this.interactionHandler?.setResolutionLevel(value);
@@ -203,7 +219,7 @@ export class GUISetup {
     };
 
     // Input controls
-    this.encodingFolder.add(encodingState, 'n', 1, 6, 1).name('Level (n)');
+    this.encodingFolder.add(encodingState, 'n', 1, 9, 1).name('Level (n)');
     this.encodingFolder.add(encodingState, 'abc').name('a, b, c');
 
     // Action buttons
@@ -231,27 +247,27 @@ export class GUISetup {
     const debugFolder = this.gui.addFolder('Debug');
 
     const debugState = {
-      showSnyderProjection: false,
-      snyderSubdivisions: 10,
+      showProjectionDebug: false,
+      projectionSubdivisions: 10,
     };
 
     debugFolder
-      .add(debugState, 'showSnyderProjection')
-      .name('Snyder Projection')
+      .add(debugState, 'showProjectionDebug')
+      .name('Projection Debug')
       .onChange((value: boolean) => {
         if (value) {
-          this.octahedronRenderer.displaySnyderDebug(debugState.snyderSubdivisions);
+          this.octahedronRenderer.displayProjectionDebug(debugState.projectionSubdivisions);
         } else {
-          this.octahedronRenderer.clearSnyderDebug();
+          this.octahedronRenderer.clearProjectionDebug();
         }
       });
 
     debugFolder
-      .add(debugState, 'snyderSubdivisions', 2, 30, 1)
+      .add(debugState, 'projectionSubdivisions', 2, 30, 1)
       .name('Subdivisions')
       .onChange((value: number) => {
-        if (debugState.showSnyderProjection) {
-          this.octahedronRenderer.displaySnyderDebug(value);
+        if (debugState.showProjectionDebug) {
+          this.octahedronRenderer.displayProjectionDebug(value);
         }
       });
 

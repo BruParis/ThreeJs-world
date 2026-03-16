@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { OctahedronRenderer } from './OctahedronRenderer';
-import { sphereToOctahedron } from './ISEA3HSnyderProjection';
+import { projectToOctahedron } from './ISEA3HSnyderProjection';
 import {
   ISEA3HCell,
   computeDisplayHierarchy,
@@ -193,9 +193,10 @@ export class InteractionHandler {
   /**
    * Sets the resolution level for coordinate computation.
    * Minimum is 1 (resolution 0 doesn't display hexagons).
+   * Maximum is 9.
    */
   setResolutionLevel(n: number): void {
-    this.resolutionLevel = Math.max(1, Math.min(6, Math.round(n)));
+    this.resolutionLevel = Math.max(1, Math.min(9, Math.round(n)));
   }
 
   /**
@@ -273,10 +274,10 @@ export class InteractionHandler {
       const hitPoint = intersects[0].point.clone();
 
       // Convert to octahedron coordinates
-      // In sphere mode, project sphere point to octahedron
+      // In sphere mode, project sphere point to octahedron using current projection mode
       // In octahedron mode, the hit point is already on the octahedron
       const octPoint = isSphereMode
-        ? sphereToOctahedron(hitPoint)
+        ? projectToOctahedron(hitPoint)
         : this.normalizeToOctahedron(hitPoint);
 
       // Get cell at current resolution level
@@ -362,30 +363,30 @@ export class InteractionHandler {
     // Clear previous hover display
     this.octahedronRenderer.clearHoverDisplay();
 
-    // Colors indexed by resolution level (1-7)
-    const selectedColors: { [key: number]: number } = {
-      1: 0xff0000, // Level 1 - red
-      2: 0xff8800, // Level 2 - orange
-      3: 0xffff00, // Level 3 - yellow
-      4: 0x00ff00, // Level 4 - green
-      5: 0x00ffff, // Level 5 - cyan
-      6: 0x0088ff, // Level 6 - blue
-      7: 0x8800ff, // Level 7 - purple
-    };
+    // Colors indexed by resolution level
+    const selectedColorsArray = [
+      0xff0000, // Level 1 - red
+      0xff8800, // Level 2 - orange
+      0xffff00, // Level 3 - yellow
+      0x00ff00, // Level 4 - green
+      0x00ffff, // Level 5 - cyan
+      0x0088ff, // Level 6 - blue
+      0x8800ff, // Level 7 - purple
+    ];
 
     // Dimmer colors for alternative (non-selected) cells
-    const alternativeColors: { [key: number]: number } = {
-      1: 0x660000, // Level 1 - dim red
-      2: 0x664400, // Level 2 - dim orange
-      3: 0x666600, // Level 3 - dim yellow
-      4: 0x006600, // Level 4 - dim green
-      5: 0x006666, // Level 5 - dim cyan
-      6: 0x004466, // Level 6 - dim blue
-      7: 0x440066, // Level 7 - dim purple
-    };
+    const alternativeColorsArray = [
+      0x660000, // Level 1 - dim red
+      0x664400, // Level 2 - dim orange
+      0x666600, // Level 3 - dim yellow
+      0x006600, // Level 4 - dim green
+      0x006666, // Level 5 - dim cyan
+      0x004466, // Level 6 - dim blue
+      0x440066, // Level 7 - dim purple
+    ];
 
-    const getSelectedColor = (n: number) => selectedColors[n] || 0xffffff;
-    const getAlternativeColor = (n: number) => alternativeColors[n] || 0x666666;
+    const getSelectedColor = (n: number) => selectedColorsArray[(n - 1) % selectedColorsArray.length];
+    const getAlternativeColor = (n: number) => alternativeColorsArray[(n - 1) % alternativeColorsArray.length];
 
     // First pass: display alternative cells (so they render behind selected cells)
     for (const level of hierarchy.levels) {
