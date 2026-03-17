@@ -1,5 +1,3 @@
-import * as THREE from 'three';
-
 /**
  * ISEA3H cell encoding represented by resolution level and triplet coordinates.
  */
@@ -15,7 +13,6 @@ export interface ISEA3HCell {
  */
 export interface ISEA3HCellResult {
   cell: ISEA3HCell;
-  barycenter: THREE.Vector3;
   isSquareCell: boolean;
   isValid: boolean;
   validationMessage: string;
@@ -23,14 +20,14 @@ export interface ISEA3HCellResult {
 
 /**
  * Display info for a single cell in the hierarchy.
+ * All positions are represented as ISEA3HCell encodings.
  */
 export interface ISEA3HCellDisplayInfo {
   cell: ISEA3HCell;
-  barycenter: THREE.Vector3;
   isSquareCell: boolean;
-  cellVertices: THREE.Vector3[];  // Vertices of the hexagon/square (from central child's neighbors)
-  neighborBarycenters: THREE.Vector3[];  // For debug display
-  isSelected: boolean;  // True if this is the cell that encloses the original point
+  cellVertexCells: ISEA3HCell[];  // Cells whose barycenters form the hexagon/square vertices
+  neighborCells: ISEA3HCell[];    // Neighbor cells for debug display
+  isSelected: boolean;            // True if this is the cell that encloses the original point
   alternativeCells?: ISEA3HCellDisplayInfo[];  // Other parent cells to display (when not central child)
 }
 
@@ -50,6 +47,7 @@ function pow3(k: number): number {
 
 /**
  * Gets the normalization factor for a given resolution level.
+ * n acts as a scaling factor:
  * - If n is even: 3^(n/2)
  * - If n is odd: 3^((n+1)/2)
  */
@@ -116,19 +114,6 @@ export function isSquareCell(cell: ISEA3HCell): boolean {
 
   // A square cell has one coordinate equal to ±normFactor (and others = 0)
   return Math.abs(a) === normFactor || Math.abs(b) === normFactor || Math.abs(c) === normFactor;
-}
-
-/**
- * Computes the barycenter position from cell coordinates.
- * The barycenter is at (a, b, c) / normFactor, normalized to the unit octahedron.
- */
-export function computeBarycenter(cell: ISEA3HCell): THREE.Vector3 {
-  const normFactor = getNormalizationFactor(cell.n);
-  return new THREE.Vector3(
-    cell.a / normFactor,
-    cell.b / normFactor,
-    cell.c / normFactor
-  );
 }
 
 /**
@@ -339,45 +324,6 @@ export function getParentCell(cell: ISEA3HCell): ISEA3HCell | null {
 }
 
 /**
- * Gets a central cell from which we can go up to parent level.
- * If the cell is already central, returns itself.
- * Otherwise, finds the closest neighboring central cell (Rule 6).
- */
-export function getCentralCellForParent(cell: ISEA3HCell): ISEA3HCell {
-  if (isCentralChild(cell)) {
-    return cell;
-  }
-
-  // Find the closest neighboring cell that is central
-  const neighbors = getNeighbors(cell);
-
-  const cellBarycenter = computeBarycenter(cell);
-
-  let closestCentral: ISEA3HCell | null = null;
-  let closestDistance = Infinity;
-
-  for (const neighbor of neighbors) {
-    if (isCentralChild(neighbor)) {
-      const neighborBarycenter = computeBarycenter(neighbor);
-      const distance = cellBarycenter.distanceTo(neighborBarycenter);
-
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestCentral = neighbor;
-      }
-    }
-  }
-
-  if (closestCentral) {
-    return closestCentral;
-  }
-
-  // Fallback: return the original cell (shouldn't happen with valid encoding)
-  console.warn('Could not find central neighbor for cell:', cell);
-  return cell;
-}
-
-/**
  * Gets the central child of a cell (at level n+1).
  * The central child is the child cell that has the same barycenter direction as the parent.
  */
@@ -394,7 +340,7 @@ export function getCentralChild(cell: ISEA3HCell): ISEA3HCell {
 }
 
 /**
- * Computes the intrinsic ISEA3H cell info (no neighbors).
+ * Computes the intrinsic ISEA3H cell info (encoding only).
  */
 export function computeISEA3HCell(cell: ISEA3HCell): ISEA3HCellResult {
   const validation = validateISEA3HCell(cell);
@@ -402,19 +348,16 @@ export function computeISEA3HCell(cell: ISEA3HCell): ISEA3HCellResult {
   if (!validation.isValid) {
     return {
       cell,
-      barycenter: new THREE.Vector3(),
       isSquareCell: false,
       isValid: false,
       validationMessage: validation.message,
     };
   }
 
-  const barycenter = computeBarycenter(cell);
   const squareCell = isSquareCell(cell);
 
   return {
     cell,
-    barycenter,
     isSquareCell: squareCell,
     isValid: true,
     validationMessage: validation.message,
@@ -428,37 +371,26 @@ export function computeISEA3HCell(cell: ISEA3HCell): ISEA3HCellResult {
  * 1. Get the central child of the original cell (at level n+1)
  * 2. Get the neighbors of that central child (at level n+1)
  * 3. The barycenters of those neighbors are the cell vertices
- * 4. Sort by angle and connect i -> i+1
  *
- * neighborBarycenters are the original cell's neighbors (at level n) for debug display.
+ * neighborCells are the original cell's neighbors (at level n) for debug display.
  */
 function computeCellDisplayInfo(cell: ISEA3HCell, isSelected: boolean): ISEA3HCellDisplayInfo {
-  const barycenter = computeBarycenter(cell);
   const squareCell = isSquareCell(cell);
 
-  // Get the original cell's neighbors (at level n) - for debug display as points
-  const originalNeighbors = getNeighbors(cell);
-  const neighborBarycenters = originalNeighbors.map(n => computeBarycenter(n));
+  // Get the original cell's neighbors (at level n) - for debug display
+  const neighborCells = getNeighbors(cell);
 
   // Get the central child at level n+1
   const centralChild = getCentralChild(cell);
 
   // Get neighbors of central child (at level n+1) - their barycenters are the cell vertices
-  const centralChildNeighbors = getNeighbors(centralChild);
-  const centralChildNeighborBarycenters = centralChildNeighbors.map(n => computeBarycenter(n));
-
-  // Sort vertices by angle for proper polygon rendering
-  const cellVertices = [...centralChildNeighborBarycenters];
-  if (cellVertices.length >= 3) {
-    sortVerticesByAngle(barycenter, cellVertices);
-  }
+  const cellVertexCells = getNeighbors(centralChild);
 
   return {
     cell,
-    barycenter,
     isSquareCell: squareCell,
-    cellVertices,
-    neighborBarycenters,  // Original cell's neighbors for debug
+    cellVertexCells,
+    neighborCells,
     isSelected,
   };
 }
@@ -488,79 +420,23 @@ function getAllParentCellsFromCentralNeighbors(cell: ISEA3HCell): ISEA3HCell[] {
 }
 
 /**
- * Finds the parent cell that encloses the reference point.
- * Falls back to the closest parent if none enclose the point.
- */
-function findEnclosingParent(
-  parentCells: ISEA3HCell[],
-  referencePoint: THREE.Vector3
-): { selected: ISEA3HCell; alternatives: ISEA3HCell[] } | null {
-  if (parentCells.length === 0) return null;
-
-  let selectedParent: ISEA3HCell | null = null;
-  const alternativeParents: ISEA3HCell[] = [];
-
-  for (const parent of parentCells) {
-    const parentVertices = computeCellVerticesForEnclosure(parent);
-    if (parentVertices.length >= 3 && isPointInPolygon(referencePoint, parentVertices)) {
-      if (!selectedParent) {
-        selectedParent = parent;
-      } else {
-        alternativeParents.push(parent);
-      }
-    } else {
-      alternativeParents.push(parent);
-    }
-  }
-
-  // If no enclosing parent found, use the closest one
-  if (!selectedParent) {
-    let closestDist = Infinity;
-    for (const parent of parentCells) {
-      const dist = computeBarycenter(parent).distanceTo(referencePoint);
-      if (dist < closestDist) {
-        closestDist = dist;
-        selectedParent = parent;
-      }
-    }
-    // Remove selected from alternatives
-    if (selectedParent) {
-      const selectedKey = `${selectedParent.n},${selectedParent.a},${selectedParent.b},${selectedParent.c}`;
-      for (let i = alternativeParents.length - 1; i >= 0; i--) {
-        const key = `${alternativeParents[i].n},${alternativeParents[i].a},${alternativeParents[i].b},${alternativeParents[i].c}`;
-        if (key === selectedKey) {
-          alternativeParents.splice(i, 1);
-        }
-      }
-    }
-  }
-
-  if (!selectedParent) return null;
-
-  return { selected: selectedParent, alternatives: alternativeParents };
-}
-
-/**
  * Computes the display hierarchy for a cell at level n.
  *
  * Algorithm:
  * 1. Start at level n, get the central child at n+1
  * 2. Compute neighbors of central child → these are vertices for level n
  * 3. Go up the hierarchy: for each level, if not central, show ALL parents
- *    of central neighbors, but only select the one that encloses the original
- *    point for continuing up the hierarchy.
+ *    of central neighbors
  *
  * @param cell The cell at level n
- * @param hoverPoint Optional point for choosing closest central neighbor when cell is not central
+ * @param findEnclosingParent Optional callback to find which parent encloses a reference point
+ *        Returns { selected: ISEA3HCell, alternatives: ISEA3HCell[] }
  */
 export function computeDisplayHierarchy(
   cell: ISEA3HCell,
-  hoverPoint?: THREE.Vector3
+  findEnclosingParent?: (parentCells: ISEA3HCell[], currentCell: ISEA3HCell) => { selected: ISEA3HCell; alternatives: ISEA3HCell[] } | null
 ): ISEA3HDisplayHierarchy {
   const levels: ISEA3HCellDisplayInfo[] = [];
-
-  // Store the original reference point for enclosure testing throughout the hierarchy
-  const referencePoint = hoverPoint || computeBarycenter(cell);
 
   // Push first level (the input cell)
   levels.push(computeCellDisplayInfo(cell, true));
@@ -590,18 +466,36 @@ export function computeDisplayHierarchy(
         break;
       }
 
-      // Find which parent encloses the reference point
-      const result = findEnclosingParent(parentCells, referencePoint);
-      if (!result) break;
-
-      nextCell = result.selected;
-      nextDisplayInfo = computeCellDisplayInfo(nextCell, true);
-
-      // Add alternative parents for display
-      if (result.alternatives.length > 0) {
-        nextDisplayInfo.alternativeCells = result.alternatives.map(p =>
-          computeCellDisplayInfo(p, false)
-        );
+      // Use callback to find which parent encloses the reference point
+      if (findEnclosingParent) {
+        const result = findEnclosingParent(parentCells, currentCell);
+        if (!result) {
+          // Fallback: use first parent
+          nextCell = parentCells[0];
+          nextDisplayInfo = computeCellDisplayInfo(nextCell, true);
+          if (parentCells.length > 1) {
+            nextDisplayInfo.alternativeCells = parentCells.slice(1).map(p =>
+              computeCellDisplayInfo(p, false)
+            );
+          }
+        } else {
+          nextCell = result.selected;
+          nextDisplayInfo = computeCellDisplayInfo(nextCell, true);
+          if (result.alternatives.length > 0) {
+            nextDisplayInfo.alternativeCells = result.alternatives.map(p =>
+              computeCellDisplayInfo(p, false)
+            );
+          }
+        }
+      } else {
+        // No callback - just use first parent and show others as alternatives
+        nextCell = parentCells[0];
+        nextDisplayInfo = computeCellDisplayInfo(nextCell, true);
+        if (parentCells.length > 1) {
+          nextDisplayInfo.alternativeCells = parentCells.slice(1).map(p =>
+            computeCellDisplayInfo(p, false)
+          );
+        }
       }
     }
 
@@ -618,94 +512,29 @@ export function computeDisplayHierarchy(
 }
 
 /**
- * Checks if a point is inside a convex polygon on the octahedron surface.
- * Uses the cross product approach: point is inside if it's on the same side of all edges.
+ * Gets a central cell from which we can go up to parent level.
+ * If the cell is already central, returns itself.
+ * Otherwise, returns the first central neighbor found.
+ *
+ * Note: For geometric proximity-based selection, use the version in ISEA3HGeometry.
  */
-function isPointInPolygon(point: THREE.Vector3, vertices: THREE.Vector3[]): boolean {
-  if (vertices.length < 3) return false;
+export function getCentralCellForParent(cell: ISEA3HCell): ISEA3HCell {
+  if (isCentralChild(cell)) {
+    return cell;
+  }
 
-  const n = vertices.length;
-  let sign: number | null = null;
+  // Find the first central neighbor
+  const neighbors = getNeighbors(cell);
 
-  for (let i = 0; i < n; i++) {
-    const v1 = vertices[i];
-    const v2 = vertices[(i + 1) % n];
-
-    // Edge vector
-    const edge = new THREE.Vector3().subVectors(v2, v1);
-    // Vector from v1 to point
-    const toPoint = new THREE.Vector3().subVectors(point, v1);
-
-    // Cross product gives the normal direction
-    const cross = new THREE.Vector3().crossVectors(edge, toPoint);
-
-    // Project onto the surface normal (center of polygon, roughly)
-    // We check if the cross products all have the same orientation
-    const crossSign = Math.sign(cross.x + cross.y + cross.z);
-
-    if (crossSign === 0) continue; // Point is on the edge
-
-    if (sign === null) {
-      sign = crossSign;
-    } else if (sign !== crossSign) {
-      return false; // Point is on different sides of edges
+  for (const neighbor of neighbors) {
+    if (isCentralChild(neighbor)) {
+      return neighbor;
     }
   }
 
-  return true;
-}
-
-/**
- * Computes the cell vertices for a given cell (for enclosure testing).
- * Uses the same approach as computeCellDisplayInfo.
- */
-function computeCellVerticesForEnclosure(cell: ISEA3HCell): THREE.Vector3[] {
-  const barycenter = computeBarycenter(cell);
-  const centralChild = getCentralChild(cell);
-  const centralChildNeighbors = getNeighbors(centralChild);
-  const neighborBarycenters = centralChildNeighbors.map(n => computeBarycenter(n));
-
-  if (neighborBarycenters.length < 3) return [];
-
-  const vertices = [...neighborBarycenters];
-  sortVerticesByAngle(barycenter, vertices);
-
-  return vertices;
-}
-
-/**
- * Sorts vertices by angle around the barycenter for proper polygon rendering.
- */
-function sortVerticesByAngle(center: THREE.Vector3, vertices: THREE.Vector3[]): void {
-  // Project to a local 2D coordinate system on the octahedron surface
-  // Use the normal at the center point
-  const normal = center.clone().normalize();
-
-  // Create a local coordinate system
-  let tangent: THREE.Vector3;
-  if (Math.abs(normal.x) < 0.9) {
-    tangent = new THREE.Vector3(1, 0, 0).cross(normal).normalize();
-  } else {
-    tangent = new THREE.Vector3(0, 1, 0).cross(normal).normalize();
-  }
-  const bitangent = normal.clone().cross(tangent).normalize();
-
-  // Compute angle for each vertex
-  const verticesWithAngles = vertices.map(v => {
-    const localVec = v.clone().sub(center);
-    const x = localVec.dot(tangent);
-    const y = localVec.dot(bitangent);
-    const angle = Math.atan2(y, x);
-    return { vertex: v, angle };
-  });
-
-  // Sort by angle
-  verticesWithAngles.sort((a, b) => a.angle - b.angle);
-
-  // Replace vertices in sorted order
-  for (let i = 0; i < vertices.length; i++) {
-    vertices[i] = verticesWithAngles[i].vertex;
-  }
+  // Fallback: return the original cell (shouldn't happen with valid encoding)
+  console.warn('Could not find central neighbor for cell:', cell);
+  return cell;
 }
 
 /**
@@ -713,4 +542,18 @@ function sortVerticesByAngle(center: THREE.Vector3, vertices: THREE.Vector3[]): 
  */
 export function formatCell(cell: ISEA3HCell): string {
   return `n=${cell.n}, (${cell.a}, ${cell.b}, ${cell.c})`;
+}
+
+/**
+ * Creates a unique key string for a cell.
+ */
+export function cellKey(cell: ISEA3HCell): string {
+  return `${cell.n},${cell.a},${cell.b},${cell.c}`;
+}
+
+/**
+ * Checks if two cells are equal.
+ */
+export function cellsEqual(cell1: ISEA3HCell, cell2: ISEA3HCell): boolean {
+  return cell1.n === cell2.n && cell1.a === cell2.a && cell1.b === cell2.b && cell1.c === cell2.c;
 }

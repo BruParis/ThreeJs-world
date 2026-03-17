@@ -4,11 +4,21 @@ import { OctahedronRenderer } from './OctahedronRenderer';
 import { projectToOctahedron } from './ISEA3HSnyderProjection';
 import {
   ISEA3HCell,
+  ISEA3HCellDisplayInfo,
   computeDisplayHierarchy,
   ISEA3HDisplayHierarchy,
   getNormalizationFactor,
   isCentralChild,
+  getCentralChild,
+  getNeighbors,
+  isSquareCell as checkSquareCell,
 } from './ISEA3HEncoding';
+import {
+  computeBarycenter,
+  computeCellVertices,
+  computeNeighborBarycenters,
+  isPointInPolygon,
+} from './ISEA3HGeometry';
 
 /**
  * Rounds a value to the nearest integer whose absolute value has a specific residue modulo 3.
@@ -283,8 +293,13 @@ export class InteractionHandler {
       // Get cell at current resolution level
       const cell = octahedronPointToCell(octPoint, this.resolutionLevel);
 
-      // Compute the display hierarchy with hover point for choosing central neighbors
-      const displayHierarchy = computeDisplayHierarchy(cell, octPoint);
+      // Create callback for finding enclosing parent using geometric point-in-polygon test
+      const findEnclosingParent = (parentCells: ISEA3HCell[], _currentCell: ISEA3HCell) => {
+        return this.findEnclosingParentCell(parentCells, octPoint);
+      };
+
+      // Compute the display hierarchy with callback for choosing central neighbors
+      const displayHierarchy = computeDisplayHierarchy(cell, findEnclosingParent);
 
       // Compute and display the cells
       this.displayCellInfo(hitPoint, displayHierarchy);
@@ -410,12 +425,77 @@ export class InteractionHandler {
 
       // Display barycenter and neighbor barycenters for the current resolution level (first cell)
       if (i === 0) {
-        this.octahedronRenderer.displayHoverBarycenter(level.barycenter, 0xffff00);
-        if (level.neighborBarycenters.length > 0) {
-          this.octahedronRenderer.displayHoverNeighborBarycenters(level.neighborBarycenters, 0xff00ff);
+        const barycenter = computeBarycenter(level.cell);
+        this.octahedronRenderer.displayHoverBarycenter(barycenter, 0xffff00);
+        if (level.neighborCells.length > 0) {
+          const neighborBarycenters = computeNeighborBarycenters(level);
+          this.octahedronRenderer.displayHoverNeighborBarycenters(neighborBarycenters, 0xff00ff);
         }
       }
     }
+  }
+
+  /**
+   * Finds the parent cell that encloses the reference point.
+   * Falls back to the closest parent if none enclose the point.
+   */
+  private findEnclosingParentCell(
+    parentCells: ISEA3HCell[],
+    referencePoint: THREE.Vector3
+  ): { selected: ISEA3HCell; alternatives: ISEA3HCell[] } | null {
+    if (parentCells.length === 0) return null;
+
+    let selectedParent: ISEA3HCell | null = null;
+    const alternativeParents: ISEA3HCell[] = [];
+
+    for (const parent of parentCells) {
+      // Get display info to compute vertices
+      const centralChild = getCentralChild(parent);
+      const displayInfo: ISEA3HCellDisplayInfo = {
+        cell: parent,
+        isSquareCell: checkSquareCell(parent),
+        cellVertexCells: getNeighbors(centralChild),
+        neighborCells: [],
+        isSelected: false,
+      };
+
+      const parentVertices = computeCellVertices(displayInfo);
+      if (parentVertices.length >= 3 && isPointInPolygon(referencePoint, parentVertices)) {
+        if (!selectedParent) {
+          selectedParent = parent;
+        } else {
+          alternativeParents.push(parent);
+        }
+      } else {
+        alternativeParents.push(parent);
+      }
+    }
+
+    // If no enclosing parent found, use the closest one
+    if (!selectedParent) {
+      let closestDist = Infinity;
+      for (const parent of parentCells) {
+        const dist = computeBarycenter(parent).distanceTo(referencePoint);
+        if (dist < closestDist) {
+          closestDist = dist;
+          selectedParent = parent;
+        }
+      }
+      // Remove selected from alternatives
+      if (selectedParent) {
+        const selectedKey = `${selectedParent.n},${selectedParent.a},${selectedParent.b},${selectedParent.c}`;
+        for (let i = alternativeParents.length - 1; i >= 0; i--) {
+          const key = `${alternativeParents[i].n},${alternativeParents[i].a},${alternativeParents[i].b},${alternativeParents[i].c}`;
+          if (key === selectedKey) {
+            alternativeParents.splice(i, 1);
+          }
+        }
+      }
+    }
+
+    if (!selectedParent) return null;
+
+    return { selected: selectedParent, alternatives: alternativeParents };
   }
 
   /**

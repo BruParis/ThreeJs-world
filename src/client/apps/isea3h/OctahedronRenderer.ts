@@ -3,6 +3,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { ISEA3HCellDisplayInfo } from './ISEA3HEncoding';
+import { computeBarycenter, computeCellVertices, computeNeighborBarycenters } from './ISEA3HGeometry';
 import {
   ProjectionMode,
   setProjectionMode,
@@ -282,7 +283,7 @@ export class OctahedronRenderer {
   }
 
   /**
-   * Updates the projection mode (Snyder or normalization).
+   * Updates the projection mode (Snyder, normalization, or interpolation).
    * Rebuilds visualizations that depend on the projection.
    */
   updateProjectionMode(mode: ProjectionMode): void {
@@ -542,22 +543,30 @@ export class OctahedronRenderer {
   displayCell(displayInfo: ISEA3HCellDisplayInfo): void {
     this.clearCellDisplay();
 
+    // Compute geometric positions from encoding
+    const barycenter = computeBarycenter(displayInfo.cell);
+    const cellVertices = computeCellVertices(displayInfo);
+    const neighborBarycenters = computeNeighborBarycenters(displayInfo);
+
     // Display barycenter (yellow to distinguish from red octahedron vertices)
-    this.displayBarycenter(displayInfo.barycenter, 0xffff00, 0.08);
+    this.displayBarycenter(barycenter, 0xffff00, 0.08);
 
     // Display neighbor barycenters
-    this.displayNeighborMarkers(displayInfo.neighborBarycenters);
+    this.displayNeighborMarkers(neighborBarycenters);
 
     // Display cell outline
-    this.displayCellOutline(displayInfo.cellVertices, 0x00ff00);
+    this.displayCellOutline(cellVertices, 0x00ff00);
   }
 
   /**
    * Displays a cell at a higher level (parent) with different styling.
    */
   displayParentCell(displayInfo: ISEA3HCellDisplayInfo, color: number = 0xffff00): void {
+    // Compute geometric positions from encoding
+    const cellVertices = computeCellVertices(displayInfo);
+
     // Create parent outline with different color
-    const outline = this.createCellOutline(displayInfo.cellVertices, color);
+    const outline = this.createCellOutline(cellVertices, color);
     if (outline) {
       this.parentCellOutlines.push(outline);
     }
@@ -726,9 +735,11 @@ export class OctahedronRenderer {
    * Displays a hover cell outline.
    */
   displayHoverCell(displayInfo: ISEA3HCellDisplayInfo, color: number): void {
-    if (displayInfo.cellVertices.length < 3) return;
+    // Compute geometric positions from encoding
+    const cellVertices = computeCellVertices(displayInfo);
+    if (cellVertices.length < 3) return;
 
-    const outline = this.createCellOutline(displayInfo.cellVertices, color);
+    const outline = this.createCellOutline(cellVertices, color);
     if (outline) {
       this.hoverCellOutlines.push(outline);
     }

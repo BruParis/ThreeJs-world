@@ -3,17 +3,18 @@
  *
  * The ISEA3H octahedron has vertices at (±1,0,0), (0,±1,0), (0,0,±1).
  * This module provides functions to convert between octahedron surface
- * coordinates (from ISEA3H a,b,c encoding) and sphere coordinates using
- * either:
+ * coordinates (from ISEA3H a,b,c encoding) and sphere coordinates using:
+ *
  * - Snyder equal-area projection (preserves area)
  * - Simple normalization (L1 for sphere→octahedron, L2 for octahedron→sphere)
+ * - Interpolation (symmetric slerp-based approach)
  */
 
 import * as THREE from 'three';
 
 // ─── Projection Mode ─────────────────────────────────────────────────────────
 
-export type ProjectionMode = 'snyder' | 'normalization';
+export type ProjectionMode = 'snyder' | 'normalization' | 'interpolation';
 
 // Default projection mode
 let currentProjectionMode: ProjectionMode = 'snyder';
@@ -25,9 +26,7 @@ export function setProjectionMode(mode: ProjectionMode): void {
   currentProjectionMode = mode;
 }
 
-/**
- * Gets the current projection mode.
- */
+/** Gets the current projection mode. */
 export function getProjectionMode(): ProjectionMode {
   return currentProjectionMode;
 }
@@ -162,20 +161,10 @@ function octahedronPointToBarycentric(
   // - v1's component gives β1
   // - v2's component gives β2
 
-  const { v0, v1, v2 } = face;
-
   // Find which component each vertex contributes
-  const beta0 = Math.abs(p[0]) * Math.abs(v0[0]) +
-                Math.abs(p[1]) * Math.abs(v0[1]) +
-                Math.abs(p[2]) * Math.abs(v0[2]);
-
-  const beta1 = Math.abs(p[0]) * Math.abs(v1[0]) +
-                Math.abs(p[1]) * Math.abs(v1[1]) +
-                Math.abs(p[2]) * Math.abs(v1[2]);
-
-  const beta2 = Math.abs(p[0]) * Math.abs(v2[0]) +
-                Math.abs(p[1]) * Math.abs(v2[1]) +
-                Math.abs(p[2]) * Math.abs(v2[2]);
+  const beta0 = p[0]*face.v0[0] + p[1]*face.v0[1] + p[2]*face.v0[2];
+  const beta1 = p[0]*face.v1[0] + p[1]*face.v1[1] + p[2]*face.v1[2];
+  const beta2 = p[0]*face.v2[0] + p[1]*face.v2[1] + p[2]*face.v2[2];
 
   return [beta0, beta1, beta2];
 }
@@ -369,6 +358,187 @@ export function interpolateGreatArcNormalization(
   return points;
 }
 
+// ─── Interpolation Projection ────────────────────────────────────────────────
+
+/**
+ * Spherical linear interpolation between two unit vectors.
+ */
+function slerp(v1: THREE.Vector3, v2: THREE.Vector3, t: number): THREE.Vector3 {
+  // Ensure unit vectors
+  const a = v1.clone().normalize();
+  const b = v2.clone().normalize();
+
+  // Calculate angle between vectors
+  let dot = Math.max(-1, Math.min(1, a.dot(b)));
+
+  // If vectors are nearly identical or opposite, use linear interpolation
+  if (Math.abs(dot) > 0.9999) {
+    const result = a.clone().lerp(b, t);
+    return result.normalize();
+  }
+
+  const angle = Math.acos(dot);
+  const sinAngle = Math.sin(angle);
+
+  const ratioA = Math.sin((1 - t) * angle) / sinAngle;
+  const ratioB = Math.sin(t * angle) / sinAngle;
+
+  return new THREE.Vector3(
+    ratioA * a.x + ratioB * b.x,
+    ratioA * a.y + ratioB * b.y,
+    ratioA * a.z + ratioB * b.z
+  );
+}
+
+/**
+ * Converts a point on the ISEA3H octahedron surface to a point on the unit sphere
+ * using symmetric slerp interpolation.
+ *
+ * Algorithm:
+ * 1. Compute edge interpolation points using slerp at barycentric ratios
+ * 2. From each edge point, slerp toward the opposite vertex
+ * 3. Average and normalize the results
+ *
+ * @param octPoint - Point on the octahedron surface (x, y, z with |x|+|y|+|z| = 1)
+ * @returns Point on the unit sphere
+ */
+export function octahedronToSphereInterpolation(octPoint: THREE.Vector3): THREE.Vector3 {
+  const x = octPoint.x;
+  const y = octPoint.y;
+  const z = octPoint.z;
+
+  // Find which face this point belongs to
+  const faceIndex = findISEA3HFace(x, y, z);
+  const face = ISEA3H_FACES[faceIndex];
+
+  // Normalize the point to ensure it's on the octahedron surface
+  const sum = Math.abs(x) + Math.abs(y) + Math.abs(z);
+  if (sum < 1e-10) {
+    return new THREE.Vector3(0, 0, 1); // Degenerate case
+  }
+
+  // The point on the octahedron surface
+  const octVec: Vec3 = [x / sum, y / sum, z / sum];
+
+  // Get barycentric coordinates (u, v, w) relative to face vertices
+  const bary = octahedronPointToBarycentric(octVec, face);
+  const [u, v, w] = bary;
+
+  // Convert face vertices to THREE.Vector3 (already normalized on unit sphere)
+  const A = new THREE.Vector3(face.v0[0], face.v0[1], face.v0[2]);
+  const B = new THREE.Vector3(face.v1[0], face.v1[1], face.v1[2]);
+  const C = new THREE.Vector3(face.v2[0], face.v2[1], face.v2[2]);
+
+  // Handle edge cases where barycentric coordinates sum to zero in denominator
+  const eps = 1e-10;
+
+  // Step 1: Compute edge interpolation points
+  // D_BC -- point on edge BC
+  const vw = v + w;
+  const D_BC = vw > eps ? slerp(B, C, w / vw) : A.clone();
+
+  // D_AC -- point on edge AC
+  const uw = u + w;
+  const D_CA = uw > eps ? slerp(C, A, u / uw) : B.clone();
+
+  // D_AB -- point on edge AB
+  const uv = u + v;
+  const D_AB = uv > eps ? slerp(A, B, v / uv) : C.clone();
+
+  // Step 2: From each edge point, slerp toward opposite vertex
+  const P_A = slerp(D_BC, A, u);
+  const P_B = slerp(D_CA, B, v);
+  const P_C = slerp(D_AB, C, w);
+
+  // Step 3: Average and normalize
+  const result = new THREE.Vector3(
+    P_A.x + P_B.x + P_C.x,
+    P_A.y + P_B.y + P_C.y,
+    P_A.z + P_B.z + P_C.z
+  );
+
+  return result.normalize();
+}
+
+/**
+ * Converts a point on the unit sphere to a point on the ISEA3H octahedron surface
+ * using inverse interpolation (approximation via L1 normalization).
+ *
+ * Note: The exact inverse of the interpolation projection is complex.
+ * We use L1 normalization as a reasonable approximation.
+ *
+ * @param spherePoint - Point on the unit sphere
+ * @returns Point on the octahedron surface (|x| + |y| + |z| = 1)
+ */
+export function sphereToOctahedronInterpolation(spherePoint: THREE.Vector3): THREE.Vector3 {
+  // Use L1 normalization as approximation for inverse
+  return sphereToOctahedronNormalization(spherePoint);
+}
+
+/**
+ * Projects a point onto the sphere using interpolation, with optional offset.
+ */
+export function projectToSphereInterpolation(
+  octPoint: THREE.Vector3,
+  offset: number = 0
+): THREE.Vector3 {
+  const spherePoint = octahedronToSphereInterpolation(octPoint);
+
+  if (offset !== 0) {
+    spherePoint.multiplyScalar(1 + offset);
+  }
+
+  return spherePoint;
+}
+
+/**
+ * Interpolates along a great arc between two points on the sphere.
+ * Uses interpolation projection for octahedron-to-sphere conversion.
+ */
+export function interpolateGreatArcInterpolation(
+  startOct: THREE.Vector3,
+  endOct: THREE.Vector3,
+  segments: number,
+  offset: number = 0
+): THREE.Vector3[] {
+  const points: THREE.Vector3[] = [];
+
+  const startSphere = octahedronToSphereInterpolation(startOct);
+  const endSphere = octahedronToSphereInterpolation(endOct);
+
+  // Calculate angle between vectors
+  const dot = Math.max(-1, Math.min(1, startSphere.dot(endSphere)));
+  const angle = Math.acos(dot);
+
+  // If points are very close, just return start and end
+  if (angle < 0.0001) {
+    const p1 = startSphere.clone().multiplyScalar(1 + offset);
+    const p2 = endSphere.clone().multiplyScalar(1 + offset);
+    return [p1, p2];
+  }
+
+  // Spherical linear interpolation
+  const sinAngle = Math.sin(angle);
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const a = Math.sin((1 - t) * angle) / sinAngle;
+    const b = Math.sin(t * angle) / sinAngle;
+
+    const point = new THREE.Vector3(
+      a * startSphere.x + b * endSphere.x,
+      a * startSphere.y + b * endSphere.y,
+      a * startSphere.z + b * endSphere.z
+    );
+
+    // Apply offset
+    point.normalize().multiplyScalar(1 + offset);
+    points.push(point);
+  }
+
+  return points;
+}
+
 // ─── Unified API (uses current projection mode) ──────────────────────────────
 
 /**
@@ -378,20 +548,30 @@ export function projectToSphere(
   octPoint: THREE.Vector3,
   offset: number = 0
 ): THREE.Vector3 {
-  if (currentProjectionMode === 'normalization') {
-    return projectToSphereNormalization(octPoint, offset);
+  switch (currentProjectionMode) {
+    case 'normalization':
+      return projectToSphereNormalization(octPoint, offset);
+    case 'interpolation':
+      return projectToSphereInterpolation(octPoint, offset);
+    case 'snyder':
+    default:
+      return projectToSphereSnyder(octPoint, offset);
   }
-  return projectToSphereSnyder(octPoint, offset);
 }
 
 /**
  * Projects a point from sphere to octahedron using the current projection mode.
  */
 export function projectToOctahedron(spherePoint: THREE.Vector3): THREE.Vector3 {
-  if (currentProjectionMode === 'normalization') {
-    return sphereToOctahedronNormalization(spherePoint);
+  switch (currentProjectionMode) {
+    case 'normalization':
+      return sphereToOctahedronNormalization(spherePoint);
+    case 'interpolation':
+      return sphereToOctahedronInterpolation(spherePoint);
+    case 'snyder':
+    default:
+      return sphereToOctahedron(spherePoint);
   }
-  return sphereToOctahedron(spherePoint);
 }
 
 /**
@@ -403,8 +583,13 @@ export function interpolateGreatArc(
   segments: number,
   offset: number = 0
 ): THREE.Vector3[] {
-  if (currentProjectionMode === 'normalization') {
-    return interpolateGreatArcNormalization(startOct, endOct, segments, offset);
+  switch (currentProjectionMode) {
+    case 'normalization':
+      return interpolateGreatArcNormalization(startOct, endOct, segments, offset);
+    case 'interpolation':
+      return interpolateGreatArcInterpolation(startOct, endOct, segments, offset);
+    case 'snyder':
+    default:
+      return interpolateGreatArcSnyder(startOct, endOct, segments, offset);
   }
-  return interpolateGreatArcSnyder(startOct, endOct, segments, offset);
 }

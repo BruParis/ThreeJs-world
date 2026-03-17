@@ -79,3 +79,38 @@ The parent of a central cell of coordinates
 (1/3) * (a, b, c)
 
 
+## Octahedron-Sphere Conversion: Interpolation Method
+
+A closed-form symmetric approach using spherical linear interpolation (slerp).
+
+Given a point with barycentric coordinates `(u, v, w)` relative to triangle vertices `A`, `B`, `C` (where `u + v + w = 1`):
+
+### Step 1: Compute edge interpolation points
+
+For each edge, compute the slerp point at the barycentric ratio:
+
+```
+D_BC = slerp(B, C, v / (v + w))   -- point on edge BC at ratio v:w
+D_AC = slerp(A, C, w / (u + w))   -- point on edge AC at ratio w:u
+D_AB = slerp(A, B, v / (u + v))   -- point on edge AB at ratio v:u
+```
+
+### Step 2: Interpolate toward opposite vertices
+
+From each edge point, slerp toward the opposite vertex:
+
+```
+P_A = slerp(D_BC, A, u)
+P_B = slerp(D_AC, B, v)
+P_C = slerp(D_AB, C, w)
+```
+
+### Step 3: Average and normalize
+
+Combine the three results and project onto the sphere:
+
+```
+P = normalize(P_A + P_B + P_C)
+```
+
+This method provides a smooth, symmetric mapping that respects the spherical geometry of the target surface.

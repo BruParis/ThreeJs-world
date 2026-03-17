@@ -59,7 +59,7 @@ export class GUISetup {
     // Projection mode dropdown
     const projectionModeState = { projectionMode: params.projectionMode };
     viewFolder
-      .add(projectionModeState, 'projectionMode', ['snyder', 'normalization'] as ProjectionMode[])
+      .add(projectionModeState, 'projectionMode', ['snyder', 'normalization', 'interpolation'] as ProjectionMode[])
       .name('Projection')
       .onChange((value: ProjectionMode) => {
         params.projectionMode = value;
@@ -411,7 +411,6 @@ export class GUISetup {
 
     console.log('ISEA3H Cell:', {
       cell: formatCell(cell),
-      barycenter: result.barycenter,
       isSquare: result.isSquareCell,
       centralChildNeighborCount: centralChildNeighbors.length,
       isCentral: isCentralChild(cell),
