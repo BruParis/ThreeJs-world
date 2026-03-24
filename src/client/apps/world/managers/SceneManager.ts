@@ -36,6 +36,10 @@ export class SceneManager {
     // Initialize WebGL renderer
     this.renderer = new THREE.WebGLRenderer();
     this.renderer.setSize(window.innerWidth, this.getViewportHeight());
+    this.renderer.domElement.style.position = 'absolute';
+    this.renderer.domElement.style.top = '0';
+    this.renderer.domElement.style.left = '0';
+    this.renderer.domElement.style.display = 'none'; // Hidden by default until tab is activated
     this.getContentArea().appendChild(this.renderer.domElement);
 
     // Initialize label renderer (CSS2D)
@@ -44,6 +48,7 @@ export class SceneManager {
     this.labelRenderer.domElement.style.position = 'absolute';
     this.labelRenderer.domElement.style.top = '0px';
     this.labelRenderer.domElement.style.pointerEvents = 'none'; // Let mouse events pass through
+    this.labelRenderer.domElement.style.display = 'none'; // Hidden by default until tab is activated
     this.getContentArea().appendChild(this.labelRenderer.domElement);
 
     // Initialize orbit controls

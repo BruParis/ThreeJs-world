@@ -84,7 +84,6 @@ export class WorldApplication implements TabApplication {
     if (!this.initialized) {
       // First-time initialization
       this.reset();
-      this.interactionHandler.attachEventListeners();
 
       // Create GUI when first activated
       this.guiManager = new GUIManager(
@@ -98,6 +97,9 @@ export class WorldApplication implements TabApplication {
       this.initialized = true;
     }
 
+    // Attach event listeners (re-attach on every activation)
+    this.interactionHandler.attachEventListeners();
+
     // Show renderer and GUI
     this.sceneManager.getRenderer().domElement.style.display = 'block';
     this.sceneManager.getLabelRenderer().domElement.style.display = 'block';
@@ -110,6 +112,9 @@ export class WorldApplication implements TabApplication {
   }
 
   public deactivate(): void {
+    // Detach event listeners
+    this.interactionHandler.detachEventListeners();
+
     // Hide renderer and GUI
     this.sceneManager.getRenderer().domElement.style.display = 'none';
     this.sceneManager.getLabelRenderer().domElement.style.display = 'none';

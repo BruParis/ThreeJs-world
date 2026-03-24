@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { TAB_BAR_HEIGHT } from '../../tabs/TabManager';
 
 /**
- * Handles Three.js scene setup for ISEA3H: camera, renderer, controls, and lights.
- * Configured for 3D spherical visualization.
+ * Handles Three.js scene setup for the QuadTree visualization.
  */
 export class SceneSetup {
   public readonly scene: THREE.Scene;
@@ -13,23 +13,25 @@ export class SceneSetup {
   public readonly labelRenderer: CSS2DRenderer;
   public readonly controls: OrbitControls;
 
-  constructor(contentArea: HTMLElement) {
-    // Scene
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a1a2e);
+  private contentArea: HTMLElement;
 
-    // Camera - positioned for 3D viewing
-    this.camera = new THREE.PerspectiveCamera(
-      75,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1000
-    );
+  constructor(contentArea: HTMLElement) {
+    this.contentArea = contentArea;
+
+    // Create scene
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x111122);
+
+    // Create camera
+    const width = contentArea.clientWidth;
+    const height = contentArea.clientHeight;
+    this.camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
     this.camera.position.set(3, 2, 3);
     this.camera.lookAt(0, 0, 0);
 
-    // WebGL Renderer
+    // Create WebGL renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.domElement.style.position = 'absolute';
     this.renderer.domElement.style.top = '0';
@@ -37,63 +39,46 @@ export class SceneSetup {
     this.renderer.domElement.style.display = 'none'; // Hidden by default until tab is activated
     contentArea.appendChild(this.renderer.domElement);
 
-    // CSS2D Renderer for labels
+    // Create CSS2D renderer for labels
     this.labelRenderer = new CSS2DRenderer();
+    this.labelRenderer.setSize(width, height);
     this.labelRenderer.domElement.style.position = 'absolute';
-    this.labelRenderer.domElement.style.top = '0';
+    this.labelRenderer.domElement.style.top = `${TAB_BAR_HEIGHT}px`;
     this.labelRenderer.domElement.style.left = '0';
     this.labelRenderer.domElement.style.pointerEvents = 'none';
     this.labelRenderer.domElement.style.display = 'none'; // Hidden by default until tab is activated
     contentArea.appendChild(this.labelRenderer.domElement);
 
-    // Initial size
-    this.updateSize(contentArea);
-
-    // Orbit Controls
+    // Create controls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
-    this.controls.target.set(0, 0, 0);
 
-    // Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    // Add lighting
+    const ambientLight = new THREE.AmbientLight(0x404040, 2);
     this.scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 10, 5);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+    directionalLight.position.set(5, 5, 5);
     this.scene.add(directionalLight);
 
-    // Axes helper
+    // Add axes helper
     const axesHelper = new THREE.AxesHelper(1.5);
     this.scene.add(axesHelper);
   }
 
   /**
-   * Updates renderer size to match the content area.
+   * Updates the renderer and camera size.
    */
   updateSize(contentArea: HTMLElement): void {
-    const width = contentArea.clientWidth || window.innerWidth;
-    const height = contentArea.clientHeight || window.innerHeight;
+    const width = contentArea.clientWidth;
+    const height = contentArea.clientHeight;
+
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+
     this.renderer.setSize(width, height);
     this.labelRenderer.setSize(width, height);
-  }
-
-  /**
-   * Shows the renderers.
-   */
-  show(): void {
-    this.renderer.domElement.style.display = 'block';
-    this.labelRenderer.domElement.style.display = 'block';
-  }
-
-  /**
-   * Hides the renderers.
-   */
-  hide(): void {
-    this.renderer.domElement.style.display = 'none';
-    this.labelRenderer.domElement.style.display = 'none';
   }
 
   /**
@@ -106,9 +91,28 @@ export class SceneSetup {
   }
 
   /**
-   * Disposes of renderer resources.
+   * Shows the renderer.
+   */
+  show(): void {
+    this.renderer.domElement.style.display = '';
+    this.labelRenderer.domElement.style.display = '';
+  }
+
+  /**
+   * Hides the renderer.
+   */
+  hide(): void {
+    this.renderer.domElement.style.display = 'none';
+    this.labelRenderer.domElement.style.display = 'none';
+  }
+
+  /**
+   * Disposes of Three.js resources.
    */
   dispose(): void {
+    this.controls.dispose();
     this.renderer.dispose();
+    this.contentArea.removeChild(this.renderer.domElement);
+    this.contentArea.removeChild(this.labelRenderer.domElement);
   }
 }
