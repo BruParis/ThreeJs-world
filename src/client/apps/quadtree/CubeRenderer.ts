@@ -134,9 +134,16 @@ export class CubeRenderer {
 
   // Hover cell visualization
   private hoverCellOutlines: THREE.Line[] = [];
+  private hoverQuadrantMeshes: THREE.Mesh[] = [];
 
   // Hover point indicator (a tiny line extending outward from the surface)
   private hoverPointIndicator: THREE.Line | null = null;
+
+  // Subdivision factor for quadrant triangulation (0 = disabled)
+  private subdivisionFactor: number = 0;
+
+  // Wireframe mode for quadrant meshes
+  private quadrantWireframe: boolean = true;
 
   // Cube vertices (8 vertices)
   public readonly vertices: THREE.Vector3[] = [
@@ -592,6 +599,7 @@ export class CubeRenderer {
     }
     this.hoverCellOutlines = [];
     this.clearHoverPointIndicator();
+    this.clearQuadrantMeshes();
   }
 
   /**
@@ -641,6 +649,190 @@ export class CubeRenderer {
       this.scene.remove(this.hoverPointIndicator);
       this.hoverPointIndicator = null;
     }
+  }
+
+  /**
+   * Sets the subdivision factor for quadrant triangulation.
+   * @param factor Number of subdivisions per edge (0 = disabled)
+   */
+  setSubdivisionFactor(factor: number): void {
+    this.subdivisionFactor = Math.max(0, Math.floor(factor));
+  }
+
+  /**
+   * Gets the current subdivision factor.
+   */
+  getSubdivisionFactor(): number {
+    return this.subdivisionFactor;
+  }
+
+  /**
+   * Sets the wireframe mode for quadrant meshes.
+   */
+  setQuadrantWireframe(enabled: boolean): void {
+    this.quadrantWireframe = enabled;
+    // Update existing meshes
+    for (const mesh of this.hoverQuadrantMeshes) {
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.wireframe = enabled;
+      mat.opacity = enabled ? 1.0 : 0.6;
+    }
+  }
+
+  /**
+   * Gets the current wireframe mode.
+   */
+  getQuadrantWireframe(): boolean {
+    return this.quadrantWireframe;
+  }
+
+  /**
+   * Displays triangulated quadrants for a cell, excluding the quadrant containing the child.
+   * @param cellUVBounds The UV bounds of the cell {u0, u1, v0, v1}
+   * @param face The cube face
+   * @param childQuadrant Which quadrant contains the child (0-3: BL, BR, TR, TL) or -1 for all
+   * @param color The color for the mesh
+   */
+  displayTriangulatedQuadrants(
+    cellUVBounds: { u0: number; u1: number; v0: number; v1: number },
+    face: number,
+    childQuadrant: number,
+    color: number
+  ): void {
+    if (this.subdivisionFactor <= 0) return;
+
+    const { u0, u1, v0, v1 } = cellUVBounds;
+    const uMid = (u0 + u1) / 2;
+    const vMid = (v0 + v1) / 2;
+
+    // Define the 4 quadrants: [u0, u1, v0, v1] for each
+    // 0: Bottom-Left, 1: Bottom-Right, 2: Top-Right, 3: Top-Left
+    const quadrants = [
+      { u0: u0, u1: uMid, v0: v0, v1: vMid },   // BL
+      { u0: uMid, u1: u1, v0: v0, v1: vMid },   // BR
+      { u0: uMid, u1: u1, v0: vMid, v1: v1 },   // TR
+      { u0: u0, u1: uMid, v0: vMid, v1: v1 },   // TL
+    ];
+
+    for (let i = 0; i < 4; i++) {
+      if (i === childQuadrant) continue; // Skip the quadrant containing the child
+
+      const mesh = this.createQuadrantMesh(quadrants[i], face, color);
+      if (mesh) {
+        this.hoverQuadrantMeshes.push(mesh);
+      }
+    }
+  }
+
+  /**
+   * Creates a triangulated mesh for a quadrant.
+   */
+  private createQuadrantMesh(
+    bounds: { u0: number; u1: number; v0: number; v1: number },
+    face: number,
+    color: number
+  ): THREE.Mesh | null {
+    const n = this.subdivisionFactor;
+    if (n <= 0) return null;
+
+    const positions: number[] = [];
+    const indices: number[] = [];
+
+    // Create grid of vertices
+    const vertices: THREE.Vector3[][] = [];
+    for (let i = 0; i <= n; i++) {
+      vertices[i] = [];
+      const u = bounds.u0 + (bounds.u1 - bounds.u0) * (i / n);
+      for (let j = 0; j <= n; j++) {
+        const v = bounds.v0 + (bounds.v1 - bounds.v0) * (j / n);
+
+        // Get the point on the cube surface
+        const cubePoint = this.faceUVToCubePoint(face, u, v);
+
+        // Project to sphere if in sphere mode
+        const point = this.sphereMode
+          ? projectToSphere(cubePoint, 0.001) // Small offset to avoid z-fighting
+          : cubePoint.clone().addScaledVector(this.getCubeNormal(cubePoint), 0.001);
+
+        vertices[i][j] = point;
+      }
+    }
+
+    // Build position array
+    for (let i = 0; i <= n; i++) {
+      for (let j = 0; j <= n; j++) {
+        const v = vertices[i][j];
+        positions.push(v.x, v.y, v.z);
+      }
+    }
+
+    // Build index array (triangles)
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const topLeft = i * (n + 1) + j;
+        const topRight = topLeft + 1;
+        const bottomLeft = (i + 1) * (n + 1) + j;
+        const bottomRight = bottomLeft + 1;
+
+        // Two triangles per quad
+        indices.push(topLeft, bottomLeft, topRight);
+        indices.push(topRight, bottomLeft, bottomRight);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: this.quadrantWireframe ? 1.0 : 0.6,
+      wireframe: this.quadrantWireframe,
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    this.scene.add(mesh);
+    return mesh;
+  }
+
+  /**
+   * Converts face UV coordinates to a cube surface point.
+   */
+  private faceUVToCubePoint(face: number, u: number, v: number): THREE.Vector3 {
+    // Import the CubeFace enum values
+    const PLUS_X = 0, MINUS_X = 1, PLUS_Y = 2, MINUS_Y = 3, PLUS_Z = 4, MINUS_Z = 5;
+
+    switch (face) {
+      case PLUS_X:
+        return new THREE.Vector3(1, v, -u);
+      case MINUS_X:
+        return new THREE.Vector3(-1, v, u);
+      case PLUS_Y:
+        return new THREE.Vector3(u, 1, v);
+      case MINUS_Y:
+        return new THREE.Vector3(u, -1, -v);
+      case PLUS_Z:
+        return new THREE.Vector3(u, v, 1);
+      case MINUS_Z:
+        return new THREE.Vector3(-u, v, -1);
+      default:
+        return new THREE.Vector3(0, 0, 0);
+    }
+  }
+
+  /**
+   * Clears all quadrant meshes.
+   */
+  private clearQuadrantMeshes(): void {
+    for (const mesh of this.hoverQuadrantMeshes) {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+      this.scene.remove(mesh);
+    }
+    this.hoverQuadrantMeshes = [];
   }
 
   /**

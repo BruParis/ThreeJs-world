@@ -17,7 +17,7 @@ export class QuadTreeApplication implements TabApplication {
   private params: GUIParams = {
     showFaces: true,
     showWireframe: true,
-    showVertices: true,
+    showVertices: false,
     sphereMode: true,
   };
 

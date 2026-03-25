@@ -1,6 +1,6 @@
 import { GUI } from 'dat.gui';
 import { CubeRenderer, GUIParams } from './CubeRenderer';
-import { InteractionHandler } from './InteractionHandler';
+import { InteractionHandler, DisplayMode } from './InteractionHandler';
 
 /**
  * Sets up the dat.GUI interface for the QuadTree application.
@@ -56,14 +56,60 @@ export class GUISetup {
       const hoverFolder = this.gui.addFolder('Hover Settings');
 
       const hoverState = {
+        displayMode: interactionHandler.getDisplayMode(),
         resolutionLevel: interactionHandler.getResolutionLevel(),
+        distanceThreshold: interactionHandler.getDistanceThreshold(),
+        subdivisionFactor: cubeRenderer.getSubdivisionFactor(),
+        showSubdivisionWireframe: cubeRenderer.getQuadrantWireframe(),
       };
+
+      // Mode selector
+      hoverFolder
+        .add(hoverState, 'displayMode', ['hierarchy', 'distance'] as DisplayMode[])
+        .name('Display Mode')
+        .onChange((value: DisplayMode) => {
+          interactionHandler.setDisplayMode(value);
+          cubeRenderer.clearHoverDisplay();
+          // Show/hide distance threshold based on mode
+          distanceController.domElement.parentElement!.parentElement!.style.display =
+            value === 'distance' ? '' : 'none';
+        });
 
       hoverFolder
         .add(hoverState, 'resolutionLevel', 0, 8, 1)
         .name('Resolution Level')
         .onChange((value: number) => {
           interactionHandler.setResolutionLevel(value);
+          cubeRenderer.clearHoverDisplay();
+        });
+
+      // Distance threshold (only visible in distance mode)
+      const distanceController = hoverFolder
+        .add(hoverState, 'distanceThreshold', 0.01, 0.8, 0.01)
+        .name('Distance Threshold')
+        .onChange((value: number) => {
+          interactionHandler.setDistanceThreshold(value);
+          cubeRenderer.clearHoverDisplay();
+        });
+
+      // Hide distance threshold initially if in hierarchy mode
+      if (hoverState.displayMode === 'hierarchy') {
+        distanceController.domElement.parentElement!.parentElement!.style.display = 'none';
+      }
+
+      hoverFolder
+        .add(hoverState, 'subdivisionFactor', 0, 8, 1)
+        .name('Subdivision')
+        .onChange((value: number) => {
+          cubeRenderer.setSubdivisionFactor(value);
+          cubeRenderer.clearHoverDisplay();
+        });
+
+      hoverFolder
+        .add(hoverState, 'showSubdivisionWireframe')
+        .name('Subdivision Wireframe')
+        .onChange((value: boolean) => {
+          cubeRenderer.setQuadrantWireframe(value);
         });
 
       hoverFolder.open();
