@@ -15,5 +15,9 @@ module.exports = merge(common, {
     alias: {
       '@core': path.resolve(__dirname, 'core/'),
     },
-  }
+  },
+  output: {
+    // Ensure worker chunks have unique names and load correctly
+    chunkFilename: '[name].js',
+  },
 })

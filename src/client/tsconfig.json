@@ -1,11 +1,12 @@
 {
     "compilerOptions": {
         "target": "ES6",
+        "module": "ESNext",
         "moduleResolution": "bundler",
         "strict": true,
         "baseUrl": ".",
         "paths": {
-            "@core/*": ["core/*"],
+            "@core/*": ["core/*"]
         }
     },
     "include": ["**/*.ts"]

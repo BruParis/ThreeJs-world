@@ -17,5 +17,7 @@ module.exports = {
     output: {
         filename: 'bundle.js',
         path: path.resolve(__dirname, '../../dist/client'),
+        // Required for worker chunks to load correctly
+        publicPath: '/',
     }
 };

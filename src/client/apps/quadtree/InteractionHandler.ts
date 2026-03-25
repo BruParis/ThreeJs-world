@@ -12,7 +12,7 @@ import {
 import { spherePointToCell, computeCellVertices } from './QuadTreeGeometry';
 import { cubeToSphere } from '@core/geometry/EverettPraunMapping';
 
-export type DisplayMode = 'hierarchy' | 'distance';
+export type DisplayMode = 'hierarchy' | 'distance' | 'lod';
 
 // Colors for quadtree levels (index = level number)
 // Level 0 is the coarsest (full face), higher levels are finer subdivisions
@@ -201,8 +201,10 @@ export class InteractionHandler {
 
     if (this.displayMode === 'hierarchy') {
       this.handleHierarchyMode(point);
-    } else {
+    } else if (this.displayMode === 'distance') {
       this.handleDistanceMode(point);
+    } else if (this.displayMode === 'lod') {
+      this.handleLODMode(point);
     }
   }
 
@@ -305,6 +307,7 @@ export class InteractionHandler {
       this.hoverLabel.position.copy(point).add(offset);
       this.hoverLabel.visible = true;
     }
+
   }
 
   /**
@@ -423,6 +426,158 @@ export class InteractionHandler {
       this.hoverLabel.position.copy(point).add(offset);
       this.hoverLabel.visible = true;
     }
+  }
+
+  /**
+   * Handles LOD (Level of Detail) display mode.
+   * Shows quadrants at varying resolution levels based on distance from the hovered point.
+   * Closer areas get higher resolution, farther areas get lower resolution.
+   */
+  private handleLODMode(point: THREE.Vector3): void {
+    // Clear previous display
+    this.cubeRenderer.clearHoverDisplay();
+    this.lastHoveredCell = null;
+
+    const isSphereMode = this.cubeRenderer.isSphereMode();
+    const spherePoint = point.clone().normalize();
+
+    // Maximum level (highest detail at the center)
+    const maxLevel = this.resolutionLevel;
+
+    // Build LOD structure: for each level, determine which cells to display
+    // A cell is displayed at level L if:
+    // - It's within the distance threshold for level L
+    // - Its children (at level L+1) are NOT all within the threshold for level L+1
+
+    // Distance thresholds for each level (larger distance = lower detail)
+    // These are based on the distanceThreshold setting, scaled per level
+    const baseDistance = this.distanceThreshold;
+
+    // Track which cells are displayed (to avoid showing both parent and children)
+    const displayedCells: Set<string> = new Set();
+    // Track cells that have children displayed (so we don't display them)
+    const cellsWithChildrenDisplayed: Set<string> = new Set();
+
+    // Process from finest level to coarsest
+    for (let level = maxLevel; level >= 0; level--) {
+      // Distance threshold for this level
+      // Finer levels (higher number) have smaller thresholds
+      const levelThreshold = baseDistance * Math.pow(2, maxLevel - level);
+
+      const gridSize = getGridSize(level);
+      const color = LEVEL_COLORS[level % LEVEL_COLORS.length];
+
+      // Check all cells at this level across all faces
+      for (let face = 0; face < 6; face++) {
+        for (let x = 0; x < gridSize; x++) {
+          for (let y = 0; y < gridSize; y++) {
+            const cell: QuadTreeCell = { face: face as CubeFace, level, x, y };
+            const cellKey = this.cellKey(cell);
+
+            // Skip if this cell has children that are already displayed
+            if (cellsWithChildrenDisplayed.has(cellKey)) continue;
+
+            // Check if cell is within threshold
+            if (!this.isCellWithinDistance(cell, spherePoint, levelThreshold, isSphereMode)) {
+              continue;
+            }
+
+            // Check if we should display this cell or its children
+            // At the finest level, always display
+            if (level === maxLevel) {
+              displayedCells.add(cellKey);
+              this.displayLODCell(cell, color);
+            } else {
+              // Check if any children are displayed
+              const children = this.getChildCells(cell);
+              const anyChildDisplayed = children.some(child =>
+                displayedCells.has(this.cellKey(child))
+              );
+
+              if (anyChildDisplayed) {
+                // Mark this cell as having children displayed
+                cellsWithChildrenDisplayed.add(cellKey);
+
+                // Display only the quadrants that don't have children
+                const childQuadrants = new Set<number>();
+                for (const child of children) {
+                  if (displayedCells.has(this.cellKey(child))) {
+                    childQuadrants.add(this.getQuadrantInParent(child));
+                  }
+                }
+
+                // Display cell outline
+                const displayInfo = { cell, isSelected: false };
+                this.cubeRenderer.displayHoverCell(displayInfo, color);
+
+                // Display only unoccupied quadrants
+                const cellGridSize = getGridSize(cell.level);
+                const u0 = -1 + (2 * cell.x) / cellGridSize;
+                const u1 = -1 + (2 * (cell.x + 1)) / cellGridSize;
+                const v0 = -1 + (2 * cell.y) / cellGridSize;
+                const v1 = -1 + (2 * (cell.y + 1)) / cellGridSize;
+
+                for (let q = 0; q < 4; q++) {
+                  if (!childQuadrants.has(q)) {
+                    this.displaySingleQuadrant({ u0, u1, v0, v1 }, cell.face, q, color);
+                  }
+                }
+              } else {
+                // No children displayed, display this cell fully
+                displayedCells.add(cellKey);
+                this.displayLODCell(cell, color);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Update label
+    if (this.labelDiv && this.hoverLabel) {
+      const modeStr = isSphereMode ? 'arc' : 'cube';
+      this.labelDiv.textContent = `LOD mode (${modeStr})\nMax level: ${maxLevel}\nBase distance: ${baseDistance.toFixed(2)}\nCells: ${displayedCells.size}`;
+      const offset = new THREE.Vector3(-0.8, 0.2, 0);
+      this.hoverLabel.position.copy(point).add(offset);
+      this.hoverLabel.visible = true;
+    }
+  }
+
+  /**
+   * Displays a cell for LOD mode with full quadrant triangulation.
+   */
+  private displayLODCell(cell: QuadTreeCell, color: number): void {
+    const displayInfo = { cell, isSelected: false };
+    this.cubeRenderer.displayHoverCell(displayInfo, color);
+
+    const gridSize = getGridSize(cell.level);
+    const u0 = -1 + (2 * cell.x) / gridSize;
+    const u1 = -1 + (2 * (cell.x + 1)) / gridSize;
+    const v0 = -1 + (2 * cell.y) / gridSize;
+    const v1 = -1 + (2 * (cell.y + 1)) / gridSize;
+
+    this.cubeRenderer.displayTriangulatedQuadrants(
+      { u0, u1, v0, v1 },
+      cell.face,
+      -1, // all quadrants
+      color
+    );
+  }
+
+  /**
+   * Gets the 4 child cells of a parent cell.
+   */
+  private getChildCells(cell: QuadTreeCell): QuadTreeCell[] {
+    const childLevel = cell.level + 1;
+    const childX = cell.x * 2;
+    const childY = cell.y * 2;
+
+    return [
+      { face: cell.face, level: childLevel, x: childX, y: childY },         // BL
+      { face: cell.face, level: childLevel, x: childX + 1, y: childY },     // BR
+      { face: cell.face, level: childLevel, x: childX + 1, y: childY + 1 }, // TR
+      { face: cell.face, level: childLevel, x: childX, y: childY + 1 },     // TL
+    ];
   }
 
   /**

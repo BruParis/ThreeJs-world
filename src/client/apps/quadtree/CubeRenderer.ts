@@ -6,6 +6,10 @@ import {
   projectSpherePointToCube,
   interpolateGreatArcEverettPraun,
 } from '@core/geometry/EverettPraunMapping';
+import {
+  QuadrantMeshService,
+  QuadrantMeshRequest,
+} from '@core/workers';
 
 export interface GUIParams {
   showFaces: boolean;
@@ -145,6 +149,18 @@ export class CubeRenderer {
   // Wireframe mode for quadrant meshes
   private quadrantWireframe: boolean = true;
 
+  // Whether to use web workers for mesh generation (disabled for now)
+  private useWorkers: boolean = false;
+
+  // Worker service for parallel mesh generation
+  private meshService: QuadrantMeshService | null = null;
+  // Pending quadrant mesh requests (batched for parallel generation)
+  private pendingQuadrantRequests: QuadrantMeshRequest[] = [];
+  // Flag to track if we're currently generating meshes
+  private isGeneratingMeshes: boolean = false;
+  // Generation ID to cancel outdated requests
+  private currentGenerationId: number = 0;
+
   // Cube vertices (8 vertices)
   public readonly vertices: THREE.Vector3[] = [
     new THREE.Vector3(-1, -1, -1),  // 0
@@ -180,6 +196,7 @@ export class CubeRenderer {
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    // Worker service is created lazily when useWorkers is enabled
   }
 
   /**
@@ -714,12 +731,86 @@ export class CubeRenderer {
       { u0: u0, u1: uMid, v0: vMid, v1: v1 },   // TL
     ];
 
-    for (let i = 0; i < 4; i++) {
-      if (i === childQuadrant) continue; // Skip the quadrant containing the child
+    if (this.useWorkers) {
+      // Queue requests for worker-based generation
+      for (let i = 0; i < 4; i++) {
+        if (i === childQuadrant) continue;
+        this.pendingQuadrantRequests.push({
+          ...quadrants[i],
+          face,
+          subdivisions: this.subdivisionFactor,
+          sphereMode: this.sphereMode,
+          offset: 0.001,
+          color,
+          id: `quadrant_${face}_${i}_${Date.now()}`,
+        });
+      }
+    } else {
+      // Synchronous generation
+      for (let i = 0; i < 4; i++) {
+        if (i === childQuadrant) continue;
+        const mesh = this.createQuadrantMesh(quadrants[i], face, color);
+        if (mesh) {
+          this.hoverQuadrantMeshes.push(mesh);
+        }
+      }
+    }
+  }
 
-      const mesh = this.createQuadrantMesh(quadrants[i], face, color);
-      if (mesh) {
-        this.hoverQuadrantMeshes.push(mesh);
+  /**
+   * Flushes all pending quadrant requests to the worker pool for parallel generation.
+   * Call this after queueing all displayTriangulatedQuadrants calls.
+   * Only used when useWorkers is enabled.
+   */
+  async flushQuadrantRequests(): Promise<void> {
+    if (!this.useWorkers) return;
+    if (this.pendingQuadrantRequests.length === 0) return;
+
+    // Create mesh service lazily
+    if (!this.meshService) {
+      this.meshService = new QuadrantMeshService();
+    }
+
+    if (this.isGeneratingMeshes) {
+      // Cancel current generation by incrementing the ID
+      this.currentGenerationId++;
+    }
+
+    const generationId = ++this.currentGenerationId;
+    const requests = [...this.pendingQuadrantRequests];
+    this.pendingQuadrantRequests = [];
+    this.isGeneratingMeshes = true;
+
+    console.log(`[CubeRenderer] Flushing ${requests.length} quadrant requests, generationId=${generationId}`);
+
+    try {
+      // Generate meshes in parallel with progress callback
+      await this.meshService!.generateMeshesWithProgress(requests, (result, _index) => {
+        console.log(`[CubeRenderer] Received mesh result, generationId=${generationId}, currentId=${this.currentGenerationId}`);
+
+        // Check if this generation is still current
+        if (generationId !== this.currentGenerationId) {
+          console.log(`[CubeRenderer] Discarding outdated mesh`);
+          return;
+        }
+
+        console.log(`[CubeRenderer] Adding mesh to scene, positions=${result.mesh.geometry.attributes.position?.count}`);
+
+        // Apply wireframe setting
+        const material = result.mesh.material as THREE.MeshBasicMaterial;
+        material.wireframe = this.quadrantWireframe;
+        material.opacity = this.quadrantWireframe ? 1.0 : 0.6;
+
+        // Add to scene and track
+        this.scene.add(result.mesh);
+        this.hoverQuadrantMeshes.push(result.mesh);
+      });
+      console.log(`[CubeRenderer] All meshes generated for generationId=${generationId}`);
+    } catch (error) {
+      console.error(`[CubeRenderer] Error generating meshes:`, error);
+    } finally {
+      if (generationId === this.currentGenerationId) {
+        this.isGeneratingMeshes = false;
       }
     }
   }
@@ -827,6 +918,10 @@ export class CubeRenderer {
    * Clears all quadrant meshes.
    */
   private clearQuadrantMeshes(): void {
+    // Cancel any pending/in-progress generation
+    this.currentGenerationId++;
+    this.pendingQuadrantRequests = [];
+
     for (const mesh of this.hoverQuadrantMeshes) {
       mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
@@ -1004,6 +1099,11 @@ export class CubeRenderer {
    * Disposes of all Three.js resources.
    */
   dispose(): void {
+    // Terminate the worker service if it was created
+    if (this.meshService) {
+      this.meshService.terminate();
+    }
+
     this.clearProjectionDebug();
     this.clearHoverDisplay();
 

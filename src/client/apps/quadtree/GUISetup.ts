@@ -65,14 +65,14 @@ export class GUISetup {
 
       // Mode selector
       hoverFolder
-        .add(hoverState, 'displayMode', ['hierarchy', 'distance'] as DisplayMode[])
+        .add(hoverState, 'displayMode', ['hierarchy', 'distance', 'lod'] as DisplayMode[])
         .name('Display Mode')
         .onChange((value: DisplayMode) => {
           interactionHandler.setDisplayMode(value);
           cubeRenderer.clearHoverDisplay();
-          // Show/hide distance threshold based on mode
+          // Show/hide distance threshold based on mode (used by 'distance' and 'lod')
           distanceController.domElement.parentElement!.parentElement!.style.display =
-            value === 'distance' ? '' : 'none';
+            (value === 'distance' || value === 'lod') ? '' : 'none';
         });
 
       hoverFolder
@@ -93,7 +93,7 @@ export class GUISetup {
         });
 
       // Hide distance threshold initially if in hierarchy mode
-      if (hoverState.displayMode === 'hierarchy') {
+      if (hoverState.displayMode !== 'distance' && hoverState.displayMode !== 'lod') {
         distanceController.domElement.parentElement!.parentElement!.style.display = 'none';
       }
 
