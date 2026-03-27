@@ -196,22 +196,39 @@ function generateQuadrantMesh(input: QuadrantMeshInput): QuadrantMeshOutput {
   };
 }
 
-// Worker message handler
-self.onmessage = (event: MessageEvent<WorkerTaskInput<QuadrantMeshInput>>) => {
-  const { taskId, type, data } = event.data;
+// Extended output with timing info
+interface QuadrantMeshOutputWithTiming extends QuadrantMeshOutput {
+  workerComputeTimeMs: number;
+}
 
-  console.log(`[Worker] Received task: ${taskId}, type: ${type}`);
+// Batch input/output types
+export interface QuadrantMeshBatchInput {
+  quadrants: QuadrantMeshInput[];
+}
+
+export interface QuadrantMeshBatchOutput {
+  results: QuadrantMeshOutput[];
+  workerComputeTimeMs: number;
+}
+
+// Worker message handler
+self.onmessage = (event: MessageEvent<WorkerTaskInput<QuadrantMeshInput | QuadrantMeshBatchInput>>) => {
+  const { taskId, type, data } = event.data;
 
   try {
     if (type === 'generateQuadrantMesh') {
-      const result = generateQuadrantMesh(data);
+      const computeStart = performance.now();
+      const result = generateQuadrantMesh(data as QuadrantMeshInput);
+      const computeEnd = performance.now();
+      const computeTimeMs = computeEnd - computeStart;
 
-      console.log(`[Worker] Generated mesh: positions=${result.positions.length/3} vertices, indices=${result.indices.length/3} triangles`);
-
-      const response: WorkerMessage<QuadrantMeshOutput> = {
+      const response: WorkerMessage<QuadrantMeshOutputWithTiming> = {
         taskId,
         type: 'result',
-        data: result,
+        data: {
+          ...result,
+          workerComputeTimeMs: computeTimeMs,
+        },
       };
 
       // Transfer the typed arrays for zero-copy
@@ -220,8 +237,33 @@ self.onmessage = (event: MessageEvent<WorkerTaskInput<QuadrantMeshInput>>) => {
         result.indices.buffer,
         result.colors.buffer,
       ] as Transferable[]);
+    } else if (type === 'generateQuadrantMeshBatch') {
+      const batchInput = data as QuadrantMeshBatchInput;
+      const computeStart = performance.now();
 
-      console.log(`[Worker] Sent response for task: ${taskId}`);
+      const results: QuadrantMeshOutput[] = [];
+      const transferables: Transferable[] = [];
+
+      for (const quadrant of batchInput.quadrants) {
+        const result = generateQuadrantMesh(quadrant);
+        results.push(result);
+        transferables.push(result.positions.buffer, result.indices.buffer, result.colors.buffer);
+      }
+
+      const computeEnd = performance.now();
+      const computeTimeMs = computeEnd - computeStart;
+
+      const response: WorkerMessage<QuadrantMeshBatchOutput> = {
+        taskId,
+        type: 'result',
+        data: {
+          results,
+          workerComputeTimeMs: computeTimeMs,
+        },
+      };
+
+      // Transfer all typed arrays for zero-copy
+      (self as unknown as Worker).postMessage(response, transferables);
     } else {
       throw new Error(`Unknown task type: ${type}`);
     }

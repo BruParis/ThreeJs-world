@@ -704,6 +704,22 @@ export class CubeRenderer {
   }
 
   /**
+   * Sets whether to use web workers for mesh generation.
+   */
+  setUseWorkers(enabled: boolean): void {
+    this.useWorkers = enabled;
+    // Clear any pending requests when switching modes
+    this.pendingQuadrantRequests = [];
+  }
+
+  /**
+   * Gets whether web workers are used for mesh generation.
+   */
+  getUseWorkers(): boolean {
+    return this.useWorkers;
+  }
+
+  /**
    * Displays triangulated quadrants for a cell, excluding quadrants that contain children.
    * @param cellUVBounds The UV bounds of the cell {u0, u1, v0, v1}
    * @param face The cube face
@@ -746,14 +762,22 @@ export class CubeRenderer {
         });
       }
     } else {
-      // Synchronous generation
+      // Synchronous generation with timing
+      const syncStart = performance.now();
+      let meshCount = 0;
       for (let i = 0; i < 4; i++) {
         if (childQuadrants?.has(i)) continue;
+        const meshStart = performance.now();
         const mesh = this.createQuadrantMesh(quadrants[i], face, color);
+        const meshEnd = performance.now();
         if (mesh) {
           this.hoverQuadrantMeshes.push(mesh);
+          meshCount++;
+          console.log(`[CubeRenderer-Sync] Mesh ${i}: compute=${(meshEnd - meshStart).toFixed(2)}ms`);
         }
       }
+      const syncEnd = performance.now();
+      console.log(`[CubeRenderer-Sync] Total: ${meshCount} meshes in ${(syncEnd - syncStart).toFixed(2)}ms`);
     }
   }
 
@@ -781,31 +805,31 @@ export class CubeRenderer {
     this.pendingQuadrantRequests = [];
     this.isGeneratingMeshes = true;
 
-    console.log(`[CubeRenderer] Flushing ${requests.length} quadrant requests, generationId=${generationId}`);
+    const batchStart = performance.now();
+    console.log(`[CubeRenderer-Workers] Flushing ${requests.length} quadrant requests (batched), generationId=${generationId}`);
 
     try {
-      // Generate meshes in parallel with progress callback
-      await this.meshService!.generateMeshesWithProgress(requests, (result, _index) => {
-        console.log(`[CubeRenderer] Received mesh result, generationId=${generationId}, currentId=${this.currentGenerationId}`);
+      // Generate all meshes in a single batched worker call
+      const results = await this.meshService!.generateMeshesBatched(requests);
 
-        // Check if this generation is still current
-        if (generationId !== this.currentGenerationId) {
-          console.log(`[CubeRenderer] Discarding outdated mesh`);
-          return;
-        }
+      // Check if this generation is still current
+      if (generationId !== this.currentGenerationId) {
+        console.log(`[CubeRenderer-Workers] Discarding outdated batch`);
+        return;
+      }
 
-        console.log(`[CubeRenderer] Adding mesh to scene, positions=${result.mesh.geometry.attributes.position?.count}`);
-
-        // Apply wireframe setting
+      // Add all meshes to scene
+      for (const result of results) {
         const material = result.mesh.material as THREE.MeshBasicMaterial;
         material.wireframe = this.quadrantWireframe;
         material.opacity = this.quadrantWireframe ? 1.0 : 0.6;
 
-        // Add to scene and track
         this.scene.add(result.mesh);
         this.hoverQuadrantMeshes.push(result.mesh);
-      });
-      console.log(`[CubeRenderer] All meshes generated for generationId=${generationId}`);
+      }
+
+      const batchEnd = performance.now();
+      console.log(`[CubeRenderer-Workers] Total: ${results.length} meshes in ${(batchEnd - batchStart).toFixed(2)}ms, generationId=${generationId}`);
     } catch (error) {
       console.error(`[CubeRenderer] Error generating meshes:`, error);
     } finally {

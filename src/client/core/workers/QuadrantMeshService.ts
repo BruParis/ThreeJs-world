@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { WorkerPool } from './WorkerPool';
-import type { QuadrantMeshInput, QuadrantMeshOutput } from './QuadrantMeshWorker';
+import type { QuadrantMeshInput, QuadrantMeshOutput, QuadrantMeshBatchInput, QuadrantMeshBatchOutput } from './QuadrantMeshWorker';
 
 // Re-export CubeFace for convenience
 export { CubeFace } from './QuadrantMeshWorker';
@@ -164,16 +164,55 @@ export class QuadrantMeshService {
   }
 
   /**
+   * Generates multiple quadrant meshes in a single batched worker task.
+   * This minimizes message passing overhead by sending all requests in one message.
+   * @param requests Array of mesh generation requests
+   * @returns Promise resolving to array of generated meshes
+   */
+  async generateMeshesBatched(requests: QuadrantMeshRequest[]): Promise<QuadrantMeshResult[]> {
+    if (requests.length === 0) return [];
+
+    const pool = this.getPool();
+    const batchStart = performance.now();
+
+    // Build batch input
+    const quadrants: QuadrantMeshInput[] = requests.map((request) => {
+      const quadrantId = request.id ?? `quadrant_${this.idCounter++}`;
+      const color = new THREE.Color(request.color);
+
+      return {
+        u0: request.u0,
+        u1: request.u1,
+        v0: request.v0,
+        v1: request.v1,
+        face: request.face,
+        subdivisions: request.subdivisions,
+        sphereMode: request.sphereMode,
+        offset: request.offset ?? 0.001,
+        color: { r: color.r, g: color.g, b: color.b },
+        quadrantId,
+      };
+    });
+
+    const batchInput: QuadrantMeshBatchInput = { quadrants };
+
+    // Execute single batched task
+    const output = await pool.execute('generateQuadrantMeshBatch', batchInput as unknown as QuadrantMeshInput) as unknown as QuadrantMeshBatchOutput;
+
+    const batchEnd = performance.now();
+    console.log(`[QuadrantMeshService] Batch: ${requests.length} meshes, roundTrip=${(batchEnd - batchStart).toFixed(2)}ms, workerCompute=${output.workerComputeTimeMs.toFixed(2)}ms, overhead=${(batchEnd - batchStart - output.workerComputeTimeMs).toFixed(2)}ms`);
+
+    // Convert outputs to meshes
+    return output.results.map((result, index) => ({
+      mesh: this.createMeshFromOutput(result, requests[index].color),
+      id: result.quadrantId,
+    }));
+  }
+
+  /**
    * Creates a Three.js Mesh from worker output.
    */
   private createMeshFromOutput(output: QuadrantMeshOutput, color: number): THREE.Mesh {
-    console.log(`[QuadrantMeshService] Creating mesh from output:`, {
-      positionsLength: output.positions?.length,
-      indicesLength: output.indices?.length,
-      colorsLength: output.colors?.length,
-      positionsType: output.positions?.constructor?.name,
-      indicesType: output.indices?.constructor?.name,
-    });
 
     const geometry = new THREE.BufferGeometry();
 

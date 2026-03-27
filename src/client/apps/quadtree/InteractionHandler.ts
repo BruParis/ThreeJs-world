@@ -298,6 +298,8 @@ export class InteractionHandler {
       this.hoverLabel.visible = true;
     }
 
+    // Flush pending worker requests if using web workers
+    this.cubeRenderer.flushQuadrantRequests();
   }
 
   /**
@@ -410,6 +412,9 @@ export class InteractionHandler {
       this.hoverLabel.position.copy(point).add(offset);
       this.hoverLabel.visible = true;
     }
+
+    // Flush pending worker requests if using web workers
+    this.cubeRenderer.flushQuadrantRequests();
   }
 
   /**
@@ -478,7 +483,6 @@ export class InteractionHandler {
    * Closer areas get higher resolution, farther areas get lower resolution.
    */
   private renderLOD(point: THREE.Vector3): void {
-    console.log("render LOD")
     // Clear previous display
     this.cubeRenderer.clearHoverDisplay();
     this.lastHoveredCell = null;
@@ -619,6 +623,9 @@ export class InteractionHandler {
       this.hoverLabel.position.copy(point).add(offset);
       this.hoverLabel.visible = true;
     }
+
+    // Flush pending worker requests if using web workers
+    this.cubeRenderer.flushQuadrantRequests();
   }
 
   /**

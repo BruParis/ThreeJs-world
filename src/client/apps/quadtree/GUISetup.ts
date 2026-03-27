@@ -61,6 +61,7 @@ export class GUISetup {
         distanceThreshold: interactionHandler.getDistanceThreshold(),
         subdivisionFactor: cubeRenderer.getSubdivisionFactor(),
         showSubdivisionWireframe: cubeRenderer.getQuadrantWireframe(),
+        useWebWorkers: cubeRenderer.getUseWorkers(),
       };
 
       // Mode selector
@@ -110,6 +111,14 @@ export class GUISetup {
         .name('Subdivision Wireframe')
         .onChange((value: boolean) => {
           cubeRenderer.setQuadrantWireframe(value);
+        });
+
+      hoverFolder
+        .add(hoverState, 'useWebWorkers')
+        .name('Use Web Workers')
+        .onChange((value: boolean) => {
+          cubeRenderer.setUseWorkers(value);
+          cubeRenderer.clearHoverDisplay();
         });
 
       hoverFolder.open();
