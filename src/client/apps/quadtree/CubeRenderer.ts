@@ -18,6 +18,20 @@ export interface GUIParams {
   sphereMode: boolean;
 }
 
+/**
+ * Specification for a quadrant mesh to be displayed.
+ * The key format is "face:level:x:y:quadrantIndex".
+ */
+export interface QuadrantSpec {
+  key: string;
+  u0: number;
+  u1: number;
+  v0: number;
+  v1: number;
+  face: number;
+  color: number;
+}
+
 // Number of segments to subdivide great arcs
 const GREAT_ARC_SEGMENTS = 16;
 // Offset to lift lines above the sphere surface
@@ -138,7 +152,8 @@ export class CubeRenderer {
 
   // Hover cell visualization
   private hoverCellOutlines: THREE.Line[] = [];
-  private hoverQuadrantMeshes: THREE.Mesh[] = [];
+  // Quadrant meshes tracked by unique key: "face:level:x:y:quadrant"
+  private hoverQuadrantMeshes: Map<string, THREE.Mesh> = new Map();
 
   // Hover point indicator (a tiny line extending outward from the surface)
   private hoverPointIndicator: THREE.Line | null = null;
@@ -609,14 +624,22 @@ export class CubeRenderer {
    * Clears all hover cell displays.
    */
   clearHoverDisplay(): void {
+    this.clearHoverCellOutlines();
+    this.clearHoverPointIndicator();
+    this.clearQuadrantMeshes();
+  }
+
+  /**
+   * Clears only the hover cell outlines (not the quadrant meshes).
+   * Used for incremental LOD updates where meshes are kept persistent.
+   */
+  clearHoverCellOutlines(): void {
     for (const outline of this.hoverCellOutlines) {
       outline.geometry.dispose();
       (outline.material as THREE.Material).dispose();
       this.scene.remove(outline);
     }
     this.hoverCellOutlines = [];
-    this.clearHoverPointIndicator();
-    this.clearQuadrantMeshes();
   }
 
   /**
@@ -689,7 +712,7 @@ export class CubeRenderer {
   setQuadrantWireframe(enabled: boolean): void {
     this.quadrantWireframe = enabled;
     // Update existing meshes
-    for (const mesh of this.hoverQuadrantMeshes) {
+    for (const [, mesh] of this.hoverQuadrantMeshes) {
       const mat = mesh.material as THREE.MeshBasicMaterial;
       mat.wireframe = enabled;
       mat.opacity = enabled ? 1.0 : 0.6;
@@ -771,7 +794,9 @@ export class CubeRenderer {
         const mesh = this.createQuadrantMesh(quadrants[i], face, color);
         const meshEnd = performance.now();
         if (mesh) {
-          this.hoverQuadrantMeshes.push(mesh);
+          // Use temporary key for non-incremental modes
+          const tempKey = `temp_${face}_${u0}_${v0}_${i}_${Date.now()}`;
+          this.hoverQuadrantMeshes.set(tempKey, mesh);
           meshCount++;
           console.log(`[CubeRenderer-Sync] Mesh ${i}: compute=${(meshEnd - meshStart).toFixed(2)}ms`);
         }
@@ -825,7 +850,8 @@ export class CubeRenderer {
         material.opacity = this.quadrantWireframe ? 1.0 : 0.6;
 
         this.scene.add(result.mesh);
-        this.hoverQuadrantMeshes.push(result.mesh);
+        // Use the worker-provided id as the key
+        this.hoverQuadrantMeshes.set(result.id, result.mesh);
       }
 
       const batchEnd = performance.now();
@@ -837,6 +863,146 @@ export class CubeRenderer {
         this.isGeneratingMeshes = false;
       }
     }
+  }
+
+  /**
+   * Updates LOD quadrants incrementally.
+   * Compares needed quadrants with currently displayed ones,
+   * removes obsolete quadrants, and generates only new ones.
+   * @param neededQuadrants Map of quadrant key -> QuadrantSpec
+   * @returns Promise that resolves when all new meshes are generated
+   */
+  async updateLODQuadrants(neededQuadrants: Map<string, QuadrantSpec>): Promise<void> {
+    if (this.subdivisionFactor <= 0) return;
+
+    // Find quadrants to remove (in current but not in needed)
+    const toRemove: string[] = [];
+    for (const [key] of this.hoverQuadrantMeshes) {
+      if (!neededQuadrants.has(key)) {
+        toRemove.push(key);
+      }
+    }
+
+    // Find quadrants to add (in needed but not in current)
+    const toAdd: QuadrantSpec[] = [];
+    for (const [key, spec] of neededQuadrants) {
+      if (!this.hoverQuadrantMeshes.has(key)) {
+        toAdd.push(spec);
+      }
+    }
+
+    console.log(`[CubeRenderer-LOD] Incremental: keep=${neededQuadrants.size - toAdd.length}, add=${toAdd.length}, remove=${toRemove.length}`);
+
+    // If nothing to add, just remove obsolete and return
+    if (toAdd.length === 0) {
+      for (const key of toRemove) {
+        const mesh = this.hoverQuadrantMeshes.get(key);
+        if (mesh) {
+          mesh.geometry.dispose();
+          (mesh.material as THREE.Material).dispose();
+          this.scene.remove(mesh);
+          this.hoverQuadrantMeshes.delete(key);
+        }
+      }
+      return;
+    }
+
+    // Generate new quadrants
+    if (this.useWorkers) {
+      // Use workers for new quadrants
+      if (!this.meshService) {
+        this.meshService = new QuadrantMeshService();
+      }
+
+      const generationId = ++this.currentGenerationId;
+      this.isGeneratingMeshes = true;
+
+      const requests: QuadrantMeshRequest[] = toAdd.map(spec => ({
+        u0: spec.u0,
+        u1: spec.u1,
+        v0: spec.v0,
+        v1: spec.v1,
+        face: spec.face,
+        subdivisions: this.subdivisionFactor,
+        sphereMode: this.sphereMode,
+        offset: 0.001,
+        color: spec.color,
+        id: spec.key,
+      }));
+
+      try {
+        const results = await this.meshService.generateMeshesBatched(requests);
+
+        // Check if generation is still current
+        if (generationId !== this.currentGenerationId) {
+          console.log(`[CubeRenderer-LOD] Discarding outdated incremental batch`);
+          return;
+        }
+
+        // Now that new meshes are ready, remove obsolete ones
+        for (const key of toRemove) {
+          const mesh = this.hoverQuadrantMeshes.get(key);
+          if (mesh) {
+            mesh.geometry.dispose();
+            (mesh.material as THREE.Material).dispose();
+            this.scene.remove(mesh);
+            this.hoverQuadrantMeshes.delete(key);
+          }
+        }
+
+        // Add new meshes
+        for (const result of results) {
+          const material = result.mesh.material as THREE.MeshBasicMaterial;
+          material.wireframe = this.quadrantWireframe;
+          material.opacity = this.quadrantWireframe ? 1.0 : 0.6;
+
+          this.scene.add(result.mesh);
+          this.hoverQuadrantMeshes.set(result.id, result.mesh);
+        }
+      } finally {
+        if (generationId === this.currentGenerationId) {
+          this.isGeneratingMeshes = false;
+        }
+      }
+    } else {
+      // Synchronous generation
+      const newMeshes: Array<{ key: string; mesh: THREE.Mesh }> = [];
+
+      for (const spec of toAdd) {
+        const mesh = this.createQuadrantMesh(
+          { u0: spec.u0, u1: spec.u1, v0: spec.v0, v1: spec.v1 },
+          spec.face,
+          spec.color
+        );
+        if (mesh) {
+          newMeshes.push({ key: spec.key, mesh });
+        }
+      }
+
+      // Now that new meshes are ready, remove obsolete ones
+      for (const key of toRemove) {
+        const mesh = this.hoverQuadrantMeshes.get(key);
+        if (mesh) {
+          mesh.geometry.dispose();
+          (mesh.material as THREE.Material).dispose();
+          this.scene.remove(mesh);
+          this.hoverQuadrantMeshes.delete(key);
+        }
+      }
+
+      // Add new meshes
+      for (const { key, mesh } of newMeshes) {
+        this.scene.add(mesh);
+        this.hoverQuadrantMeshes.set(key, mesh);
+      }
+    }
+  }
+
+  /**
+   * Gets the set of currently displayed quadrant keys.
+   */
+  getDisplayedQuadrantKeys(): Set<string> {
+    return new Set(this.hoverQuadrantMeshes.keys());
   }
 
   /**
@@ -946,12 +1112,12 @@ export class CubeRenderer {
     this.currentGenerationId++;
     this.pendingQuadrantRequests = [];
 
-    for (const mesh of this.hoverQuadrantMeshes) {
+    for (const [, mesh] of this.hoverQuadrantMeshes) {
       mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
       this.scene.remove(mesh);
     }
-    this.hoverQuadrantMeshes = [];
+    this.hoverQuadrantMeshes.clear();
   }
 
   /**

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { CubeRenderer } from './CubeRenderer';
+import { CubeRenderer, QuadrantSpec } from './CubeRenderer';
 import { SceneSetup } from './SceneSetup';
 import {
   QuadTreeCell,
@@ -481,10 +481,11 @@ export class InteractionHandler {
    * Handles LOD (Level of Detail) display mode.
    * Shows quadrants at varying resolution levels based on distance from the camera look point.
    * Closer areas get higher resolution, farther areas get lower resolution.
+   * Uses incremental updates to avoid clearing and regenerating all meshes.
    */
   private renderLOD(point: THREE.Vector3): void {
-    // Clear previous display
-    this.cubeRenderer.clearHoverDisplay();
+    // Clear only cell outlines (not quadrant meshes - those are updated incrementally)
+    this.cubeRenderer.clearHoverCellOutlines();
     this.lastHoveredCell = null;
 
     // Display hover point indicator at camera look point
@@ -496,13 +497,7 @@ export class InteractionHandler {
     // Maximum level (highest detail at the center)
     const maxLevel = this.resolutionLevel;
 
-    // Build LOD structure: for each level, determine which cells to display
-    // A cell is displayed at level L if:
-    // - It's within the distance threshold for level L
-    // - Its children (at level L+1) are NOT all within the threshold for level L+1
-
     // Distance thresholds for each level (larger distance = lower detail)
-    // These are based on the distanceThreshold setting, scaled per level
     const baseDistance = this.distanceThreshold;
 
     // Track which cells are displayed (to avoid showing both parent and children)
@@ -512,75 +507,77 @@ export class InteractionHandler {
     // Track cells found per level for debugging
     const cellsPerLevel: Map<number, number> = new Map();
 
+    // Collect all needed quadrants for incremental update
+    const neededQuadrants: Map<string, QuadrantSpec> = new Map();
+
     // Process from finest level to coarsest
     for (let level = maxLevel; level >= 0; level--) {
-      // Distance threshold for this level
-      // Finer levels (higher number) have smaller thresholds
       const levelThreshold = baseDistance * Math.pow(2, maxLevel - level);
 
       const gridSize = getGridSize(level);
       const color = LEVEL_COLORS[level % LEVEL_COLORS.length];
       let cellsFoundAtLevel = 0;
 
-      // Check all cells at this level across all faces
       for (let face = 0; face < 6; face++) {
         for (let x = 0; x < gridSize; x++) {
           for (let y = 0; y < gridSize; y++) {
             const cell: QuadTreeCell = { face: face as CubeFace, level, x, y };
             const cellKey = this.cellKey(cell);
 
-            // Skip if this cell has children that are already displayed
             if (cellsWithChildrenDisplayed.has(cellKey)) continue;
 
-            // Check if cell is within threshold
             if (!this.isCellWithinDistance(cell, spherePoint, levelThreshold, isSphereMode)) {
               continue;
             }
 
             cellsFoundAtLevel++;
 
-            // Check if we should display this cell or its children
-            // At the finest level, always display
+            // Compute UV bounds for this cell
+            const u0 = -1 + (2 * x) / gridSize;
+            const u1 = -1 + (2 * (x + 1)) / gridSize;
+            const v0 = -1 + (2 * y) / gridSize;
+            const v1 = -1 + (2 * (y + 1)) / gridSize;
+            const uMid = (u0 + u1) / 2;
+            const vMid = (v0 + v1) / 2;
+
             if (level === maxLevel) {
+              // At finest level, display all 4 quadrants of this cell
               displayedCells.add(cellKey);
-              this.displayLODCell(cell, color);
+
+              // Display cell outline
+              const displayInfo = { cell, isSelected: false };
+              this.cubeRenderer.displayHoverCell(displayInfo, color);
+
+              // Add all 4 quadrants
+              this.addCellQuadrantsToMap(neededQuadrants, cell, face, u0, u1, v0, v1, uMid, vMid, color, undefined);
             } else {
-              // Check if any children are displayed (either fully or partially with their own children)
+              // Check if any children are displayed
               const children = this.getChildCells(cell);
               const childQuadrants = new Set<number>();
               for (const child of children) {
                 const childKey = this.cellKey(child);
-                // A child is "occupied" if it's displayed OR if it has its own children displayed
                 if (displayedCells.has(childKey) || cellsWithChildrenDisplayed.has(childKey)) {
                   childQuadrants.add(this.getQuadrantInParent(child));
                 }
               }
 
               if (childQuadrants.size > 0) {
-                // Mark this cell as having children displayed
                 cellsWithChildrenDisplayed.add(cellKey);
 
                 // Display cell outline with child quadrant info
                 const displayInfo = { cell, isSelected: false, childQuadrants };
                 this.cubeRenderer.displayHoverCell(displayInfo, color);
 
-                // Display only unoccupied quadrants
-                const cellGridSize = getGridSize(cell.level);
-                const u0 = -1 + (2 * cell.x) / cellGridSize;
-                const u1 = -1 + (2 * (cell.x + 1)) / cellGridSize;
-                const v0 = -1 + (2 * cell.y) / cellGridSize;
-                const v1 = -1 + (2 * (cell.y + 1)) / cellGridSize;
-
-                this.cubeRenderer.displayTriangulatedQuadrants(
-                  { u0, u1, v0, v1 },
-                  cell.face,
-                  childQuadrants,
-                  color
-                );
+                // Add only unoccupied quadrants
+                this.addCellQuadrantsToMap(neededQuadrants, cell, face, u0, u1, v0, v1, uMid, vMid, color, childQuadrants);
               } else {
-                // No children displayed, display this cell fully
+                // No children displayed, display all 4 quadrants
                 displayedCells.add(cellKey);
-                this.displayLODCell(cell, color);
+
+                const displayInfo = { cell, isSelected: false };
+                this.cubeRenderer.displayHoverCell(displayInfo, color);
+
+                this.addCellQuadrantsToMap(neededQuadrants, cell, face, u0, u1, v0, v1, uMid, vMid, color, undefined);
               }
             }
           }
@@ -589,8 +586,6 @@ export class InteractionHandler {
 
       cellsPerLevel.set(level, cellsFoundAtLevel);
 
-      // Warning: at level 0, we should always have at least one cell within threshold
-      // If not, there will be gaps in the visualization
       if (level === 0 && cellsFoundAtLevel === 0) {
         console.warn(
           `[LOD] No cells found at level 0! This will cause gaps in the visualization.\n` +
@@ -603,50 +598,58 @@ export class InteractionHandler {
       }
     }
 
-    // Warning: no cells displayed at all
-    const totalDisplayed = displayedCells.size + cellsWithChildrenDisplayed.size;
-    if (totalDisplayed === 0) {
-      console.warn(
-        `[LOD] No cells displayed at any level!\n` +
-        `  - Base distance: ${baseDistance.toFixed(3)}\n` +
-        `  - Max level: ${maxLevel}\n` +
-        `  - Sphere point: (${spherePoint.x.toFixed(3)}, ${spherePoint.y.toFixed(3)}, ${spherePoint.z.toFixed(3)})\n` +
-        `  - Cells per level: ${Array.from(cellsPerLevel.entries()).map(([l, c]) => `L${l}:${c}`).join(', ')}`
-      );
-    }
+    // Incremental update of quadrant meshes
+    this.cubeRenderer.updateLODQuadrants(neededQuadrants);
 
     // Update label
     if (this.labelDiv && this.hoverLabel) {
       const modeStr = isSphereMode ? 'arc' : 'cube';
-      this.labelDiv.textContent = `LOD mode (${modeStr})\nMax level: ${maxLevel}\nBase distance: ${baseDistance.toFixed(2)}\nCells: ${displayedCells.size}`;
+      this.labelDiv.textContent = `LOD mode (${modeStr})\nMax level: ${maxLevel}\nBase distance: ${baseDistance.toFixed(2)}\nQuadrants: ${neededQuadrants.size}`;
       const offset = new THREE.Vector3(-0.8, 0.2, 0);
       this.hoverLabel.position.copy(point).add(offset);
       this.hoverLabel.visible = true;
     }
-
-    // Flush pending worker requests if using web workers
-    this.cubeRenderer.flushQuadrantRequests();
   }
 
   /**
-   * Displays a cell for LOD mode with full quadrant triangulation.
+   * Helper to add quadrants of a cell to the needed quadrants map.
    */
-  private displayLODCell(cell: QuadTreeCell, color: number): void {
-    const displayInfo = { cell, isSelected: false };
-    this.cubeRenderer.displayHoverCell(displayInfo, color);
+  private addCellQuadrantsToMap(
+    map: Map<string, QuadrantSpec>,
+    cell: QuadTreeCell,
+    face: number,
+    u0: number,
+    u1: number,
+    v0: number,
+    v1: number,
+    uMid: number,
+    vMid: number,
+    color: number,
+    skipQuadrants: Set<number> | undefined
+  ): void {
+    // Quadrant bounds: 0=BL, 1=BR, 2=TR, 3=TL
+    const quadrantBounds = [
+      { u0: u0, u1: uMid, v0: v0, v1: vMid },   // BL
+      { u0: uMid, u1: u1, v0: v0, v1: vMid },   // BR
+      { u0: uMid, u1: u1, v0: vMid, v1: v1 },   // TR
+      { u0: u0, u1: uMid, v0: vMid, v1: v1 },   // TL
+    ];
 
-    const gridSize = getGridSize(cell.level);
-    const u0 = -1 + (2 * cell.x) / gridSize;
-    const u1 = -1 + (2 * (cell.x + 1)) / gridSize;
-    const v0 = -1 + (2 * cell.y) / gridSize;
-    const v1 = -1 + (2 * (cell.y + 1)) / gridSize;
+    for (let q = 0; q < 4; q++) {
+      if (skipQuadrants?.has(q)) continue;
 
-    this.cubeRenderer.displayTriangulatedQuadrants(
-      { u0, u1, v0, v1 },
-      cell.face,
-      undefined, // render all quadrants (no children to skip)
-      color
-    );
+      const key = `${face}:${cell.level}:${cell.x}:${cell.y}:${q}`;
+      const bounds = quadrantBounds[q];
+      map.set(key, {
+        key,
+        u0: bounds.u0,
+        u1: bounds.u1,
+        v0: bounds.v0,
+        v1: bounds.v1,
+        face,
+        color,
+      });
+    }
   }
 
   /**
