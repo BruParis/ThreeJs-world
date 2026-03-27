@@ -15,7 +15,7 @@ export class QuadTreeApplication implements TabApplication {
   private interactionHandler: InteractionHandler | null = null;
 
   private params: GUIParams = {
-    showFaces: true,
+    showFaces: false,
     showWireframe: true,
     showVertices: false,
     sphereMode: true,
@@ -64,6 +64,8 @@ export class QuadTreeApplication implements TabApplication {
 
   public update(): void {
     if (this.active && this.sceneSetup) {
+      // Update LOD display based on camera direction (if in LOD mode)
+      this.interactionHandler?.updateLOD();
       this.sceneSetup.render();
     }
   }

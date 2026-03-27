@@ -35,6 +35,8 @@ export interface QuadTreeCell {
 export interface QuadTreeCellDisplayInfo {
   cell: QuadTreeCell;
   isSelected: boolean;
+  /** Set of quadrant indices (0-3) that contain children and should not be rendered */
+  childQuadrants?: Set<number>;
 }
 
 /**

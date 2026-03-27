@@ -704,16 +704,16 @@ export class CubeRenderer {
   }
 
   /**
-   * Displays triangulated quadrants for a cell, excluding the quadrant containing the child.
+   * Displays triangulated quadrants for a cell, excluding quadrants that contain children.
    * @param cellUVBounds The UV bounds of the cell {u0, u1, v0, v1}
    * @param face The cube face
-   * @param childQuadrant Which quadrant contains the child (0-3: BL, BR, TR, TL) or -1 for all
+   * @param childQuadrants Set of quadrant indices (0-3: BL, BR, TR, TL) to skip, or undefined/empty for all
    * @param color The color for the mesh
    */
   displayTriangulatedQuadrants(
     cellUVBounds: { u0: number; u1: number; v0: number; v1: number },
     face: number,
-    childQuadrant: number,
+    childQuadrants: Set<number> | undefined,
     color: number
   ): void {
     if (this.subdivisionFactor <= 0) return;
@@ -734,7 +734,7 @@ export class CubeRenderer {
     if (this.useWorkers) {
       // Queue requests for worker-based generation
       for (let i = 0; i < 4; i++) {
-        if (i === childQuadrant) continue;
+        if (childQuadrants?.has(i)) continue;
         this.pendingQuadrantRequests.push({
           ...quadrants[i],
           face,
@@ -748,7 +748,7 @@ export class CubeRenderer {
     } else {
       // Synchronous generation
       for (let i = 0; i < 4; i++) {
-        if (i === childQuadrant) continue;
+        if (childQuadrants?.has(i)) continue;
         const mesh = this.createQuadrantMesh(quadrants[i], face, color);
         if (mesh) {
           this.hoverQuadrantMeshes.push(mesh);

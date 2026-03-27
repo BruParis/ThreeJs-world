@@ -9,7 +9,7 @@ import {
   formatCell,
   getGridSize,
 } from './QuadTreeEncoding';
-import { spherePointToCell, computeCellVertices } from './QuadTreeGeometry';
+import { spherePointToCell, computeCellVertices, computeCellCenter } from './QuadTreeGeometry';
 import { cubeToSphere } from '@core/geometry/EverettPraunMapping';
 
 export type DisplayMode = 'hierarchy' | 'distance' | 'lod';
@@ -42,7 +42,7 @@ export class InteractionHandler {
   private active: boolean = false;
 
   // Display mode: 'hierarchy' shows parent cells, 'distance' shows nearby cells
-  private displayMode: DisplayMode = 'hierarchy';
+  private displayMode: DisplayMode = 'lod';
   // Distance threshold for distance mode (arc length on sphere, euclidean on cube)
   private distanceThreshold: number = 0.15;
 
@@ -52,6 +52,10 @@ export class InteractionHandler {
 
   // Last hovered cell (to avoid redundant updates)
   private lastHoveredCell: QuadTreeCell | null = null;
+
+  // Last LOD center point (to avoid redundant rebuilds)
+  private lastLODPoint: THREE.Vector3 | null = null;
+  private static readonly LOD_UPDATE_THRESHOLD = 0.01; // Minimum distance to trigger rebuild
 
   // Bound event handlers
   private boundOnMouseMove: (event: MouseEvent) => void;
@@ -125,8 +129,9 @@ export class InteractionHandler {
    */
   setResolutionLevel(level: number): void {
     this.resolutionLevel = Math.max(0, Math.min(10, Math.floor(level)));
-    // Force refresh on next mouse move
+    // Force refresh on next update
     this.lastHoveredCell = null;
+    this.lastLODPoint = null;
   }
 
   /**
@@ -142,6 +147,7 @@ export class InteractionHandler {
   setDisplayMode(mode: DisplayMode): void {
     this.displayMode = mode;
     this.lastHoveredCell = null;
+    this.lastLODPoint = null; // Reset LOD cache when mode changes
   }
 
   /**
@@ -157,6 +163,7 @@ export class InteractionHandler {
   setDistanceThreshold(distance: number): void {
     this.distanceThreshold = Math.max(0.01, distance);
     this.lastHoveredCell = null;
+    this.lastLODPoint = null;
   }
 
   /**
@@ -196,6 +203,9 @@ export class InteractionHandler {
    * Handles hover over a point on the surface.
    */
   private handleHover(point: THREE.Vector3): void {
+    // LOD mode is handled separately via updateLOD() from the animation loop
+    if (this.displayMode === 'lod') return;
+
     // Display hover point indicator
     this.cubeRenderer.displayHoverPoint(point);
 
@@ -203,8 +213,6 @@ export class InteractionHandler {
       this.handleHierarchyMode(point);
     } else if (this.displayMode === 'distance') {
       this.handleDistanceMode(point);
-    } else if (this.displayMode === 'lod') {
-      this.handleLODMode(point);
     }
   }
 
@@ -256,47 +264,29 @@ export class InteractionHandler {
       // Add to label text
       labelText += formatCell(currentCell) + '\n';
 
-      // Display triangulated quadrants for this cell (except at the deepest level)
-      if (i > 0) {
-        // Calculate UV bounds for this cell
-        const gridSize = getGridSize(currentCell.level);
-        const u0 = -1 + (2 * currentCell.x) / gridSize;
-        const u1 = -1 + (2 * (currentCell.x + 1)) / gridSize;
-        const v0 = -1 + (2 * currentCell.y) / gridSize;
-        const v1 = -1 + (2 * (currentCell.y + 1)) / gridSize;
+      // Calculate UV bounds for this cell
+      const gridSize = getGridSize(currentCell.level);
+      const u0 = -1 + (2 * currentCell.x) / gridSize;
+      const u1 = -1 + (2 * (currentCell.x + 1)) / gridSize;
+      const v0 = -1 + (2 * currentCell.y) / gridSize;
+      const v1 = -1 + (2 * (currentCell.y + 1)) / gridSize;
 
-        // Determine which quadrant contains the child cell
+      // Determine which quadrants contain children (only the one leading to the leaf)
+      let childQuadrants: Set<number> | undefined;
+      if (i > 0) {
         // The child is at hierarchy.levels[i-1]
         const childCell = hierarchy.levels[i - 1].cell;
-        // Child's position within parent: x % 2 and y % 2
-        const childQuadrantX = childCell.x % 2; // 0 = left, 1 = right
-        const childQuadrantY = childCell.y % 2; // 0 = bottom, 1 = top
-        // Quadrant index: 0=BL, 1=BR, 2=TR, 3=TL
-        const childQuadrant = childQuadrantY === 0
-          ? childQuadrantX
-          : (childQuadrantX === 0 ? 3 : 2);
-
-        this.cubeRenderer.displayTriangulatedQuadrants(
-          { u0, u1, v0, v1 },
-          currentCell.face,
-          childQuadrant,
-          color
-        );
-      } else {
-        // At the deepest level, triangulate all 4 quadrants
-        const gridSize = getGridSize(currentCell.level);
-        const u0 = -1 + (2 * currentCell.x) / gridSize;
-        const u1 = -1 + (2 * (currentCell.x + 1)) / gridSize;
-        const v0 = -1 + (2 * currentCell.y) / gridSize;
-        const v1 = -1 + (2 * (currentCell.y + 1)) / gridSize;
-
-        this.cubeRenderer.displayTriangulatedQuadrants(
-          { u0, u1, v0, v1 },
-          currentCell.face,
-          -1, // -1 means triangulate all quadrants
-          color
-        );
+        const childQuadrant = this.getQuadrantInParent(childCell);
+        childQuadrants = new Set([childQuadrant]);
       }
+      // At the deepest level (i === 0), childQuadrants remains undefined (render all)
+
+      this.cubeRenderer.displayTriangulatedQuadrants(
+        { u0, u1, v0, v1 },
+        currentCell.face,
+        childQuadrants,
+        color
+      );
     }
 
     // Update label - offset to the left for readability
@@ -385,8 +375,12 @@ export class InteractionHandler {
       const color = LEVEL_COLORS[level % LEVEL_COLORS.length];
 
       for (const [, { cell, childQuadrants }] of levelCells) {
-        // Display the cell outline
-        const displayInfo = { cell, isSelected: false };
+        // Display the cell outline with child quadrant info
+        const displayInfo = {
+          cell,
+          isSelected: false,
+          childQuadrants: childQuadrants.size > 0 ? childQuadrants : undefined,
+        };
         this.cubeRenderer.displayHoverCell(displayInfo, color);
 
         // Calculate UV bounds for this cell
@@ -397,22 +391,12 @@ export class InteractionHandler {
         const v1 = -1 + (2 * (cell.y + 1)) / gridSize;
 
         // Display triangulated quadrants, excluding those occupied by children
-        if (childQuadrants.size === 0) {
-          // Leaf cell: triangulate all 4 quadrants
-          this.cubeRenderer.displayTriangulatedQuadrants(
-            { u0, u1, v0, v1 },
-            cell.face,
-            -1, // all quadrants
-            color
-          );
-        } else {
-          // Parent cell: triangulate only unoccupied quadrants
-          for (let q = 0; q < 4; q++) {
-            if (!childQuadrants.has(q)) {
-              this.displaySingleQuadrant({ u0, u1, v0, v1 }, cell.face, q, color);
-            }
-          }
-        }
+        this.cubeRenderer.displayTriangulatedQuadrants(
+          { u0, u1, v0, v1 },
+          cell.face,
+          childQuadrants.size > 0 ? childQuadrants : undefined,
+          color
+        );
       }
     }
 
@@ -429,14 +413,78 @@ export class InteractionHandler {
   }
 
   /**
+   * Computes the point on the sphere/cube surface where the camera is looking.
+   * Returns null if the camera is not pointing at the surface.
+   */
+  private getCameraLookAtPoint(): THREE.Vector3 | null {
+    const camera = this.sceneSetup.camera;
+
+    // Get the camera's forward direction
+    const direction = new THREE.Vector3(0, 0, -1);
+    direction.applyQuaternion(camera.quaternion);
+
+    // Create a ray from camera position in the look direction
+    this.raycaster.set(camera.position, direction);
+
+    // Get the appropriate mesh based on mode
+    const mesh = this.cubeRenderer.isSphereMode()
+      ? this.cubeRenderer.getSphereMesh()
+      : this.cubeRenderer.getCubeMesh();
+
+    if (!mesh) return null;
+
+    const intersects = this.raycaster.intersectObject(mesh);
+    if (intersects.length > 0) {
+      return intersects[0].point;
+    }
+
+    return null;
+  }
+
+  /**
+   * Updates the LOD display based on camera look direction.
+   * Should be called from the animation loop when in LOD mode.
+   */
+  public updateLOD(): void {
+    if (!this.active || this.displayMode !== 'lod') return;
+
+    const point = this.getCameraLookAtPoint();
+    if (point) {
+      // Check if the point has moved enough to warrant a rebuild
+      if (this.lastLODPoint) {
+
+        const distance = point.distanceTo(this.lastLODPoint);
+        // console.log("check dist")
+        if (distance < InteractionHandler.LOD_UPDATE_THRESHOLD) {
+          return; // Point hasn't moved enough, skip rebuild
+        }
+      }
+      this.lastLODPoint = point.clone();
+      this.renderLOD(point);
+    } else {
+      console.warn("no point")
+      // Camera is not pointing at the sphere/cube surface
+      if (this.lastLODPoint !== null) {
+        console.warn('[LOD] Camera look direction does not intersect the surface');
+      }
+      this.lastLODPoint = null;
+      this.cubeRenderer.clearHoverDisplay();
+    }
+  }
+
+  /**
    * Handles LOD (Level of Detail) display mode.
-   * Shows quadrants at varying resolution levels based on distance from the hovered point.
+   * Shows quadrants at varying resolution levels based on distance from the camera look point.
    * Closer areas get higher resolution, farther areas get lower resolution.
    */
-  private handleLODMode(point: THREE.Vector3): void {
+  private renderLOD(point: THREE.Vector3): void {
+    console.log("render LOD")
     // Clear previous display
     this.cubeRenderer.clearHoverDisplay();
     this.lastHoveredCell = null;
+
+    // Display hover point indicator at camera look point
+    this.cubeRenderer.displayHoverPoint(point);
 
     const isSphereMode = this.cubeRenderer.isSphereMode();
     const spherePoint = point.clone().normalize();
@@ -457,6 +505,8 @@ export class InteractionHandler {
     const displayedCells: Set<string> = new Set();
     // Track cells that have children displayed (so we don't display them)
     const cellsWithChildrenDisplayed: Set<string> = new Set();
+    // Track cells found per level for debugging
+    const cellsPerLevel: Map<number, number> = new Map();
 
     // Process from finest level to coarsest
     for (let level = maxLevel; level >= 0; level--) {
@@ -466,6 +516,7 @@ export class InteractionHandler {
 
       const gridSize = getGridSize(level);
       const color = LEVEL_COLORS[level % LEVEL_COLORS.length];
+      let cellsFoundAtLevel = 0;
 
       // Check all cells at this level across all faces
       for (let face = 0; face < 6; face++) {
@@ -482,32 +533,31 @@ export class InteractionHandler {
               continue;
             }
 
+            cellsFoundAtLevel++;
+
             // Check if we should display this cell or its children
             // At the finest level, always display
             if (level === maxLevel) {
               displayedCells.add(cellKey);
               this.displayLODCell(cell, color);
             } else {
-              // Check if any children are displayed
+              // Check if any children are displayed (either fully or partially with their own children)
               const children = this.getChildCells(cell);
-              const anyChildDisplayed = children.some(child =>
-                displayedCells.has(this.cellKey(child))
-              );
+              const childQuadrants = new Set<number>();
+              for (const child of children) {
+                const childKey = this.cellKey(child);
+                // A child is "occupied" if it's displayed OR if it has its own children displayed
+                if (displayedCells.has(childKey) || cellsWithChildrenDisplayed.has(childKey)) {
+                  childQuadrants.add(this.getQuadrantInParent(child));
+                }
+              }
 
-              if (anyChildDisplayed) {
+              if (childQuadrants.size > 0) {
                 // Mark this cell as having children displayed
                 cellsWithChildrenDisplayed.add(cellKey);
 
-                // Display only the quadrants that don't have children
-                const childQuadrants = new Set<number>();
-                for (const child of children) {
-                  if (displayedCells.has(this.cellKey(child))) {
-                    childQuadrants.add(this.getQuadrantInParent(child));
-                  }
-                }
-
-                // Display cell outline
-                const displayInfo = { cell, isSelected: false };
+                // Display cell outline with child quadrant info
+                const displayInfo = { cell, isSelected: false, childQuadrants };
                 this.cubeRenderer.displayHoverCell(displayInfo, color);
 
                 // Display only unoccupied quadrants
@@ -517,11 +567,12 @@ export class InteractionHandler {
                 const v0 = -1 + (2 * cell.y) / cellGridSize;
                 const v1 = -1 + (2 * (cell.y + 1)) / cellGridSize;
 
-                for (let q = 0; q < 4; q++) {
-                  if (!childQuadrants.has(q)) {
-                    this.displaySingleQuadrant({ u0, u1, v0, v1 }, cell.face, q, color);
-                  }
-                }
+                this.cubeRenderer.displayTriangulatedQuadrants(
+                  { u0, u1, v0, v1 },
+                  cell.face,
+                  childQuadrants,
+                  color
+                );
               } else {
                 // No children displayed, display this cell fully
                 displayedCells.add(cellKey);
@@ -531,6 +582,33 @@ export class InteractionHandler {
           }
         }
       }
+
+      cellsPerLevel.set(level, cellsFoundAtLevel);
+
+      // Warning: at level 0, we should always have at least one cell within threshold
+      // If not, there will be gaps in the visualization
+      if (level === 0 && cellsFoundAtLevel === 0) {
+        console.warn(
+          `[LOD] No cells found at level 0! This will cause gaps in the visualization.\n` +
+          `  - Level 0 threshold: ${levelThreshold.toFixed(3)}\n` +
+          `  - Base distance: ${baseDistance.toFixed(3)}\n` +
+          `  - Max level: ${maxLevel}\n` +
+          `  - Sphere point: (${spherePoint.x.toFixed(3)}, ${spherePoint.y.toFixed(3)}, ${spherePoint.z.toFixed(3)})\n` +
+          `  - Consider increasing the base distance threshold.`
+        );
+      }
+    }
+
+    // Warning: no cells displayed at all
+    const totalDisplayed = displayedCells.size + cellsWithChildrenDisplayed.size;
+    if (totalDisplayed === 0) {
+      console.warn(
+        `[LOD] No cells displayed at any level!\n` +
+        `  - Base distance: ${baseDistance.toFixed(3)}\n` +
+        `  - Max level: ${maxLevel}\n` +
+        `  - Sphere point: (${spherePoint.x.toFixed(3)}, ${spherePoint.y.toFixed(3)}, ${spherePoint.z.toFixed(3)})\n` +
+        `  - Cells per level: ${Array.from(cellsPerLevel.entries()).map(([l, c]) => `L${l}:${c}`).join(', ')}`
+      );
     }
 
     // Update label
@@ -559,7 +637,7 @@ export class InteractionHandler {
     this.cubeRenderer.displayTriangulatedQuadrants(
       { u0, u1, v0, v1 },
       cell.face,
-      -1, // all quadrants
+      undefined, // render all quadrants (no children to skip)
       color
     );
   }
@@ -617,36 +695,6 @@ export class InteractionHandler {
   }
 
   /**
-   * Displays a single quadrant of a cell.
-   * quadrant: 0=BL, 1=BR, 2=TR, 3=TL
-   */
-  private displaySingleQuadrant(
-    cellUVBounds: { u0: number; u1: number; v0: number; v1: number },
-    face: CubeFace,
-    quadrant: number,
-    color: number
-  ): void {
-    const { u0, u1, v0, v1 } = cellUVBounds;
-    const uMid = (u0 + u1) / 2;
-    const vMid = (v0 + v1) / 2;
-
-    // Define quadrant bounds: 0=BL, 1=BR, 2=TR, 3=TL
-    const quadrantBounds = [
-      { u0: u0, u1: uMid, v0: v0, v1: vMid },   // BL
-      { u0: uMid, u1: u1, v0: v0, v1: vMid },   // BR
-      { u0: uMid, u1: u1, v0: vMid, v1: v1 },   // TR
-      { u0: u0, u1: uMid, v0: vMid, v1: v1 },   // TL
-    ];
-
-    const bounds = quadrantBounds[quadrant];
-
-    // Use the CubeRenderer's method but we need to call it for a single quadrant
-    // We'll reuse displayTriangulatedQuadrants with a trick: pass the quadrant bounds as the cell bounds
-    // and use -1 to triangulate the entire (sub)cell
-    this.cubeRenderer.displayTriangulatedQuadrants(bounds, face, -1, color);
-  }
-
-  /**
    * Finds all cells at a given level that have at least one vertex within the distance threshold.
    */
   private findCellsWithinDistance(
@@ -675,7 +723,10 @@ export class InteractionHandler {
   }
 
   /**
-   * Checks if any vertex of the cell is within the distance threshold.
+   * Checks if the cell is within the distance threshold.
+   * A cell is within threshold if:
+   * - Any vertex is within threshold, OR
+   * - The cell center is within threshold
    */
   private isCellWithinDistance(
     cell: QuadTreeCell,
@@ -683,8 +734,19 @@ export class InteractionHandler {
     threshold: number,
     useSphereDistance: boolean
   ): boolean {
-    const vertices = computeCellVertices(cell);
+    // First check the cell center - this handles the case where the reference point
+    // is inside a large cell (e.g., looking at the center of a level 0 face)
+    const center = computeCellCenter(cell);
+    const centerDistance = useSphereDistance
+      ? this.computeArcDistance(referencePoint, center)
+      : this.computeCubeDistance(referencePoint, center);
 
+    if (centerDistance <= threshold) {
+      return true;
+    }
+
+    // Then check vertices
+    const vertices = computeCellVertices(cell);
     for (const vertex of vertices) {
       const distance = useSphereDistance
         ? this.computeArcDistance(referencePoint, vertex)
@@ -777,6 +839,9 @@ export class InteractionHandler {
    * Clears the hover display.
    */
   private clearHover(): void {
+    // In LOD mode, the display is managed by updateLOD(), not mouse events
+    if (this.displayMode === 'lod') return;
+
     this.cubeRenderer.clearHoverDisplay();
     this.lastHoveredCell = null;
 

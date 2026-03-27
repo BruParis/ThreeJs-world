@@ -98,7 +98,7 @@ export class GUISetup {
       }
 
       hoverFolder
-        .add(hoverState, 'subdivisionFactor', 0, 8, 1)
+        .add(hoverState, 'subdivisionFactor', 0, 12, 1)
         .name('Subdivision')
         .onChange((value: number) => {
           cubeRenderer.setSubdivisionFactor(value);
