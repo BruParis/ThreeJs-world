@@ -59,6 +59,27 @@ export function computeCellVertices(cell: QuadTreeCell): THREE.Vector3[] {
 }
 
 /**
+ * Computes the four corner vertices of a cell projected onto the sphere.
+ * Returns vertices in order: bottom-left, bottom-right, top-right, top-left
+ */
+export function computeCellVerticesOnSphere(cell: QuadTreeCell): THREE.Vector3[] {
+  const gridSize = getGridSize(cell.level);
+
+  // Compute the four corners in UV space
+  const u0 = -1 + (2 * cell.x) / gridSize;
+  const u1 = -1 + (2 * (cell.x + 1)) / gridSize;
+  const v0 = -1 + (2 * cell.y) / gridSize;
+  const v1 = -1 + (2 * (cell.y + 1)) / gridSize;
+
+  return [
+    ProjectionManager.cubeToSphere(cell.face as CoreCubeFace, u0, v0), // bottom-left
+    ProjectionManager.cubeToSphere(cell.face as CoreCubeFace, u1, v0), // bottom-right
+    ProjectionManager.cubeToSphere(cell.face as CoreCubeFace, u1, v1), // top-right
+    ProjectionManager.cubeToSphere(cell.face as CoreCubeFace, u0, v1), // top-left
+  ];
+}
+
+/**
  * Converts UV coordinates on a cube face to a 3D point on the cube surface.
  * UV coordinates are in [-1, 1] range.
  */

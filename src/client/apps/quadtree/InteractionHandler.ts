@@ -11,8 +11,13 @@ import {
 } from './QuadTreeEncoding';
 import { spherePointToCell, computeCellVertices, computeCellCenter } from './QuadTreeGeometry';
 import { ProjectionManager } from '@core/geometry/SphereProjection';
+import {
+  ViewFrustumLOD,
+  computeCameraDistanceToSphere,
+  suggestMaxDepthFromDistance,
+} from './ViewFrustumLOD';
 
-export type DisplayMode = 'hierarchy' | 'distance' | 'lod';
+export type DisplayMode = 'hierarchy' | 'distance' | 'lod' | 'frustumLOD';
 
 // Colors for quadtree levels (index = level number)
 // Level 0 is the coarsest (full face), higher levels are finer subdivisions
@@ -42,9 +47,22 @@ export class InteractionHandler {
   private active: boolean = false;
 
   // Display mode: 'hierarchy' shows parent cells, 'distance' shows nearby cells
-  private displayMode: DisplayMode = 'lod';
+  private displayMode: DisplayMode = 'frustumLOD';
   // Distance threshold for distance mode (arc length on sphere, euclidean on cube)
   private distanceThreshold: number = 0.15;
+
+  // View frustum LOD system
+  private viewFrustumLOD!: ViewFrustumLOD;
+  // Whether to auto-adjust max depth based on camera distance
+  private autoAdjustDepth: boolean = true;
+  // Target screen-space error for frustum LOD (in pixels)
+  private targetScreenSpaceError: number = 64;
+
+  // Debug camera for visualizing frustum LOD from outside
+  private debugCamera: THREE.PerspectiveCamera | null = null;
+  private debugCameraSphere: THREE.Mesh | null = null;
+  private debugCameraHelper: THREE.CameraHelper | null = null;
+  private useDebugCamera: boolean = true; // Enabled by default for frustumLOD visualization
 
   // Hover label
   private hoverLabel: CSS2DObject | null = null;
@@ -74,10 +92,96 @@ export class InteractionHandler {
     // Create label element
     this.createLabel();
 
+    // Initialize view frustum LOD system
+    this.viewFrustumLOD = new ViewFrustumLOD({
+      maxDepth: this.resolutionLevel,
+      targetScreenSpaceError: this.targetScreenSpaceError,
+      sphereMode: this.cubeRenderer.isSphereMode(),
+    });
+
     // Subscribe to projection changes to force LOD rebuild
     this.unsubscribeProjection = ProjectionManager.onProjectionChange(() => {
       this.onProjectionChanged();
     });
+
+    // Initialize debug camera
+    this.initDebugCamera();
+  }
+
+  /**
+   * Initializes the debug camera and its visual indicators.
+   */
+  private initDebugCamera(): void {
+    // Create debug camera - fixed position looking at sphere center
+    this.debugCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 10);
+
+    // Position it to look at the sphere from a fixed angle
+    this.debugCamera.position.set(2.5, 0.5, 0);
+    this.debugCamera.lookAt(0, 0, 0);
+    this.debugCamera.updateMatrixWorld();
+
+    // Create sphere to show camera position
+    const sphereGeometry = new THREE.SphereGeometry(0.06, 16, 16);
+    const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    this.debugCameraSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    this.debugCameraSphere.position.copy(this.debugCamera.position);
+    this.sceneSetup.scene.add(this.debugCameraSphere);
+
+    // Create camera helper to show frustum pyramid
+    this.debugCameraHelper = new THREE.CameraHelper(this.debugCamera);
+    this.sceneSetup.scene.add(this.debugCameraHelper);
+  }
+
+  /**
+   * Gets whether the debug camera is enabled.
+   */
+  getUseDebugCamera(): boolean {
+    return this.useDebugCamera;
+  }
+
+  /**
+   * Sets whether to use the debug camera for LOD computation.
+   */
+  setUseDebugCamera(enabled: boolean): void {
+    this.useDebugCamera = enabled;
+
+    if (this.debugCameraSphere) {
+      this.debugCameraSphere.visible = enabled;
+    }
+    if (this.debugCameraHelper) {
+      this.debugCameraHelper.visible = enabled;
+    }
+
+    // Force LOD rebuild
+    this.lastLODPoint = null;
+  }
+
+  /**
+   * Sets the debug camera position.
+   */
+  setDebugCameraPosition(x: number, y: number, z: number): void {
+    if (!this.debugCamera) return;
+
+    this.debugCamera.position.set(x, y, z);
+    this.debugCamera.lookAt(0, 0, 0);
+    this.debugCamera.updateMatrixWorld();
+
+    if (this.debugCameraSphere) {
+      this.debugCameraSphere.position.copy(this.debugCamera.position);
+    }
+    if (this.debugCameraHelper) {
+      this.debugCameraHelper.update();
+    }
+
+    // Force LOD rebuild
+    this.lastLODPoint = null;
+  }
+
+  /**
+   * Gets the debug camera.
+   */
+  getDebugCamera(): THREE.PerspectiveCamera | null {
+    return this.debugCamera;
   }
 
   /**
@@ -220,8 +324,8 @@ export class InteractionHandler {
    * Handles hover over a point on the surface.
    */
   private handleHover(point: THREE.Vector3): void {
-    // LOD mode is handled separately via updateLOD() from the animation loop
-    if (this.displayMode === 'lod') return;
+    // LOD modes are handled separately via updateLOD() from the animation loop
+    if (this.displayMode === 'lod' || this.displayMode === 'frustumLOD') return;
 
     // Display hover point indicator
     this.cubeRenderer.displayHoverPoint(point);
@@ -468,7 +572,16 @@ export class InteractionHandler {
    * Should be called from the animation loop when in LOD mode.
    */
   public updateLOD(): void {
-    if (!this.active || this.displayMode !== 'lod') return;
+    if (!this.active) return;
+
+    // Handle frustum-based LOD (view frustum culling)
+    if (this.displayMode === 'frustumLOD') {
+      this.renderFrustumLOD();
+      return;
+    }
+
+    // Handle distance-based LOD (original behavior)
+    if (this.displayMode !== 'lod') return;
 
     const point = this.getCameraLookAtPoint();
     if (point) {
@@ -627,6 +740,120 @@ export class InteractionHandler {
       this.hoverLabel.position.copy(point).add(offset);
       this.hoverLabel.visible = true;
     }
+  }
+
+  /**
+   * Renders LOD using view frustum culling and screen-space error.
+   * Only renders cells that are visible to the camera.
+   */
+  private renderFrustumLOD(): void {
+    // Use debug camera for LOD computation if enabled, otherwise use main camera
+    const lodCamera = (this.useDebugCamera && this.debugCamera)
+      ? this.debugCamera
+      : this.sceneSetup.camera;
+
+    const canvas = this.sceneSetup.renderer.domElement;
+    const screenWidth = canvas.clientWidth;
+    const screenHeight = canvas.clientHeight;
+
+    // Update debug camera helper if visible
+    if (this.useDebugCamera && this.debugCameraHelper) {
+      this.debugCameraHelper.update();
+    }
+
+    // Update LOD config based on current settings
+    const cameraDistToSphere = computeCameraDistanceToSphere(lodCamera);
+
+    // Auto-adjust max depth based on camera distance
+    let maxDepth = this.resolutionLevel;
+    if (this.autoAdjustDepth) {
+      maxDepth = suggestMaxDepthFromDistance(cameraDistToSphere, this.resolutionLevel, 20);
+    }
+
+    this.viewFrustumLOD.setConfig({
+      maxDepth,
+      targetScreenSpaceError: this.targetScreenSpaceError,
+      sphereMode: this.cubeRenderer.isSphereMode(),
+    });
+
+    // Compute LOD using the appropriate camera
+    const result = this.viewFrustumLOD.computeLOD(lodCamera, screenWidth, screenHeight);
+
+    // Clear only cell outlines (meshes are updated incrementally)
+    this.cubeRenderer.clearHoverCellOutlines();
+
+    // Display cell outlines (optional, for debugging)
+    for (const cellInfo of result.cellsToDisplay) {
+      const displayInfo = {
+        cell: cellInfo.cell,
+        isSelected: false,
+        childQuadrants: cellInfo.childQuadrants,
+      };
+      this.cubeRenderer.displayHoverCell(displayInfo, cellInfo.color);
+    }
+
+    // Update quadrant meshes incrementally
+    this.cubeRenderer.updateLODQuadrants(result.quadrants);
+
+    // Update label with stats
+    if (this.labelDiv && this.hoverLabel) {
+      const modeStr = this.cubeRenderer.isSphereMode() ? 'sphere' : 'cube';
+      const cameraStr = this.useDebugCamera ? 'DEBUG CAM' : 'main cam';
+      const levelStats: string[] = [];
+      for (const [level, count] of result.stats.cellsPerLevel) {
+        levelStats.push(`L${level}: ${count}`);
+      }
+      this.labelDiv.textContent =
+        `Frustum LOD (${modeStr}) [${cameraStr}]\n` +
+        `Camera dist: ${cameraDistToSphere.toFixed(2)}\n` +
+        `Max depth: ${maxDepth}\n` +
+        `Target error: ${this.targetScreenSpaceError}px\n` +
+        `Quadrants: ${result.quadrants.size}\n` +
+        `Max level: ${result.stats.maxLevelReached}\n` +
+        `Cells: ${levelStats.slice(0, 4).join(', ')}`;
+
+      // Position label near the debug camera if in use, otherwise fixed position
+      if (this.useDebugCamera && this.debugCamera) {
+        const labelPos = this.debugCamera.position.clone();
+        labelPos.y += 0.15; // Slightly above the camera sphere
+        this.hoverLabel.position.copy(labelPos);
+      } else {
+        const labelPos = new THREE.Vector3(-0.8, 0.8, 0);
+        this.hoverLabel.position.copy(labelPos);
+      }
+      this.hoverLabel.visible = true;
+    }
+  }
+
+  /**
+   * Gets the target screen-space error for frustum LOD.
+   */
+  getTargetScreenSpaceError(): number {
+    return this.targetScreenSpaceError;
+  }
+
+  /**
+   * Sets the target screen-space error for frustum LOD.
+   * Smaller values = more detail (more subdivisions).
+   */
+  setTargetScreenSpaceError(value: number): void {
+    this.targetScreenSpaceError = Math.max(8, Math.min(256, value));
+    this.lastLODPoint = null; // Force rebuild
+  }
+
+  /**
+   * Gets whether auto-adjust depth is enabled.
+   */
+  getAutoAdjustDepth(): boolean {
+    return this.autoAdjustDepth;
+  }
+
+  /**
+   * Sets whether to auto-adjust max depth based on camera distance.
+   */
+  setAutoAdjustDepth(enabled: boolean): void {
+    this.autoAdjustDepth = enabled;
+    this.lastLODPoint = null; // Force rebuild
   }
 
   /**
@@ -867,8 +1094,8 @@ export class InteractionHandler {
    * Clears the hover display.
    */
   private clearHover(): void {
-    // In LOD mode, the display is managed by updateLOD(), not mouse events
-    if (this.displayMode === 'lod') return;
+    // In LOD modes, the display is managed by updateLOD(), not mouse events
+    if (this.displayMode === 'lod' || this.displayMode === 'frustumLOD') return;
 
     // Clear immediately (no deferred removal) since we're not transitioning to new meshes
     this.cubeRenderer.clearHoverDisplay(false);
@@ -900,5 +1127,21 @@ export class InteractionHandler {
       this.labelDiv.parentNode.removeChild(this.labelDiv);
     }
     this.labelDiv = null;
+
+    // Dispose debug camera resources
+    if (this.debugCameraSphere) {
+      this.sceneSetup.scene.remove(this.debugCameraSphere);
+      this.debugCameraSphere.geometry.dispose();
+      (this.debugCameraSphere.material as THREE.Material).dispose();
+      this.debugCameraSphere = null;
+    }
+
+    if (this.debugCameraHelper) {
+      this.sceneSetup.scene.remove(this.debugCameraHelper);
+      this.debugCameraHelper.dispose();
+      this.debugCameraHelper = null;
+    }
+
+    this.debugCamera = null;
   }
 }

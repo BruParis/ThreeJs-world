@@ -77,11 +77,14 @@ export class GUISetup {
         subdivisionFactor: cubeRenderer.getSubdivisionFactor(),
         showSubdivisionWireframe: cubeRenderer.getQuadrantWireframe(),
         useWebWorkers: cubeRenderer.getUseWorkers(),
+        // Frustum LOD settings
+        targetScreenSpaceError: interactionHandler.getTargetScreenSpaceError(),
+        autoAdjustDepth: interactionHandler.getAutoAdjustDepth(),
       };
 
       // Mode selector
       hoverFolder
-        .add(hoverState, 'displayMode', ['hierarchy', 'distance', 'lod'] as DisplayMode[])
+        .add(hoverState, 'displayMode', ['hierarchy', 'distance', 'lod', 'frustumLOD'] as DisplayMode[])
         .name('Display Mode')
         .onChange((value: DisplayMode) => {
           interactionHandler.setDisplayMode(value);
@@ -89,11 +92,16 @@ export class GUISetup {
           // Show/hide distance threshold based on mode (used by 'distance' and 'lod')
           distanceController.domElement.parentElement!.parentElement!.style.display =
             (value === 'distance' || value === 'lod') ? '' : 'none';
+          // Show/hide frustum LOD settings
+          screenSpaceErrorController.domElement.parentElement!.parentElement!.style.display =
+            value === 'frustumLOD' ? '' : 'none';
+          autoAdjustDepthController.domElement.parentElement!.parentElement!.style.display =
+            value === 'frustumLOD' ? '' : 'none';
         });
 
       hoverFolder
-        .add(hoverState, 'resolutionLevel', 0, 8, 1)
-        .name('Resolution Level')
+        .add(hoverState, 'resolutionLevel', 0, 20, 1)
+        .name('Max Depth')
         .onChange((value: number) => {
           interactionHandler.setResolutionLevel(value);
           cubeRenderer.clearHoverDisplay(false);
@@ -111,6 +119,30 @@ export class GUISetup {
       // Hide distance threshold initially if in hierarchy mode
       if (hoverState.displayMode !== 'distance' && hoverState.displayMode !== 'lod') {
         distanceController.domElement.parentElement!.parentElement!.style.display = 'none';
+      }
+
+      // Frustum LOD: Target screen-space error (smaller = more detail)
+      const screenSpaceErrorController = hoverFolder
+        .add(hoverState, 'targetScreenSpaceError', 8, 256, 8)
+        .name('Screen Error (px)')
+        .onChange((value: number) => {
+          interactionHandler.setTargetScreenSpaceError(value);
+          cubeRenderer.clearHoverDisplay(false);
+        });
+
+      // Frustum LOD: Auto-adjust depth based on camera distance
+      const autoAdjustDepthController = hoverFolder
+        .add(hoverState, 'autoAdjustDepth')
+        .name('Auto Adjust Depth')
+        .onChange((value: boolean) => {
+          interactionHandler.setAutoAdjustDepth(value);
+          cubeRenderer.clearHoverDisplay(false);
+        });
+
+      // Hide frustum LOD settings initially if not in frustumLOD mode
+      if (hoverState.displayMode !== 'frustumLOD') {
+        screenSpaceErrorController.domElement.parentElement!.parentElement!.style.display = 'none';
+        autoAdjustDepthController.domElement.parentElement!.parentElement!.style.display = 'none';
       }
 
       hoverFolder
@@ -145,6 +177,11 @@ export class GUISetup {
     const debugState = {
       showProjectionDebug: false,
       projectionSubdivisions: 10,
+      // Debug camera settings (enabled by default for frustumLOD visualization)
+      useDebugCamera: interactionHandler?.getUseDebugCamera() ?? true,
+      debugCamX: 2.5,
+      debugCamY: 0.5,
+      debugCamZ: 0,
     };
 
     debugFolder
@@ -166,6 +203,49 @@ export class GUISetup {
           cubeRenderer.displayProjectionDebug(value);
         }
       });
+
+    // Debug camera controls (only if interactionHandler exists)
+    if (interactionHandler) {
+      const debugCamController = debugFolder
+        .add(debugState, 'useDebugCamera')
+        .name('Use Debug Camera')
+        .onChange((value: boolean) => {
+          interactionHandler.setUseDebugCamera(value);
+          // Show/hide position controls
+          debugCamXController.domElement.parentElement!.parentElement!.style.display = value ? '' : 'none';
+          debugCamYController.domElement.parentElement!.parentElement!.style.display = value ? '' : 'none';
+          debugCamZController.domElement.parentElement!.parentElement!.style.display = value ? '' : 'none';
+        });
+
+      const updateDebugCamPosition = () => {
+        interactionHandler.setDebugCameraPosition(
+          debugState.debugCamX,
+          debugState.debugCamY,
+          debugState.debugCamZ
+        );
+      };
+
+      const debugCamXController = debugFolder
+        .add(debugState, 'debugCamX', -5, 5, 0.1)
+        .name('Debug Cam X')
+        .onChange(updateDebugCamPosition);
+
+      const debugCamYController = debugFolder
+        .add(debugState, 'debugCamY', -5, 5, 0.1)
+        .name('Debug Cam Y')
+        .onChange(updateDebugCamPosition);
+
+      const debugCamZController = debugFolder
+        .add(debugState, 'debugCamZ', -5, 5, 0.1)
+        .name('Debug Cam Z')
+        .onChange(updateDebugCamPosition);
+
+      // Show/hide position controls based on initial state
+      const displayStyle = debugState.useDebugCamera ? '' : 'none';
+      debugCamXController.domElement.parentElement!.parentElement!.style.display = displayStyle;
+      debugCamYController.domElement.parentElement!.parentElement!.style.display = displayStyle;
+      debugCamZController.domElement.parentElement!.parentElement!.style.display = displayStyle;
+    }
 
     // Hide initially
     this.gui.domElement.style.display = 'none';
