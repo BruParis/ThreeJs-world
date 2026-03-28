@@ -28,7 +28,7 @@ export class GUISetup {
       .name('Sphere Mode')
       .onChange((value: boolean) => {
         cubeRenderer.updateSphereMode(value);
-        cubeRenderer.clearHoverDisplay();
+        cubeRenderer.clearHoverDisplay(false);
       });
 
     // Projection dropdown
@@ -85,7 +85,7 @@ export class GUISetup {
         .name('Display Mode')
         .onChange((value: DisplayMode) => {
           interactionHandler.setDisplayMode(value);
-          cubeRenderer.clearHoverDisplay();
+          cubeRenderer.clearHoverDisplay(false);
           // Show/hide distance threshold based on mode (used by 'distance' and 'lod')
           distanceController.domElement.parentElement!.parentElement!.style.display =
             (value === 'distance' || value === 'lod') ? '' : 'none';
@@ -96,7 +96,7 @@ export class GUISetup {
         .name('Resolution Level')
         .onChange((value: number) => {
           interactionHandler.setResolutionLevel(value);
-          cubeRenderer.clearHoverDisplay();
+          cubeRenderer.clearHoverDisplay(false);
         });
 
       // Distance threshold (only visible in distance mode)
@@ -105,7 +105,7 @@ export class GUISetup {
         .name('Distance Threshold')
         .onChange((value: number) => {
           interactionHandler.setDistanceThreshold(value);
-          cubeRenderer.clearHoverDisplay();
+          cubeRenderer.clearHoverDisplay(false);
         });
 
       // Hide distance threshold initially if in hierarchy mode
@@ -118,7 +118,7 @@ export class GUISetup {
         .name('Subdivision')
         .onChange((value: number) => {
           cubeRenderer.setSubdivisionFactor(value);
-          cubeRenderer.clearHoverDisplay();
+          cubeRenderer.clearHoverDisplay(false);
         });
 
       hoverFolder
@@ -133,7 +133,7 @@ export class GUISetup {
         .name('Use Web Workers')
         .onChange((value: boolean) => {
           cubeRenderer.setUseWorkers(value);
-          cubeRenderer.clearHoverDisplay();
+          cubeRenderer.clearHoverDisplay(false);
         });
 
       hoverFolder.open();

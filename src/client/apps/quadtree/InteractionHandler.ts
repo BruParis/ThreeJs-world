@@ -490,7 +490,8 @@ export class InteractionHandler {
         console.warn('[LOD] Camera look direction does not intersect the surface');
       }
       this.lastLODPoint = null;
-      this.cubeRenderer.clearHoverDisplay();
+      // Clear immediately (no deferred removal) since we're not transitioning to new meshes
+      this.cubeRenderer.clearHoverDisplay(false);
     }
   }
 
@@ -869,7 +870,8 @@ export class InteractionHandler {
     // In LOD mode, the display is managed by updateLOD(), not mouse events
     if (this.displayMode === 'lod') return;
 
-    this.cubeRenderer.clearHoverDisplay();
+    // Clear immediately (no deferred removal) since we're not transitioning to new meshes
+    this.cubeRenderer.clearHoverDisplay(false);
     this.lastHoveredCell = null;
 
     if (this.hoverLabel) {

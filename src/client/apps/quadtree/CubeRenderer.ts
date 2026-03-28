@@ -169,6 +169,8 @@ export class CubeRenderer {
   private isGeneratingMeshes: boolean = false;
   // Generation ID to cancel outdated requests
   private currentGenerationId: number = 0;
+  // Meshes to remove after new meshes are ready (deferred removal for seamless transition)
+  private meshesToRemoveAfterFlush: Map<string, THREE.Mesh> = new Map();
 
   // Unsubscribe function for projection changes
   private unsubscribeProjection: (() => void) | null = null;
@@ -223,8 +225,8 @@ export class CubeRenderer {
     // Rebuild the sphere wireframe with the new projection
     this.rebuildSphereWireframe();
 
-    // Clear hover display (meshes will regenerate on next hover)
-    this.clearHoverDisplay();
+    // Clear hover display immediately (meshes will regenerate on next hover)
+    this.clearHoverDisplay(false);
 
     // Refresh projection debug if enabled
     if (this.isProjectionDebugEnabled()) {
@@ -661,11 +663,34 @@ export class CubeRenderer {
 
   /**
    * Clears all hover cell displays.
+   * @param deferMeshRemoval If true and workers are enabled, mesh removal is deferred
+   *                         until new meshes are ready (for seamless transition).
+   *                         If false, meshes are removed immediately.
    */
-  clearHoverDisplay(): void {
+  clearHoverDisplay(deferMeshRemoval: boolean = true): void {
     this.clearHoverCellOutlines();
     this.clearHoverPointIndicator();
-    this.clearQuadrantMeshes();
+
+    if (this.useWorkers && deferMeshRemoval) {
+      // Defer mesh removal - move current meshes to pending removal
+      // They will be removed after new meshes are generated
+      this.deferQuadrantMeshRemoval();
+    } else {
+      this.clearQuadrantMeshes();
+    }
+  }
+
+  /**
+   * Moves current quadrant meshes to deferred removal list.
+   * They remain visible until new meshes are ready.
+   */
+  private deferQuadrantMeshRemoval(): void {
+    // Move all current meshes to the deferred removal list
+    for (const [key, mesh] of this.hoverQuadrantMeshes) {
+      this.meshesToRemoveAfterFlush.set(key, mesh);
+    }
+    this.hoverQuadrantMeshes.clear();
+    this.pendingQuadrantRequests = [];
   }
 
   /**
@@ -852,7 +877,11 @@ export class CubeRenderer {
    */
   async flushQuadrantRequests(): Promise<void> {
     if (!this.useWorkers) return;
-    if (this.pendingQuadrantRequests.length === 0) return;
+    if (this.pendingQuadrantRequests.length === 0) {
+      // No new requests, but still need to clean up deferred meshes if any
+      this.removeDeferredMeshes();
+      return;
+    }
 
     // Create mesh service lazily
     if (!this.meshService) {
@@ -870,31 +899,37 @@ export class CubeRenderer {
     this.isGeneratingMeshes = true;
 
     const batchStart = performance.now();
-    console.log(`[CubeRenderer-Workers] Flushing ${requests.length} quadrant requests (batched), generationId=${generationId}`);
+    console.log(`[CubeRenderer-Workers] Flushing ${requests.length} quadrant requests (parallel), generationId=${generationId}`);
+
+    let totalMeshes = 0;
 
     try {
-      // Generate all meshes in a single batched worker call
-      const results = await this.meshService!.generateMeshesBatched(requests);
+      // Generate meshes distributed across all workers, with progressive rendering
+      await this.meshService!.generateMeshesBatchedParallel(requests, (batchResults) => {
+        // Check if this generation is still current before adding meshes
+        if (generationId !== this.currentGenerationId) {
+          return;
+        }
 
-      // Check if this generation is still current
-      if (generationId !== this.currentGenerationId) {
-        console.log(`[CubeRenderer-Workers] Discarding outdated batch`);
-        return;
-      }
+        // Add meshes to scene as soon as each worker batch completes
+        for (const result of batchResults) {
+          const material = result.mesh.material as THREE.MeshBasicMaterial;
+          material.wireframe = this.quadrantWireframe;
+          material.opacity = this.quadrantWireframe ? 1.0 : 0.6;
 
-      // Add all meshes to scene
-      for (const result of results) {
-        const material = result.mesh.material as THREE.MeshBasicMaterial;
-        material.wireframe = this.quadrantWireframe;
-        material.opacity = this.quadrantWireframe ? 1.0 : 0.6;
-
-        this.scene.add(result.mesh);
-        // Use the worker-provided id as the key
-        this.hoverQuadrantMeshes.set(result.id, result.mesh);
-      }
+          this.scene.add(result.mesh);
+          this.hoverQuadrantMeshes.set(result.id, result.mesh);
+          totalMeshes++;
+        }
+      });
 
       const batchEnd = performance.now();
-      console.log(`[CubeRenderer-Workers] Total: ${results.length} meshes in ${(batchEnd - batchStart).toFixed(2)}ms, generationId=${generationId}`);
+      if (generationId === this.currentGenerationId) {
+        console.log(`[CubeRenderer-Workers] Total: ${totalMeshes} meshes in ${(batchEnd - batchStart).toFixed(2)}ms, generationId=${generationId}`);
+
+        // Now that all new meshes are ready, remove the old deferred meshes
+        this.removeDeferredMeshes();
+      }
     } catch (error) {
       console.error(`[CubeRenderer] Error generating meshes:`, error);
     } finally {
@@ -954,6 +989,8 @@ export class CubeRenderer {
       const generationId = ++this.currentGenerationId;
       this.isGeneratingMeshes = true;
 
+      // Keep old meshes visible during generation - we'll remove them after all new meshes are ready
+
       const requests: QuadrantMeshRequest[] = toAdd.map(spec => ({
         u0: spec.u0,
         u1: spec.u1,
@@ -968,33 +1005,35 @@ export class CubeRenderer {
       }));
 
       try {
-        const results = await this.meshService.generateMeshesBatched(requests);
-
-        // Check if generation is still current
-        if (generationId !== this.currentGenerationId) {
-          console.log(`[CubeRenderer-LOD] Discarding outdated incremental batch`);
-          return;
-        }
-
-        // Now that new meshes are ready, remove obsolete ones
-        for (const key of toRemove) {
-          const mesh = this.hoverQuadrantMeshes.get(key);
-          if (mesh) {
-            mesh.geometry.dispose();
-            (mesh.material as THREE.Material).dispose();
-            this.scene.remove(mesh);
-            this.hoverQuadrantMeshes.delete(key);
+        // Generate meshes distributed across all workers, with progressive rendering
+        await this.meshService.generateMeshesBatchedParallel(requests, (batchResults) => {
+          // Check if generation is still current before adding meshes
+          if (generationId !== this.currentGenerationId) {
+            return;
           }
-        }
 
-        // Add new meshes
-        for (const result of results) {
-          const material = result.mesh.material as THREE.MeshBasicMaterial;
-          material.wireframe = this.quadrantWireframe;
-          material.opacity = this.quadrantWireframe ? 1.0 : 0.6;
+          // Add meshes to scene as soon as each worker batch completes
+          for (const result of batchResults) {
+            const material = result.mesh.material as THREE.MeshBasicMaterial;
+            material.wireframe = this.quadrantWireframe;
+            material.opacity = this.quadrantWireframe ? 1.0 : 0.6;
 
-          this.scene.add(result.mesh);
-          this.hoverQuadrantMeshes.set(result.id, result.mesh);
+            this.scene.add(result.mesh);
+            this.hoverQuadrantMeshes.set(result.id, result.mesh);
+          }
+        });
+
+        // Only remove obsolete meshes AFTER all new meshes have been added
+        if (generationId === this.currentGenerationId) {
+          for (const key of toRemove) {
+            const mesh = this.hoverQuadrantMeshes.get(key);
+            if (mesh) {
+              mesh.geometry.dispose();
+              (mesh.material as THREE.Material).dispose();
+              this.scene.remove(mesh);
+              this.hoverQuadrantMeshes.delete(key);
+            }
+          }
         }
       } finally {
         if (generationId === this.currentGenerationId) {
@@ -1155,6 +1194,22 @@ export class CubeRenderer {
       this.scene.remove(mesh);
     }
     this.hoverQuadrantMeshes.clear();
+
+    // Also clear any deferred meshes
+    this.removeDeferredMeshes();
+  }
+
+  /**
+   * Removes meshes that were deferred for removal.
+   * Called after new meshes are ready to ensure seamless transition.
+   */
+  private removeDeferredMeshes(): void {
+    for (const [, mesh] of this.meshesToRemoveAfterFlush) {
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+      this.scene.remove(mesh);
+    }
+    this.meshesToRemoveAfterFlush.clear();
   }
 
   /**
@@ -1338,7 +1393,7 @@ export class CubeRenderer {
     }
 
     this.clearProjectionDebug();
-    this.clearHoverDisplay();
+    this.clearHoverDisplay(false);
 
     if (this.cubeMesh) {
       this.cubeMesh.geometry.dispose();

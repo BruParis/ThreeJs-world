@@ -6,8 +6,7 @@
 export interface WorkerTask<TInput, TOutput> {
   id: string;
   type: string;
-  data: TInput;
-  transferables?: Transferable[];
+  data: TInput; transferables?: Transferable[];
   resolve: (result: TOutput) => void;
   reject: (error: Error) => void;
   sendTime?: number; // For timing measurements
@@ -131,10 +130,17 @@ export class WorkerPool<TInput = unknown, TOutput = unknown> {
   }
 
   /**
-   * Gets the total number of workers in the pool.
+   * Gets the total number of workers currently in the pool.
    */
   get totalWorkers(): number {
     return this.workers.length;
+  }
+
+  /**
+   * Gets the maximum number of workers the pool can have.
+   */
+  get maxPoolSize(): number {
+    return this.maxWorkers;
   }
 
   /**

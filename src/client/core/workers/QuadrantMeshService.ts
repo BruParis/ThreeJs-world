@@ -179,54 +179,104 @@ export class QuadrantMeshService {
   }
 
   /**
+   * Generates multiple quadrant meshes distributed across all workers.
+   * Results are returned progressively as each worker completes its batch.
+   * @param requests Array of mesh generation requests
+   * @param onBatchReady Callback called when each worker completes its batch
+   * @returns Promise that resolves when all batches are complete
+   */
+  async generateMeshesBatchedParallel(
+    requests: QuadrantMeshRequest[],
+    onBatchReady: (results: QuadrantMeshResult[]) => void
+  ): Promise<void> {
+    if (requests.length === 0) return;
+
+    const pool = this.getPool();
+    const numWorkers = pool.maxPoolSize;
+    const batchStart = performance.now();
+
+    // Convert requests to worker inputs
+    const allInputs: { input: QuadrantMeshInput; originalRequest: QuadrantMeshRequest }[] = requests.map((request) => {
+      const quadrantId = request.id ?? `quadrant_${this.idCounter++}`;
+      const color = new THREE.Color(request.color);
+      const projectionType = request.projectionType ?? ProjectionManager.getProjection();
+
+      return {
+        input: {
+          u0: request.u0,
+          u1: request.u1,
+          v0: request.v0,
+          v1: request.v1,
+          face: request.face,
+          subdivisions: request.subdivisions,
+          sphereMode: request.sphereMode,
+          offset: request.offset ?? 0.001,
+          color: { r: color.r, g: color.g, b: color.b },
+          quadrantId,
+          projectionType: projectionType as unknown as import('./QuadrantMeshWorker').ProjectionType,
+        },
+        originalRequest: request,
+      };
+    });
+
+    // Split into sub-batches, one per worker
+    const subBatches: typeof allInputs[] = [];
+    const batchSize = Math.ceil(allInputs.length / numWorkers);
+
+    for (let i = 0; i < allInputs.length; i += batchSize) {
+      subBatches.push(allInputs.slice(i, i + batchSize));
+    }
+
+    console.log(`[QuadrantMeshService] Distributing ${requests.length} meshes across ${subBatches.length} workers (batch size: ${batchSize})`);
+
+    // Execute all sub-batches in parallel, with progressive callbacks
+    const batchPromises = subBatches.map(async (subBatch, workerIndex) => {
+      const batchInput: QuadrantMeshBatchInput = {
+        quadrants: subBatch.map(item => item.input)
+      };
+
+      const workerStart = performance.now();
+      const output = await pool.execute('generateQuadrantMeshBatch', batchInput) as QuadrantMeshBatchOutput;
+      const workerEnd = performance.now();
+
+      console.log(`[QuadrantMeshService] Worker ${workerIndex}: ${subBatch.length} meshes, ` +
+                  `roundTrip=${(workerEnd - workerStart).toFixed(2)}ms, ` +
+                  `compute=${output.workerComputeTimeMs.toFixed(2)}ms`);
+
+      // Convert outputs to meshes and call the callback immediately
+      const results = output.results.map((result, index) => ({
+        mesh: this.createMeshFromOutput(result, subBatch[index].originalRequest.color),
+        id: result.quadrantId,
+      }));
+
+      // Progressive callback - render these meshes immediately
+      onBatchReady(results);
+
+      return results;
+    });
+
+    await Promise.all(batchPromises);
+
+    const batchEnd = performance.now();
+    console.log(`[QuadrantMeshService] Total: ${requests.length} meshes in ${(batchEnd - batchStart).toFixed(2)}ms across ${subBatches.length} workers`);
+  }
+
+  /**
    * Generates multiple quadrant meshes in a single batched worker task.
-   * This minimizes message passing overhead by sending all requests in one message.
+   * @deprecated Use generateMeshesBatchedParallel for better performance
    * @param requests Array of mesh generation requests
    * @returns Promise resolving to array of generated meshes
    */
   async generateMeshesBatched(requests: QuadrantMeshRequest[]): Promise<QuadrantMeshResult[]> {
     if (requests.length === 0) return [];
 
-    const pool = this.getPool();
-    const batchStart = performance.now();
+    const results: QuadrantMeshResult[] = [];
 
-    // Build batch input
-    const quadrants: QuadrantMeshInput[] = requests.map((request) => {
-      const quadrantId = request.id ?? `quadrant_${this.idCounter++}`;
-      const color = new THREE.Color(request.color);
-      const projectionType = request.projectionType ?? ProjectionManager.getProjection();
-
-      return {
-        u0: request.u0,
-        u1: request.u1,
-        v0: request.v0,
-        v1: request.v1,
-        face: request.face,
-        subdivisions: request.subdivisions,
-        sphereMode: request.sphereMode,
-        offset: request.offset ?? 0.001,
-        color: { r: color.r, g: color.g, b: color.b },
-        quadrantId,
-        projectionType: projectionType as unknown as import('./QuadrantMeshWorker').ProjectionType,
-      };
+    await this.generateMeshesBatchedParallel(requests, (batchResults) => {
+      results.push(...batchResults);
     });
 
-    const batchInput: QuadrantMeshBatchInput = { quadrants };
-
-    // Execute single batched task
-    const output = await pool.execute('generateQuadrantMeshBatch', batchInput) as QuadrantMeshBatchOutput;
-
-    const batchEnd = performance.now();
-    console.log(`[QuadrantMeshService] Batch: ${requests.length} meshes, 
-                roundTrip=${(batchEnd - batchStart).toFixed(2)}ms, 
-                workerCompute=${output.workerComputeTimeMs.toFixed(2)}ms, 
-                overhead=${(batchEnd - batchStart - output.workerComputeTimeMs).toFixed(2)}ms`);
-
-    // Convert outputs to meshes
-    return output.results.map((result, index) => ({
-      mesh: this.createMeshFromOutput(result, requests[index].color),
-      id: result.quadrantId,
-    }));
+    return results;
   }
 
   /**
