@@ -23,6 +23,16 @@ export interface WorkerTaskInput<T = unknown> {
   taskId: string;
   type: string;
   data: T;
+  t_mainPostMessage?: number; // Timestamp when main thread posts message (for timing analysis)
+}
+
+// Timing breakdown returned by workers that support detailed profiling
+export interface WorkerTimingBreakdown {
+  t_mainPostMessage?: number;
+  t_workerReceive: number;
+  t_computeStart: number;
+  t_computeEnd: number;
+  t_beforePostMessage: number;
 }
 
 interface PooledWorker {
@@ -217,7 +227,9 @@ export class WorkerPool<TInput = unknown, TOutput = unknown> {
     pooledWorker.currentTaskId = task.id;
 
     // Record send time for round-trip measurement
-    task.sendTime = performance.now();
+    // Use timeOrigin + now() for absolute timestamp synchronized across threads
+    const t_mainPostMessage = performance.timeOrigin + performance.now();
+    task.sendTime = t_mainPostMessage;
 
     // Store the task callbacks for later
     (pooledWorker as unknown as { pendingTask: WorkerTask<TInput, TOutput> }).pendingTask = task;
@@ -226,6 +238,7 @@ export class WorkerPool<TInput = unknown, TOutput = unknown> {
       taskId: task.id,
       type: task.type,
       data: task.data,
+      t_mainPostMessage, // Pass timestamp to worker for timing analysis
     };
 
     if (task.transferables && task.transferables.length > 0) {
@@ -239,6 +252,8 @@ export class WorkerPool<TInput = unknown, TOutput = unknown> {
    * Handles a message from a worker.
    */
   private handleWorkerMessage(pooledWorker: PooledWorker, message: WorkerMessage<TOutput>): void {
+    // Use timeOrigin + now() for absolute timestamp synchronized across threads
+    const t_mainReceive = performance.timeOrigin + performance.now();
 
     const task = (pooledWorker as unknown as { pendingTask: WorkerTask<TInput, TOutput> }).pendingTask;
 
@@ -253,6 +268,8 @@ export class WorkerPool<TInput = unknown, TOutput = unknown> {
     pooledWorker.currentTaskId = null;
 
     if (message.type === 'result') {
+      // Log detailed timing breakdown if the worker provided timing data
+      this.logTimingBreakdown(message.data, t_mainReceive);
       task.resolve(message.data!);
     } else if (message.type === 'error') {
       console.error(`[WorkerPool] Task error: ${message.error}`);
@@ -261,6 +278,31 @@ export class WorkerPool<TInput = unknown, TOutput = unknown> {
 
     // Process next task in queue
     this.processQueue();
+  }
+
+  /**
+   * Logs detailed timing breakdown if the worker result contains timing data.
+   */
+  private logTimingBreakdown(data: TOutput | undefined, t_mainReceive: number): void {
+    if (!data || typeof data !== 'object') return;
+
+    // Check if the result has timing data (duck typing)
+    const result = data as { timing?: WorkerTimingBreakdown };
+    const timing = result.timing;
+
+    if (!timing || timing.t_mainPostMessage === undefined) return;
+
+    // const breakdown = {
+    //   'Main→Worker delivery (ms)': (timing.t_workerReceive - timing.t_mainPostMessage).toFixed(3),
+    //   'Worker setup (ms)': (timing.t_computeStart - timing.t_workerReceive).toFixed(3),
+    //   'Compute (ms)': (timing.t_computeEnd - timing.t_computeStart).toFixed(3),
+    //   'Worker post prep (ms)': (timing.t_beforePostMessage - timing.t_computeEnd).toFixed(3),
+    //   'Worker→Main delivery (ms)': (t_mainReceive - timing.t_beforePostMessage).toFixed(3),
+    //   'Total (ms)': (t_mainReceive - timing.t_mainPostMessage).toFixed(3),
+    // };
+
+    // console.log('[WorkerPool] Timing breakdown:');
+    // console.table(breakdown);
   }
 
   /**

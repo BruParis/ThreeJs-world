@@ -66,6 +66,8 @@ export interface QuadrantMeshOutput {
   indices: Uint16Array | Uint32Array;
   // Float32Array of vertex colors (r, g, b, r, g, b, ...)
   colors: Float32Array;
+  // Float32Array of vertex normals (nx, ny, nz, nx, ny, nz, ...)
+  normals: Float32Array;
   // The quadrant identifier
   quadrantId: string;
 }
@@ -218,6 +220,82 @@ function warpedToSpherePoint(
 }
 
 /**
+ * Computes vertex normals from positions and indices.
+ * Accumulates face normals at each vertex and normalizes.
+ */
+function computeVertexNormals(
+  positions: Float32Array,
+  indices: Uint16Array | Uint32Array,
+  numVertices: number
+): Float32Array {
+  const normals = new Float32Array(numVertices * 3);
+
+  // Accumulate face normals at each vertex
+  for (let i = 0; i < indices.length; i += 3) {
+    const ia = indices[i];
+    const ib = indices[i + 1];
+    const ic = indices[i + 2];
+
+    // Get vertex positions
+    const ax = positions[ia * 3];
+    const ay = positions[ia * 3 + 1];
+    const az = positions[ia * 3 + 2];
+
+    const bx = positions[ib * 3];
+    const by = positions[ib * 3 + 1];
+    const bz = positions[ib * 3 + 2];
+
+    const cx = positions[ic * 3];
+    const cy = positions[ic * 3 + 1];
+    const cz = positions[ic * 3 + 2];
+
+    // Compute edge vectors
+    const e1x = bx - ax;
+    const e1y = by - ay;
+    const e1z = bz - az;
+
+    const e2x = cx - ax;
+    const e2y = cy - ay;
+    const e2z = cz - az;
+
+    // Cross product for face normal
+    const nx = e1y * e2z - e1z * e2y;
+    const ny = e1z * e2x - e1x * e2z;
+    const nz = e1x * e2y - e1y * e2x;
+
+    // Accumulate at each vertex
+    normals[ia * 3] += nx;
+    normals[ia * 3 + 1] += ny;
+    normals[ia * 3 + 2] += nz;
+
+    normals[ib * 3] += nx;
+    normals[ib * 3 + 1] += ny;
+    normals[ib * 3 + 2] += nz;
+
+    normals[ic * 3] += nx;
+    normals[ic * 3 + 1] += ny;
+    normals[ic * 3 + 2] += nz;
+  }
+
+  // Normalize all vertex normals
+  for (let i = 0; i < numVertices; i++) {
+    const idx = i * 3;
+    const nx = normals[idx];
+    const ny = normals[idx + 1];
+    const nz = normals[idx + 2];
+
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len > 0) {
+      normals[idx] = nx / len;
+      normals[idx + 1] = ny / len;
+      normals[idx + 2] = nz / len;
+    }
+  }
+
+  return normals;
+}
+
+/**
  * Generates mesh data for a quadrant.
  */
 function generateQuadrantMesh(input: QuadrantMeshInput): QuadrantMeshOutput {
@@ -288,17 +366,31 @@ function generateQuadrantMesh(input: QuadrantMeshInput): QuadrantMeshOutput {
     }
   }
 
+  // Compute vertex normals
+  const normals = computeVertexNormals(positions, indices, numVertices);
+
   return {
     positions,
     indices,
     colors,
+    normals,
     quadrantId,
   };
+}
+
+// Detailed timing breakdown for profiling communication overhead
+export interface WorkerTimingBreakdown {
+  t_mainPostMessage?: number;    // When main thread called postMessage
+  t_workerReceive: number;       // When worker received message
+  t_computeStart: number;        // Before compute
+  t_computeEnd: number;          // After compute
+  t_beforePostMessage: number;   // Before worker posts result
 }
 
 // Extended output with timing info
 interface QuadrantMeshOutputWithTiming extends QuadrantMeshOutput {
   workerComputeTimeMs: number;
+  timing: WorkerTimingBreakdown;
 }
 
 // Batch input/output types
@@ -309,18 +401,32 @@ export interface QuadrantMeshBatchInput {
 export interface QuadrantMeshBatchOutput {
   results: QuadrantMeshOutput[];
   workerComputeTimeMs: number;
+  timing: WorkerTimingBreakdown;
+}
+
+// Extended task input with optional timing from main thread
+interface WorkerTaskInputWithTiming<T = unknown> extends WorkerTaskInput<T> {
+  t_mainPostMessage?: number;
+}
+
+// Helper to get absolute timestamp synchronized across threads
+function absoluteNow(): number {
+  return performance.timeOrigin + performance.now();
 }
 
 // Worker message handler
-self.onmessage = (event: MessageEvent<WorkerTaskInput<QuadrantMeshInput | QuadrantMeshBatchInput>>) => {
-  const { taskId, type, data } = event.data;
+self.onmessage = (event: MessageEvent<WorkerTaskInputWithTiming<QuadrantMeshInput | QuadrantMeshBatchInput>>) => {
+  const t_workerReceive = absoluteNow();
+  const { taskId, type, data, t_mainPostMessage } = event.data;
 
   try {
     if (type === 'generateQuadrantMesh') {
-      const computeStart = performance.now();
+      const t_computeStart = absoluteNow();
       const result = generateQuadrantMesh(data as QuadrantMeshInput);
-      const computeEnd = performance.now();
-      const computeTimeMs = computeEnd - computeStart;
+      const t_computeEnd = absoluteNow();
+      const computeTimeMs = t_computeEnd - t_computeStart;
+
+      const t_beforePostMessage = absoluteNow();
 
       const response: WorkerMessage<QuadrantMeshOutputWithTiming> = {
         taskId,
@@ -328,6 +434,13 @@ self.onmessage = (event: MessageEvent<WorkerTaskInput<QuadrantMeshInput | Quadra
         data: {
           ...result,
           workerComputeTimeMs: computeTimeMs,
+          timing: {
+            t_mainPostMessage,
+            t_workerReceive,
+            t_computeStart,
+            t_computeEnd,
+            t_beforePostMessage,
+          },
         },
       };
 
@@ -336,10 +449,11 @@ self.onmessage = (event: MessageEvent<WorkerTaskInput<QuadrantMeshInput | Quadra
         result.positions.buffer,
         result.indices.buffer,
         result.colors.buffer,
+        result.normals.buffer,
       ] as Transferable[]);
     } else if (type === 'generateQuadrantMeshBatch') {
       const batchInput = data as QuadrantMeshBatchInput;
-      const computeStart = performance.now();
+      const t_computeStart = absoluteNow();
 
       const results: QuadrantMeshOutput[] = [];
       const transferables: Transferable[] = [];
@@ -347,11 +461,13 @@ self.onmessage = (event: MessageEvent<WorkerTaskInput<QuadrantMeshInput | Quadra
       for (const quadrant of batchInput.quadrants) {
         const result = generateQuadrantMesh(quadrant);
         results.push(result);
-        transferables.push(result.positions.buffer, result.indices.buffer, result.colors.buffer);
+        transferables.push(result.positions.buffer, result.indices.buffer, result.colors.buffer, result.normals.buffer);
       }
 
-      const computeEnd = performance.now();
-      const computeTimeMs = computeEnd - computeStart;
+      const t_computeEnd = absoluteNow();
+      const computeTimeMs = t_computeEnd - t_computeStart;
+
+      const t_beforePostMessage = absoluteNow();
 
       const response: WorkerMessage<QuadrantMeshBatchOutput> = {
         taskId,
@@ -359,6 +475,13 @@ self.onmessage = (event: MessageEvent<WorkerTaskInput<QuadrantMeshInput | Quadra
         data: {
           results,
           workerComputeTimeMs: computeTimeMs,
+          timing: {
+            t_mainPostMessage,
+            t_workerReceive,
+            t_computeStart,
+            t_computeEnd,
+            t_beforePostMessage,
+          },
         },
       };
 

@@ -293,14 +293,18 @@ export class QuadrantMeshService {
     const colors = output.colors instanceof Float32Array
       ? output.colors
       : new Float32Array(output.colors);
+    const normals = output.normals instanceof Float32Array
+      ? output.normals
+      : new Float32Array(output.normals);
     const indices = output.indices instanceof Uint16Array || output.indices instanceof Uint32Array
       ? output.indices
       : new Uint16Array(output.indices);
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-    geometry.computeVertexNormals();
+    // Normals are now pre-computed in the worker
 
     const material = new THREE.MeshBasicMaterial({
       color,
