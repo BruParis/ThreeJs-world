@@ -5,10 +5,9 @@ import {
   getGridSize,
 } from './QuadTreeEncoding';
 import {
-  cubeToSphere,
-  sphereToCube,
+  ProjectionManager,
   CubeFace as CoreCubeFace,
-} from '@core/geometry/EverettPraunMapping';
+} from '@core/geometry/SphereProjection';
 
 /**
  * Computes the center (barycenter) of a cell on the cube surface.
@@ -25,7 +24,7 @@ export function computeCellCenter(cell: QuadTreeCell): THREE.Vector3 {
 }
 
 /**
- * Computes the center of a cell projected onto the sphere using Everett-Praun mapping.
+ * Computes the center of a cell projected onto the sphere using current projection.
  */
 export function computeCellCenterOnSphere(cell: QuadTreeCell): THREE.Vector3 {
   const gridSize = getGridSize(cell.level);
@@ -34,8 +33,8 @@ export function computeCellCenterOnSphere(cell: QuadTreeCell): THREE.Vector3 {
   const u = -1 + (2 * (cell.x + 0.5)) / gridSize;
   const v = -1 + (2 * (cell.y + 0.5)) / gridSize;
 
-  // Use Everett-Praun mapping for low-distortion projection
-  return cubeToSphere(cell.face as CoreCubeFace, u, v);
+  // Use current projection for sphere mapping
+  return ProjectionManager.cubeToSphere(cell.face as CoreCubeFace, u, v);
 }
 
 /**
@@ -124,14 +123,14 @@ export function pointToFaceUV(point: THREE.Vector3): { face: CubeFace; u: number
 
 /**
  * Converts a point on the sphere to the enclosing QuadTree cell at a given level.
- * Uses Everett-Praun inverse mapping for low-distortion UV coordinates.
+ * Uses current projection inverse mapping for UV coordinates.
  */
 export function spherePointToCell(point: THREE.Vector3, level: number): QuadTreeCell | null {
   const maxCoord = Math.max(Math.abs(point.x), Math.abs(point.y), Math.abs(point.z));
   if (maxCoord === 0) return null;
 
-  // Use Everett-Praun inverse mapping to get face and UV coordinates
-  const { face, u, v } = sphereToCube(point);
+  // Use current projection inverse mapping to get face and UV coordinates
+  const { face, u, v } = ProjectionManager.sphereToCube(point);
 
   // Convert UV in [-1, 1] to grid coordinates [0, gridSize)
   const gridSize = getGridSize(level);

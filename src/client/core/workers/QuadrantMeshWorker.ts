@@ -31,6 +31,12 @@ export const enum CubeFace {
   MINUS_Z = 5,
 }
 
+// Projection type enum (duplicated for worker context)
+export const enum ProjectionType {
+  EVERETT_PRAUN = 'everett_praun',
+  ARVO = 'arvo',
+}
+
 export interface QuadrantMeshInput {
   // UV bounds of the quadrant
   u0: number;
@@ -49,6 +55,8 @@ export interface QuadrantMeshInput {
   color: { r: number; g: number; b: number };
   // Unique identifier for this quadrant (for tracking)
   quadrantId: string;
+  // Projection type (optional, defaults to EVERETT_PRAUN)
+  projectionType?: ProjectionType;
 }
 
 export interface QuadrantMeshOutput {
@@ -106,25 +114,116 @@ function getCubeFaceNormal(face: CubeFace): [number, number, number] {
   }
 }
 
+// ============================================================================
+// Everett-Praun Projection Constants
+// ============================================================================
+const PI_OVER_4 = Math.PI / 4;
+
 /**
- * Projects a cube point to the sphere using Everett-Praun mapping.
- * Simplified version for the worker.
+ * Applies Everett-Praun tangent warp to UV coordinates.
  */
-function projectToSphere(x: number, y: number, z: number, offset: number): [number, number, number] {
-  // Normalize to get point on unit sphere
-  const len = Math.sqrt(x * x + y * y + z * z);
+function everettPraunWarp(u: number, v: number): { xw: number; yw: number } {
+  return {
+    xw: Math.tan(u * PI_OVER_4),
+    yw: Math.tan(v * PI_OVER_4),
+  };
+}
+
+// ============================================================================
+// Arvo Equal-Area Projection Constants
+// ============================================================================
+const PI_OVER_6 = Math.PI / 6;
+const PI_OVER_3 = Math.PI / 3;
+const SQRT2 = Math.sqrt(2);
+
+/**
+ * Applies Arvo equal-area transformation to UV coordinates.
+ * From doc/arvo_mapping.md:
+ * u' = sqrt(2) * tan(π*a / 6) / sqrt(1 - tan²(π*a / 6))
+ * v' = b / sqrt(1 + (1 - b²) * cos(π*a / 3))
+ */
+function arvoWarp(a: number, b: number): { xw: number; yw: number } {
+  const tanA = Math.tan(a * PI_OVER_6);
+  const tanA2 = tanA * tanA;
+
+  const denom = 1 - tanA2;
+  let xw: number;
+  if (Math.abs(denom) < 1e-10) {
+    xw = a > 0 ? 1e6 : -1e6;
+  } else {
+    xw = SQRT2 * tanA / Math.sqrt(Math.abs(denom));
+    if (denom < 0) xw = -xw;
+  }
+
+  const cosA3 = Math.cos(a * PI_OVER_3);
+  const vDenom = Math.sqrt(1 + (1 - b * b) * cosA3);
+  const yw = b / vDenom;
+
+  return { xw, yw };
+}
+
+/**
+ * Gets warped coordinates based on projection type.
+ */
+function getWarpedCoords(u: number, v: number, projectionType: ProjectionType): { xw: number; yw: number } {
+  switch (projectionType) {
+    case ProjectionType.ARVO:
+      return arvoWarp(u, v);
+    case ProjectionType.EVERETT_PRAUN:
+    default:
+      return everettPraunWarp(u, v);
+  }
+}
+
+/**
+ * Projects warped coordinates to 3D point based on face, then normalizes to sphere.
+ */
+function warpedToSpherePoint(
+  face: CubeFace,
+  xw: number,
+  yw: number,
+  offset: number
+): [number, number, number] {
+  let px: number, py: number, pz: number;
+
+  switch (face) {
+    case CubeFace.PLUS_X:
+      px = 1; py = yw; pz = -xw;
+      break;
+    case CubeFace.MINUS_X:
+      px = -1; py = yw; pz = xw;
+      break;
+    case CubeFace.PLUS_Y:
+      px = xw; py = 1; pz = yw;
+      break;
+    case CubeFace.MINUS_Y:
+      px = xw; py = -1; pz = -yw;
+      break;
+    case CubeFace.PLUS_Z:
+      px = xw; py = yw; pz = 1;
+      break;
+    case CubeFace.MINUS_Z:
+      px = -xw; py = yw; pz = -1;
+      break;
+    default:
+      px = 0; py = 0; pz = 1;
+  }
+
+  // Normalize to sphere
+  const len = Math.sqrt(px * px + py * py + pz * pz);
   if (len === 0) return [0, 0, 0];
 
   const scale = (1 + offset) / len;
-  return [x * scale, y * scale, z * scale];
+  return [px * scale, py * scale, pz * scale];
 }
 
 /**
  * Generates mesh data for a quadrant.
  */
 function generateQuadrantMesh(input: QuadrantMeshInput): QuadrantMeshOutput {
-  const { u0, u1, v0, v1, face, subdivisions, sphereMode, offset, color, quadrantId } = input;
+  const { u0, u1, v0, v1, face, subdivisions, sphereMode, offset, color, quadrantId, projectionType } = input;
   const n = Math.max(1, subdivisions);
+  const projection = projectionType ?? ProjectionType.EVERETT_PRAUN;
 
   const numVertices = (n + 1) * (n + 1);
   const numTriangles = n * n * 2;
@@ -142,14 +241,15 @@ function generateQuadrantMesh(input: QuadrantMeshInput): QuadrantMeshOutput {
     for (let j = 0; j <= n; j++) {
       const v = v0 + (v1 - v0) * (j / n);
 
-      // Get point on cube surface
-      let [px, py, pz] = faceUVToCubePoint(face, u, v);
+      let px: number, py: number, pz: number;
 
       if (sphereMode) {
-        // Project to sphere
-        [px, py, pz] = projectToSphere(px, py, pz, offset);
+        // Apply warping based on projection type, then project to sphere
+        const { xw, yw } = getWarpedCoords(u, v, projection);
+        [px, py, pz] = warpedToSpherePoint(face, xw, yw, offset);
       } else {
-        // Apply offset along face normal for cube mode
+        // Cube mode: just get point on cube surface with offset
+        [px, py, pz] = faceUVToCubePoint(face, u, v);
         px += faceNormal[0] * offset;
         py += faceNormal[1] * offset;
         pz += faceNormal[2] * offset;

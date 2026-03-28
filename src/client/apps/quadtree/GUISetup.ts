@@ -1,6 +1,7 @@
 import { GUI } from 'dat.gui';
 import { CubeRenderer, GUIParams } from './CubeRenderer';
 import { InteractionHandler, DisplayMode } from './InteractionHandler';
+import { ProjectionManager, ProjectionType } from '@core/geometry/SphereProjection';
 
 /**
  * Sets up the dat.GUI interface for the QuadTree application.
@@ -28,6 +29,20 @@ export class GUISetup {
       .onChange((value: boolean) => {
         cubeRenderer.updateSphereMode(value);
         cubeRenderer.clearHoverDisplay();
+      });
+
+    // Projection dropdown
+    const projectionState = {
+      projection: ProjectionManager.getProjection(),
+    };
+    viewFolder
+      .add(projectionState, 'projection', {
+        'Everett-Praun': ProjectionType.EVERETT_PRAUN,
+        'Arvo Equal-Area': ProjectionType.ARVO,
+      })
+      .name('Projection')
+      .onChange((value: ProjectionType) => {
+        ProjectionManager.setProjection(value);
       });
 
     viewFolder

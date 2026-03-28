@@ -233,7 +233,6 @@ export class WorkerPool<TInput = unknown, TOutput = unknown> {
    * Handles a message from a worker.
    */
   private handleWorkerMessage(pooledWorker: PooledWorker, message: WorkerMessage<TOutput>): void {
-    const receiveTime = performance.now();
 
     const task = (pooledWorker as unknown as { pendingTask: WorkerTask<TInput, TOutput> }).pendingTask;
 
@@ -241,15 +240,6 @@ export class WorkerPool<TInput = unknown, TOutput = unknown> {
       console.warn('[WorkerPool] Received message for unknown task:', message.taskId);
       return;
     }
-
-    // Calculate round-trip time
-    const roundTripMs = task.sendTime ? receiveTime - task.sendTime : -1;
-
-    // Extract worker compute time if available
-    const workerComputeMs = (message.data as { workerComputeTimeMs?: number })?.workerComputeTimeMs ?? -1;
-
-    // Log timing info
-    console.log(`[WorkerPool] Task ${task.id}: roundTrip=${roundTripMs.toFixed(2)}ms, workerCompute=${workerComputeMs.toFixed(2)}ms, overhead=${(roundTripMs - workerComputeMs).toFixed(2)}ms`);
 
     // Clear the pending task
     (pooledWorker as unknown as { pendingTask: undefined }).pendingTask = undefined;

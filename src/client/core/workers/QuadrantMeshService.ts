@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { WorkerPool } from './WorkerPool';
 import type { QuadrantMeshInput, QuadrantMeshOutput, QuadrantMeshBatchInput, QuadrantMeshBatchOutput } from './QuadrantMeshWorker';
+import { ProjectionManager, ProjectionType } from '@core/geometry/SphereProjection';
 
 // Re-export CubeFace for convenience
 export { CubeFace } from './QuadrantMeshWorker';
@@ -28,6 +29,8 @@ export interface QuadrantMeshRequest {
   color: number;
   // Optional identifier
   id?: string;
+  // Projection type (optional, defaults to current ProjectionManager setting)
+  projectionType?: ProjectionType;
 }
 
 export interface QuadrantMeshResult {
@@ -35,20 +38,24 @@ export interface QuadrantMeshResult {
   id: string;
 }
 
+// Union types for worker pool to support both single and batch operations
+type WorkerInput = QuadrantMeshInput | QuadrantMeshBatchInput;
+type WorkerOutput = QuadrantMeshOutput | QuadrantMeshBatchOutput;
+
 /**
  * Service for parallel quadrant mesh generation using web workers.
  */
 export class QuadrantMeshService {
-  private pool: WorkerPool<QuadrantMeshInput, QuadrantMeshOutput> | null = null;
+  private pool: WorkerPool<WorkerInput, WorkerOutput> | null = null;
   private idCounter = 0;
 
   /**
    * Creates the worker pool lazily when first needed.
    */
-  private getPool(): WorkerPool<QuadrantMeshInput, QuadrantMeshOutput> {
+  private getPool(): WorkerPool<WorkerInput, WorkerOutput> {
     if (!this.pool) {
       console.log(`[QuadrantMeshService] Creating worker pool with ${navigator.hardwareConcurrency || 4} workers`);
-      this.pool = new WorkerPool<QuadrantMeshInput, QuadrantMeshOutput>(
+      this.pool = new WorkerPool<WorkerInput, WorkerOutput>(
         () => {
           console.log(`[QuadrantMeshService] Creating new worker`);
           return new Worker(new URL('./QuadrantMeshWorker.ts', import.meta.url));
@@ -69,6 +76,8 @@ export class QuadrantMeshService {
     const quadrantId = request.id ?? `quadrant_${this.idCounter++}`;
 
     const color = new THREE.Color(request.color);
+    // Use request projection type or fall back to current ProjectionManager setting
+    const projectionType = request.projectionType ?? ProjectionManager.getProjection();
     const input: QuadrantMeshInput = {
       u0: request.u0,
       u1: request.u1,
@@ -80,9 +89,10 @@ export class QuadrantMeshService {
       offset: request.offset ?? 0.001,
       color: { r: color.r, g: color.g, b: color.b },
       quadrantId,
+      projectionType: projectionType as unknown as import('./QuadrantMeshWorker').ProjectionType,
     };
 
-    const output = await pool.execute('generateQuadrantMesh', input);
+    const output = await pool.execute('generateQuadrantMesh', input) as QuadrantMeshOutput;
     const mesh = this.createMeshFromOutput(output, request.color);
 
     return { mesh, id: output.quadrantId };
@@ -100,6 +110,7 @@ export class QuadrantMeshService {
       const quadrantId = request.id ?? `quadrant_${this.idCounter++}`;
       const color = new THREE.Color(request.color);
 
+      const projectionType = request.projectionType ?? ProjectionManager.getProjection();
       const input: QuadrantMeshInput = {
         u0: request.u0,
         u1: request.u1,
@@ -111,12 +122,13 @@ export class QuadrantMeshService {
         offset: request.offset ?? 0.001,
         color: { r: color.r, g: color.g, b: color.b },
         quadrantId,
+        projectionType: projectionType as unknown as import('./QuadrantMeshWorker').ProjectionType,
       };
 
       return { type: 'generateQuadrantMesh', data: input };
     });
 
-    const outputs = await pool.executeAll(tasks);
+    const outputs = await pool.executeAll(tasks) as QuadrantMeshOutput[];
 
     return outputs.map((output, index) => ({
       mesh: this.createMeshFromOutput(output, requests[index].color),
@@ -140,6 +152,7 @@ export class QuadrantMeshService {
     const tasks = requests.map((request) => {
       const quadrantId = request.id ?? `quadrant_${this.idCounter++}`;
       const color = new THREE.Color(request.color);
+      const projectionType = request.projectionType ?? ProjectionManager.getProjection();
 
       const input: QuadrantMeshInput = {
         u0: request.u0,
@@ -152,12 +165,14 @@ export class QuadrantMeshService {
         offset: request.offset ?? 0.001,
         color: { r: color.r, g: color.g, b: color.b },
         quadrantId,
+        projectionType: projectionType as unknown as import('./QuadrantMeshWorker').ProjectionType,
       };
 
       return { type: 'generateQuadrantMesh', data: input };
     });
 
-    await pool.executeWithProgress(tasks, (output, index) => {
+    await pool.executeWithProgress(tasks, (result, index) => {
+      const output = result as QuadrantMeshOutput;
       const mesh = this.createMeshFromOutput(output, requests[index].color);
       onMeshReady({ mesh, id: output.quadrantId }, index);
     });
@@ -179,6 +194,7 @@ export class QuadrantMeshService {
     const quadrants: QuadrantMeshInput[] = requests.map((request) => {
       const quadrantId = request.id ?? `quadrant_${this.idCounter++}`;
       const color = new THREE.Color(request.color);
+      const projectionType = request.projectionType ?? ProjectionManager.getProjection();
 
       return {
         u0: request.u0,
@@ -191,16 +207,20 @@ export class QuadrantMeshService {
         offset: request.offset ?? 0.001,
         color: { r: color.r, g: color.g, b: color.b },
         quadrantId,
+        projectionType: projectionType as unknown as import('./QuadrantMeshWorker').ProjectionType,
       };
     });
 
     const batchInput: QuadrantMeshBatchInput = { quadrants };
 
     // Execute single batched task
-    const output = await pool.execute('generateQuadrantMeshBatch', batchInput as unknown as QuadrantMeshInput) as unknown as QuadrantMeshBatchOutput;
+    const output = await pool.execute('generateQuadrantMeshBatch', batchInput) as QuadrantMeshBatchOutput;
 
     const batchEnd = performance.now();
-    console.log(`[QuadrantMeshService] Batch: ${requests.length} meshes, roundTrip=${(batchEnd - batchStart).toFixed(2)}ms, workerCompute=${output.workerComputeTimeMs.toFixed(2)}ms, overhead=${(batchEnd - batchStart - output.workerComputeTimeMs).toFixed(2)}ms`);
+    console.log(`[QuadrantMeshService] Batch: ${requests.length} meshes, 
+                roundTrip=${(batchEnd - batchStart).toFixed(2)}ms, 
+                workerCompute=${output.workerComputeTimeMs.toFixed(2)}ms, 
+                overhead=${(batchEnd - batchStart - output.workerComputeTimeMs).toFixed(2)}ms`);
 
     // Convert outputs to meshes
     return output.results.map((result, index) => ({

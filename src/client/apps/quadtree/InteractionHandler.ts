@@ -10,7 +10,7 @@ import {
   getGridSize,
 } from './QuadTreeEncoding';
 import { spherePointToCell, computeCellVertices, computeCellCenter } from './QuadTreeGeometry';
-import { cubeToSphere } from '@core/geometry/EverettPraunMapping';
+import { ProjectionManager } from '@core/geometry/SphereProjection';
 
 export type DisplayMode = 'hierarchy' | 'distance' | 'lod';
 
@@ -60,6 +60,9 @@ export class InteractionHandler {
   // Bound event handlers
   private boundOnMouseMove: (event: MouseEvent) => void;
 
+  // Unsubscribe function for projection changes
+  private unsubscribeProjection: (() => void) | null = null;
+
   constructor(sceneSetup: SceneSetup, cubeRenderer: CubeRenderer) {
     this.sceneSetup = sceneSetup;
     this.cubeRenderer = cubeRenderer;
@@ -70,6 +73,20 @@ export class InteractionHandler {
 
     // Create label element
     this.createLabel();
+
+    // Subscribe to projection changes to force LOD rebuild
+    this.unsubscribeProjection = ProjectionManager.onProjectionChange(() => {
+      this.onProjectionChanged();
+    });
+  }
+
+  /**
+   * Handles projection type changes by forcing a LOD rebuild.
+   */
+  private onProjectionChanged(): void {
+    // Reset LOD cache to force rebuild on next update
+    this.lastLODPoint = null;
+    this.lastHoveredCell = null;
   }
 
   /**
@@ -777,7 +794,7 @@ export class InteractionHandler {
   private computeArcDistance(p1: THREE.Vector3, p2: THREE.Vector3): number {
     // Project both points to sphere
     const s1 = p1.clone().normalize();
-    const s2 = cubeToSphere(
+    const s2 = ProjectionManager.cubeToSphere(
       this.getCubeFaceFromPoint(p2),
       this.getUVFromCubePoint(p2).u,
       this.getUVFromCubePoint(p2).v
@@ -865,6 +882,12 @@ export class InteractionHandler {
    */
   dispose(): void {
     this.deactivate();
+
+    // Unsubscribe from projection changes
+    if (this.unsubscribeProjection) {
+      this.unsubscribeProjection();
+      this.unsubscribeProjection = null;
+    }
 
     if (this.hoverLabel) {
       this.sceneSetup.scene.remove(this.hoverLabel);

@@ -1,11 +1,7 @@
 import * as THREE from 'three';
 import { QuadTreeCellDisplayInfo } from './QuadTreeEncoding';
 import { computeCellVertices } from './QuadTreeGeometry';
-import {
-  projectCubePointToSphere,
-  projectSpherePointToCube,
-  interpolateGreatArcEverettPraun,
-} from '@core/geometry/EverettPraunMapping';
+import { ProjectionManager } from '@core/geometry/SphereProjection';
 import {
   QuadrantMeshService,
   QuadrantMeshRequest,
@@ -40,23 +36,21 @@ const SPHERE_LINE_OFFSET = 0.005;
 // const CUBE_LINE_OFFSET = 0.005;
 
 /**
- * Projects a point from the cube surface onto the unit sphere using Everett-Praun mapping.
- * This provides low-distortion projection with ~1.2x max area ratio.
+ * Projects a point from the cube surface onto the unit sphere using the current projection.
  * @param point Point on the cube surface
  * @param offset Optional offset to lift the point above the sphere
  */
 export function projectToSphere(point: THREE.Vector3, offset: number = 0): THREE.Vector3 {
-  return projectCubePointToSphere(point, offset);
+  return ProjectionManager.projectCubePointToSphere(point, offset);
 }
 
 /**
- * Projects a point from the sphere onto the cube surface using Everett-Praun inverse mapping.
- * This provides low-distortion inverse projection.
+ * Projects a point from the sphere onto the cube surface using the current projection.
  * @param point Point on the sphere
  * @param offset Optional offset along face normal
  */
 export function projectToCube(point: THREE.Vector3, offset: number = 0): THREE.Vector3 {
-  return projectSpherePointToCube(point, offset);
+  return ProjectionManager.projectSpherePointToCube(point, offset);
 }
 
 /**
@@ -78,7 +72,7 @@ function getCubeFace(point: THREE.Vector3): string {
 
 /**
  * Interpolates along a great arc on the sphere between two points.
- * Input points are on the cube surface and are projected to the sphere using Everett-Praun mapping.
+ * Input points are on the cube surface and are projected to the sphere using the current projection.
  */
 function interpolateGreatArc(
   start: THREE.Vector3,
@@ -86,7 +80,7 @@ function interpolateGreatArc(
   segments: number,
   offset: number = 0
 ): THREE.Vector3[] {
-  return interpolateGreatArcEverettPraun(start, end, segments, offset);
+  return ProjectionManager.interpolateGreatArc(start, end, segments, offset);
 }
 
 /**
@@ -176,6 +170,9 @@ export class CubeRenderer {
   // Generation ID to cancel outdated requests
   private currentGenerationId: number = 0;
 
+  // Unsubscribe function for projection changes
+  private unsubscribeProjection: (() => void) | null = null;
+
   // Cube vertices (8 vertices)
   public readonly vertices: THREE.Vector3[] = [
     new THREE.Vector3(-1, -1, -1),  // 0
@@ -212,6 +209,48 @@ export class CubeRenderer {
   constructor(scene: THREE.Scene) {
     this.scene = scene;
     // Worker service is created lazily when useWorkers is enabled
+
+    // Subscribe to projection changes
+    this.unsubscribeProjection = ProjectionManager.onProjectionChange(() => {
+      this.onProjectionChanged();
+    });
+  }
+
+  /**
+   * Handles projection type changes by rebuilding affected visualizations.
+   */
+  private onProjectionChanged(): void {
+    // Rebuild the sphere wireframe with the new projection
+    this.rebuildSphereWireframe();
+
+    // Clear hover display (meshes will regenerate on next hover)
+    this.clearHoverDisplay();
+
+    // Refresh projection debug if enabled
+    if (this.isProjectionDebugEnabled()) {
+      this.displayProjectionDebug(this.projectionDebugSubdivisions);
+    }
+  }
+
+  /**
+   * Rebuilds the sphere wireframe with the current projection.
+   */
+  private rebuildSphereWireframe(): void {
+    const existingMesh = this.sphereWireframeMesh;
+    if (!existingMesh) return;
+
+    const wasVisible = existingMesh.visible;
+    existingMesh.geometry.dispose();
+    (existingMesh.material as THREE.Material).dispose();
+    this.scene.remove(existingMesh);
+    this.sphereWireframeMesh = null;
+
+    this.buildSphereWireframe();
+
+    // Type assertion needed because TypeScript doesn't track that buildSphereWireframe() mutates the field
+    if (this.sphereWireframeMesh !== null) {
+      (this.sphereWireframeMesh as THREE.LineSegments).visible = wasVisible;
+    }
   }
 
   /**
@@ -891,8 +930,6 @@ export class CubeRenderer {
       }
     }
 
-    console.log(`[CubeRenderer-LOD] Incremental: keep=${neededQuadrants.size - toAdd.length}, add=${toAdd.length}, remove=${toRemove.length}`);
-
     // If nothing to add, just remove obsolete and return
     if (toAdd.length === 0) {
       for (const key of toRemove) {
@@ -1289,6 +1326,12 @@ export class CubeRenderer {
    * Disposes of all Three.js resources.
    */
   dispose(): void {
+    // Unsubscribe from projection changes
+    if (this.unsubscribeProjection) {
+      this.unsubscribeProjection();
+      this.unsubscribeProjection = null;
+    }
+
     // Terminate the worker service if it was created
     if (this.meshService) {
       this.meshService.terminate();
