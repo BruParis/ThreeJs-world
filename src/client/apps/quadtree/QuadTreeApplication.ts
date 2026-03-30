@@ -18,7 +18,7 @@ export class QuadTreeApplication implements TabApplication {
     showFaces: false,
     showWireframe: true,
     showVertices: false,
-    sphereMode: true,
+    baseShape: 'none',
   };
 
   private initialized = false;

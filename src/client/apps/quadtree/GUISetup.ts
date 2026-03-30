@@ -24,10 +24,10 @@ export class GUISetup {
     // View folder
     const viewFolder = this.gui.addFolder('View');
     viewFolder
-      .add(params, 'sphereMode')
-      .name('Sphere Mode')
-      .onChange((value: boolean) => {
-        cubeRenderer.updateSphereMode(value);
+      .add(params, 'baseShape', { Sphere: 'sphere', Cube: 'cube', None: 'none' })
+      .name('Base Shape')
+      .onChange((value: 'sphere' | 'cube' | 'none') => {
+        cubeRenderer.updateBaseShape(value);
         cubeRenderer.clearHoverDisplay(false);
       });
 

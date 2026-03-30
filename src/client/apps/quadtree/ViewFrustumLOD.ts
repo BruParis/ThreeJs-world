@@ -89,12 +89,14 @@ export class ViewFrustumLOD {
   private frustum: THREE.Frustum;
   private projScreenMatrix: THREE.Matrix4;
   private tempSphere: THREE.Sphere;
+  private lodCameraPosition: THREE.Vector3;
 
   constructor(config: Partial<LODConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.frustum = new THREE.Frustum();
     this.projScreenMatrix = new THREE.Matrix4();
     this.tempSphere = new THREE.Sphere();
+    this.lodCameraPosition = new THREE.Vector3();
   }
 
   /**
@@ -126,6 +128,7 @@ export class ViewFrustumLOD {
   ): LODResult {
     // Update the frustum from camera
     this.updateFrustum(camera);
+    this.lodCameraPosition.copy(camera.position);
 
     const quadrants = new Map<string, QuadrantSpec>();
     const cellsToDisplay: LODResult['cellsToDisplay'] = [];
@@ -404,7 +407,24 @@ export class ViewFrustumLOD {
     // Add a small margin to the radius to prevent popping
     this.tempSphere.set(center, maxRadius * 1.1);
 
-    return this.frustum.intersectsSphere(this.tempSphere);
+    if (!this.frustum.intersectsSphere(this.tempSphere)) return false;
+
+    // Back-face culling for sphere: a point P on the unit sphere is visible from
+    // camera C iff dot(P, C) > 1 (the camera is on the outward side of P's tangent plane).
+    // If ALL corners fail this test the entire patch is on the hidden hemisphere.
+    if (this.config.sphereMode) {
+      const camPos = this.lodCameraPosition;
+      let allBackFacing = true;
+      for (const v of vertices) {
+        if (v.dot(camPos) > 1.0) {
+          allBackFacing = false;
+          break;
+        }
+      }
+      if (allBackFacing) return false;
+    }
+
+    return true;
   }
 
   /**
@@ -425,8 +445,14 @@ export class ViewFrustumLOD {
       ? computeCellVerticesOnSphere(cell)
       : computeCellVertices(cell);
 
-    // Compute the angular size of the cell (approximate using distance to corner)
-    const cellRadius = cellCenter.distanceTo(vertices[0]);
+    // Compute the bounding radius of the cell using the farthest corner.
+    // Using only vertices[0] underestimates distorted cells (e.g. near cube face edges
+    // with the Arvo projection), which produces coarse-LOD rectangular artifacts.
+    let cellRadius = 0;
+    for (const v of vertices) {
+      const d = cellCenter.distanceTo(v);
+      if (d > cellRadius) cellRadius = d;
+    }
 
     // Distance from camera to cell center
     const cameraDistance = camera.position.distanceTo(cellCenter);

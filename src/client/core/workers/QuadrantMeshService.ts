@@ -308,7 +308,7 @@ export class QuadrantMeshService {
 
     const material = new THREE.MeshBasicMaterial({
       color,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
       transparent: true,
       opacity: 0.6,
       vertexColors: false,

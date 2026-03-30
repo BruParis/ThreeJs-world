@@ -347,6 +347,9 @@ function generateQuadrantMesh(input: QuadrantMeshInput): QuadrantMeshOutput {
   }
 
   // Generate indices
+  // Faces PLUS_Y (2) and MINUS_Y (3) have opposite UV handedness, so their winding
+  // produces inward normals with the default order — reverse it for those faces.
+  const reverseWinding = face === CubeFace.PLUS_Y || face === CubeFace.MINUS_Y;
   let indexOffset = 0;
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
@@ -355,14 +358,23 @@ function generateQuadrantMesh(input: QuadrantMeshInput): QuadrantMeshOutput {
       const bottomLeft = (i + 1) * (n + 1) + j;
       const bottomRight = bottomLeft + 1;
 
-      // Two triangles per quad
-      indices[indexOffset++] = topLeft;
-      indices[indexOffset++] = bottomLeft;
-      indices[indexOffset++] = topRight;
+      if (reverseWinding) {
+        indices[indexOffset++] = topLeft;
+        indices[indexOffset++] = topRight;
+        indices[indexOffset++] = bottomLeft;
 
-      indices[indexOffset++] = topRight;
-      indices[indexOffset++] = bottomLeft;
-      indices[indexOffset++] = bottomRight;
+        indices[indexOffset++] = topRight;
+        indices[indexOffset++] = bottomRight;
+        indices[indexOffset++] = bottomLeft;
+      } else {
+        indices[indexOffset++] = topLeft;
+        indices[indexOffset++] = bottomLeft;
+        indices[indexOffset++] = topRight;
+
+        indices[indexOffset++] = topRight;
+        indices[indexOffset++] = bottomLeft;
+        indices[indexOffset++] = bottomRight;
+      }
     }
   }
 

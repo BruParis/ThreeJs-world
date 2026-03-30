@@ -11,7 +11,7 @@ export interface GUIParams {
   showFaces: boolean;
   showWireframe: boolean;
   showVertices: boolean;
-  sphereMode: boolean;
+  baseShape: 'sphere' | 'cube' | 'none';
 }
 
 /**
@@ -125,8 +125,8 @@ function interpolateCubePath(
 export class CubeRenderer {
   private scene: THREE.Scene;
 
-  // Mode
-  private sphereMode: boolean = true;
+  // Mode: 'sphere' | 'cube' | 'none' (none = hide both base meshes, project as sphere)
+  private baseShape: 'sphere' | 'cube' | 'none' = 'sphere';
 
   // Meshes
   private cubeMesh: THREE.Mesh | null = null;
@@ -259,7 +259,7 @@ export class CubeRenderer {
    * Builds the cube visualization.
    */
   build(params: GUIParams): void {
-    this.sphereMode = params.sphereMode;
+    this.baseShape = params.baseShape;
 
     this.buildCubeMesh();
     this.buildWireframe();
@@ -271,7 +271,7 @@ export class CubeRenderer {
     this.setVisibility('faces', params.showFaces);
     this.setVisibility('wireframe', params.showWireframe);
     this.setVisibility('vertices', params.showVertices);
-    this.updateSphereMode(params.sphereMode);
+    this.updateBaseShape(params.baseShape);
   }
 
   /**
@@ -441,51 +441,54 @@ export class CubeRenderer {
   }
 
   /**
-   * Updates sphere mode: toggles between cube and sphere display.
+   * Updates the base shape: 'sphere' shows sphere mesh, 'cube' shows cube mesh, 'none' hides both.
+   * LOD patches are always projected as sphere for 'sphere' and 'none'.
    */
-  updateSphereMode(enabled: boolean): void {
-    this.sphereMode = enabled;
+  updateBaseShape(shape: 'sphere' | 'cube' | 'none'): void {
+    this.baseShape = shape;
 
-    // Toggle cube visibility
+    const isSphere = shape === 'sphere';
+    const isCube = shape === 'cube';
+
     if (this.cubeMesh) {
-      this.cubeMesh.visible = !enabled;
+      this.cubeMesh.visible = isCube;
+    }
+    if (this.sphereMesh) {
+      this.sphereMesh.visible = isSphere;
     }
 
-    // Toggle wireframe visibility (cube vs sphere wireframe)
+    // Wireframe follows the active shape; for 'none' keep sphere wireframe visible
     if (this.wireframeMesh && this.sphereWireframeMesh) {
       const wireframeVisible = this.wireframeMesh.visible || this.sphereWireframeMesh.visible;
-      this.wireframeMesh.visible = !enabled && wireframeVisible;
-      this.sphereWireframeMesh.visible = enabled && wireframeVisible;
-    }
-
-    // Toggle sphere visibility
-    if (this.sphereMesh) {
-      this.sphereMesh.visible = enabled;
+      this.wireframeMesh.visible = isCube && wireframeVisible;
+      this.sphereWireframeMesh.visible = !isCube && wireframeVisible;
     }
   }
 
   /**
-   * Gets the current sphere mode state.
+   * Returns true when geometry should be projected to sphere (sphere or none mode).
    */
   isSphereMode(): boolean {
-    return this.sphereMode;
+    return this.baseShape !== 'cube';
   }
 
   /**
    * Sets visibility of a visual element.
    */
   setVisibility(key: string, visible: boolean): void {
+    const isSphere = this.baseShape === 'sphere';
+    const isCube = this.baseShape === 'cube';
     switch (key) {
       case 'faces':
-        if (this.cubeMesh) this.cubeMesh.visible = visible && !this.sphereMode;
-        if (this.sphereMesh) this.sphereMesh.visible = visible && this.sphereMode;
+        if (this.cubeMesh) this.cubeMesh.visible = visible && isCube;
+        if (this.sphereMesh) this.sphereMesh.visible = visible && isSphere;
         break;
       case 'wireframe':
         if (this.wireframeMesh) {
-          this.wireframeMesh.visible = visible && !this.sphereMode;
+          this.wireframeMesh.visible = visible && isCube;
         }
         if (this.sphereWireframeMesh) {
-          this.sphereWireframeMesh.visible = visible && this.sphereMode;
+          this.sphereWireframeMesh.visible = visible && !isCube;
         }
         break;
       case 'vertices':
@@ -567,7 +570,7 @@ export class CubeRenderer {
   private createCellOutline(vertices: THREE.Vector3[], color: number): THREE.Line | null {
     if (vertices.length < 3) return null;
 
-    if (this.sphereMode) {
+    if (this.isSphereMode()) {
       return this.createGreatArcPolygon(vertices, color, SPHERE_LINE_OFFSET);
     }
 
@@ -719,7 +722,7 @@ export class CubeRenderer {
     let startPoint: THREE.Vector3;
     let endPoint: THREE.Vector3;
 
-    if (this.sphereMode) {
+    if (this.isSphereMode()) {
       // For sphere mode: the normal is the normalized point itself
       const spherePoint = point.clone().normalize();
       startPoint = spherePoint.clone();
@@ -842,7 +845,7 @@ export class CubeRenderer {
           ...quadrants[i],
           face,
           subdivisions: this.subdivisionFactor,
-          sphereMode: this.sphereMode,
+          sphereMode: this.isSphereMode(),
           offset: 0.001,
           color,
           id: `quadrant_${face}_${i}_${Date.now()}`,
@@ -998,7 +1001,7 @@ export class CubeRenderer {
         v1: spec.v1,
         face: spec.face,
         subdivisions: this.subdivisionFactor,
-        sphereMode: this.sphereMode,
+        sphereMode: this.isSphereMode(),
         offset: 0.001,
         color: spec.color,
         id: spec.key,
@@ -1107,7 +1110,7 @@ export class CubeRenderer {
         const cubePoint = this.faceUVToCubePoint(face, u, v);
 
         // Project to sphere if in sphere mode
-        const point = this.sphereMode
+        const point = this.isSphereMode()
           ? projectToSphere(cubePoint, 0.001) // Small offset to avoid z-fighting
           : cubePoint.clone().addScaledVector(this.getCubeNormal(cubePoint), 0.001);
 
@@ -1124,6 +1127,9 @@ export class CubeRenderer {
     }
 
     // Build index array (triangles)
+    // Faces PLUS_Y (2) and MINUS_Y (3) have opposite UV handedness, so their winding
+    // produces inward normals with the default order — reverse it for those faces.
+    const reverseWinding = face === 2 || face === 3;
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
         const topLeft = i * (n + 1) + j;
@@ -1131,9 +1137,13 @@ export class CubeRenderer {
         const bottomLeft = (i + 1) * (n + 1) + j;
         const bottomRight = bottomLeft + 1;
 
-        // Two triangles per quad
-        indices.push(topLeft, bottomLeft, topRight);
-        indices.push(topRight, bottomLeft, bottomRight);
+        if (reverseWinding) {
+          indices.push(topLeft, topRight, bottomLeft);
+          indices.push(topRight, bottomRight, bottomLeft);
+        } else {
+          indices.push(topLeft, bottomLeft, topRight);
+          indices.push(topRight, bottomLeft, bottomRight);
+        }
       }
     }
 
@@ -1144,7 +1154,7 @@ export class CubeRenderer {
 
     const material = new THREE.MeshBasicMaterial({
       color,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
       transparent: true,
       opacity: this.quadrantWireframe ? 1.0 : 0.6,
       wireframe: this.quadrantWireframe,
