@@ -1,6 +1,7 @@
 import { GUI } from 'dat.gui';
 import { CubeRenderer, GUIParams } from './CubeRenderer';
 import { InteractionHandler, DisplayMode } from './InteractionHandler';
+import { FlyCam } from '@core/FlyCam';
 import { ProjectionManager, ProjectionType } from '@core/geometry/SphereProjection';
 
 /**
@@ -13,7 +14,9 @@ export class GUISetup {
     contentArea: HTMLElement,
     cubeRenderer: CubeRenderer,
     params: GUIParams,
-    interactionHandler: InteractionHandler | null = null
+    interactionHandler: InteractionHandler | null = null,
+    flyCam: FlyCam | null = null,
+    onFlyCamToggle: ((enabled: boolean) => void) | null = null
   ) {
     this.gui = new GUI({ autoPlace: false });
     contentArea.appendChild(this.gui.domElement);
@@ -66,6 +69,17 @@ export class GUISetup {
 
     viewFolder.open();
 
+    // Fly camera folder
+    if (flyCam && onFlyCamToggle) {
+      const flyCamFolder = this.gui.addFolder('Fly Camera');
+      const flyCamState = { flyMode: flyCam.isEnabled() };
+      flyCamFolder
+        .add(flyCamState, 'flyMode')
+        .name('Fly Mode')
+        .onChange((value: boolean) => { onFlyCamToggle(value); });
+      flyCamFolder.open();
+    }
+
     // Hover settings folder
     if (interactionHandler) {
       const hoverFolder = this.gui.addFolder('Hover Settings');
@@ -73,7 +87,7 @@ export class GUISetup {
       const hoverState = {
         displayMode: interactionHandler.getDisplayMode(),
         resolutionLevel: interactionHandler.getResolutionLevel(),
-        distanceThreshold: interactionHandler.getDistanceThreshold(),
+        distanceThreshold: interactionHandler.getDistanceThreshold(), // used by 'lod' mode
         subdivisionFactor: cubeRenderer.getSubdivisionFactor(),
         showSubdivisionWireframe: cubeRenderer.getQuadrantWireframe(),
         useWebWorkers: cubeRenderer.getUseWorkers(),
@@ -84,14 +98,14 @@ export class GUISetup {
 
       // Mode selector
       hoverFolder
-        .add(hoverState, 'displayMode', ['hierarchy', 'distance', 'lod', 'frustumLOD'] as DisplayMode[])
+        .add(hoverState, 'displayMode', ['hierarchy', 'lod', 'frustumLOD'] as DisplayMode[])
         .name('Display Mode')
         .onChange((value: DisplayMode) => {
           interactionHandler.setDisplayMode(value);
           cubeRenderer.clearHoverDisplay(false);
-          // Show/hide distance threshold based on mode (used by 'distance' and 'lod')
+          // Show/hide distance threshold based on mode (used by 'lod')
           distanceController.domElement.parentElement!.parentElement!.style.display =
-            (value === 'distance' || value === 'lod') ? '' : 'none';
+            value === 'lod' ? '' : 'none';
           // Show/hide frustum LOD settings
           screenSpaceErrorController.domElement.parentElement!.parentElement!.style.display =
             value === 'frustumLOD' ? '' : 'none';
@@ -107,7 +121,7 @@ export class GUISetup {
           cubeRenderer.clearHoverDisplay(false);
         });
 
-      // Distance threshold (only visible in distance mode)
+      // Distance threshold (only visible in lod mode)
       const distanceController = hoverFolder
         .add(hoverState, 'distanceThreshold', 0.01, 0.8, 0.01)
         .name('Distance Threshold')
@@ -116,8 +130,8 @@ export class GUISetup {
           cubeRenderer.clearHoverDisplay(false);
         });
 
-      // Hide distance threshold initially if in hierarchy mode
-      if (hoverState.displayMode !== 'distance' && hoverState.displayMode !== 'lod') {
+      // Hide distance threshold initially if not in lod mode
+      if (hoverState.displayMode !== 'lod') {
         distanceController.domElement.parentElement!.parentElement!.style.display = 'none';
       }
 
@@ -177,11 +191,6 @@ export class GUISetup {
     const debugState = {
       showProjectionDebug: false,
       projectionSubdivisions: 10,
-      // Debug camera settings (enabled by default for frustumLOD visualization)
-      useDebugCamera: interactionHandler?.getUseDebugCamera() ?? true,
-      debugCamX: 2.5,
-      debugCamY: 0.5,
-      debugCamZ: 0,
     };
 
     debugFolder
@@ -203,49 +212,6 @@ export class GUISetup {
           cubeRenderer.displayProjectionDebug(value);
         }
       });
-
-    // Debug camera controls (only if interactionHandler exists)
-    if (interactionHandler) {
-      const debugCamController = debugFolder
-        .add(debugState, 'useDebugCamera')
-        .name('Use Debug Camera')
-        .onChange((value: boolean) => {
-          interactionHandler.setUseDebugCamera(value);
-          // Show/hide position controls
-          debugCamXController.domElement.parentElement!.parentElement!.style.display = value ? '' : 'none';
-          debugCamYController.domElement.parentElement!.parentElement!.style.display = value ? '' : 'none';
-          debugCamZController.domElement.parentElement!.parentElement!.style.display = value ? '' : 'none';
-        });
-
-      const updateDebugCamPosition = () => {
-        interactionHandler.setDebugCameraPosition(
-          debugState.debugCamX,
-          debugState.debugCamY,
-          debugState.debugCamZ
-        );
-      };
-
-      const debugCamXController = debugFolder
-        .add(debugState, 'debugCamX', -5, 5, 0.1)
-        .name('Debug Cam X')
-        .onChange(updateDebugCamPosition);
-
-      const debugCamYController = debugFolder
-        .add(debugState, 'debugCamY', -5, 5, 0.1)
-        .name('Debug Cam Y')
-        .onChange(updateDebugCamPosition);
-
-      const debugCamZController = debugFolder
-        .add(debugState, 'debugCamZ', -5, 5, 0.1)
-        .name('Debug Cam Z')
-        .onChange(updateDebugCamPosition);
-
-      // Show/hide position controls based on initial state
-      const displayStyle = debugState.useDebugCamera ? '' : 'none';
-      debugCamXController.domElement.parentElement!.parentElement!.style.display = displayStyle;
-      debugCamYController.domElement.parentElement!.parentElement!.style.display = displayStyle;
-      debugCamZController.domElement.parentElement!.parentElement!.style.display = displayStyle;
-    }
 
     // Hide initially
     this.gui.domElement.style.display = 'none';

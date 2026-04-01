@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { CubeRenderer, QuadrantSpec } from './CubeRenderer';
 import { SceneSetup } from './SceneSetup';
+import { FlyCam } from '@core/FlyCam';
 import {
   QuadTreeCell,
   CubeFace,
@@ -17,7 +18,7 @@ import {
   suggestMaxDepthFromDistance,
 } from './ViewFrustumLOD';
 
-export type DisplayMode = 'hierarchy' | 'distance' | 'lod' | 'frustumLOD';
+export type DisplayMode = 'hierarchy' | 'lod' | 'frustumLOD';
 
 // Colors for quadtree levels (index = level number)
 // Level 0 is the coarsest (full face), higher levels are finer subdivisions
@@ -46,9 +47,9 @@ export class InteractionHandler {
   private resolutionLevel: number = 3;
   private active: boolean = false;
 
-  // Display mode: 'hierarchy' shows parent cells, 'distance' shows nearby cells
+  // Display mode: 'hierarchy' shows parent cells
   private displayMode: DisplayMode = 'frustumLOD';
-  // Distance threshold for distance mode (arc length on sphere, euclidean on cube)
+  // Distance threshold for lod mode (arc length on sphere, euclidean on cube)
   private distanceThreshold: number = 0.15;
 
   // View frustum LOD system
@@ -58,11 +59,8 @@ export class InteractionHandler {
   // Target screen-space error for frustum LOD (in pixels)
   private targetScreenSpaceError: number = 64;
 
-  // Debug camera for visualizing frustum LOD from outside
-  private debugCamera: THREE.PerspectiveCamera | null = null;
-  private debugCameraSphere: THREE.Mesh | null = null;
-  private debugCameraHelper: THREE.CameraHelper | null = null;
-  private useDebugCamera: boolean = true; // Enabled by default for frustumLOD visualization
+  // Fly camera used for frustum LOD computation (always active)
+  private flyCam: FlyCam | null = null;
 
   // Hover label
   private hoverLabel: CSS2DObject | null = null;
@@ -103,85 +101,14 @@ export class InteractionHandler {
     this.unsubscribeProjection = ProjectionManager.onProjectionChange(() => {
       this.onProjectionChanged();
     });
-
-    // Initialize debug camera
-    this.initDebugCamera();
   }
 
   /**
-   * Initializes the debug camera and its visual indicators.
+   * Sets the fly camera used for frustum LOD computation.
+   * Must be called before frustumLOD mode is used.
    */
-  private initDebugCamera(): void {
-    // Create debug camera - fixed position looking at sphere center
-    this.debugCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 10);
-
-    // Position it to look at the sphere from a fixed angle
-    this.debugCamera.position.set(2.5, 0.5, 0);
-    this.debugCamera.lookAt(0, 0, 0);
-    this.debugCamera.updateMatrixWorld();
-
-    // Create sphere to show camera position
-    const sphereGeometry = new THREE.SphereGeometry(0.06, 16, 16);
-    const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-    this.debugCameraSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-    this.debugCameraSphere.position.copy(this.debugCamera.position);
-    this.sceneSetup.scene.add(this.debugCameraSphere);
-
-    // Create camera helper to show frustum pyramid
-    this.debugCameraHelper = new THREE.CameraHelper(this.debugCamera);
-    this.sceneSetup.scene.add(this.debugCameraHelper);
-  }
-
-  /**
-   * Gets whether the debug camera is enabled.
-   */
-  getUseDebugCamera(): boolean {
-    return this.useDebugCamera;
-  }
-
-  /**
-   * Sets whether to use the debug camera for LOD computation.
-   */
-  setUseDebugCamera(enabled: boolean): void {
-    this.useDebugCamera = enabled;
-
-    if (this.debugCameraSphere) {
-      this.debugCameraSphere.visible = enabled;
-    }
-    if (this.debugCameraHelper) {
-      this.debugCameraHelper.visible = enabled;
-    }
-
-    // Force LOD rebuild
-    this.lastLODPoint = null;
-  }
-
-  /**
-   * Sets the debug camera position.
-   */
-  setDebugCameraPosition(x: number, y: number, z: number): void {
-    if (!this.debugCamera) return;
-
-    this.debugCamera.position.set(x, y, z);
-    this.debugCamera.lookAt(0, 0, 0);
-    this.debugCamera.updateMatrixWorld();
-
-    if (this.debugCameraSphere) {
-      this.debugCameraSphere.position.copy(this.debugCamera.position);
-    }
-    if (this.debugCameraHelper) {
-      this.debugCameraHelper.update();
-    }
-
-    // Force LOD rebuild
-    this.lastLODPoint = null;
-  }
-
-  /**
-   * Gets the debug camera.
-   */
-  getDebugCamera(): THREE.PerspectiveCamera | null {
-    return this.debugCamera;
+  setFlyCam(flyCam: FlyCam): void {
+    this.flyCam = flyCam;
   }
 
   /**
@@ -332,8 +259,6 @@ export class InteractionHandler {
 
     if (this.displayMode === 'hierarchy') {
       this.handleHierarchyMode(point);
-    } else if (this.displayMode === 'distance') {
-      this.handleDistanceMode(point);
     }
   }
 
@@ -354,10 +279,10 @@ export class InteractionHandler {
 
     // Check if this is the same cell as before
     if (this.lastHoveredCell &&
-        this.lastHoveredCell.face === cell.face &&
-        this.lastHoveredCell.level === cell.level &&
-        this.lastHoveredCell.x === cell.x &&
-        this.lastHoveredCell.y === cell.y) {
+      this.lastHoveredCell.face === cell.face &&
+      this.lastHoveredCell.level === cell.level &&
+      this.lastHoveredCell.x === cell.x &&
+      this.lastHoveredCell.y === cell.y) {
       return; // Same cell, no update needed
     }
 
@@ -414,121 +339,6 @@ export class InteractionHandler {
     if (this.labelDiv && this.hoverLabel) {
       this.labelDiv.textContent = labelText.trim();
       // Offset the label further to the left of the hover point
-      const offset = new THREE.Vector3(-0.8, 0.2, 0);
-      this.hoverLabel.position.copy(point).add(offset);
-      this.hoverLabel.visible = true;
-    }
-
-    // Flush pending worker requests if using web workers
-    this.cubeRenderer.flushQuadrantRequests();
-  }
-
-  /**
-   * Handles distance display mode - shows cells within distance threshold and their hierarchy.
-   */
-  private handleDistanceMode(point: THREE.Vector3): void {
-    // Clear previous display (always update in distance mode as we track position, not cell)
-    this.cubeRenderer.clearHoverDisplay();
-    this.lastHoveredCell = null;
-
-    const isSphereMode = this.cubeRenderer.isSphereMode();
-    const spherePoint = point.clone().normalize();
-
-    // Find all cells within the distance threshold at the resolution level
-    const nearbyCells = this.findCellsWithinDistance(
-      spherePoint,
-      this.resolutionLevel,
-      this.distanceThreshold,
-      isSphereMode
-    );
-
-    if (nearbyCells.length === 0) {
-      if (this.labelDiv && this.hoverLabel) {
-        this.labelDiv.textContent = 'No cells in range';
-        const offset = new THREE.Vector3(-0.8, 0.2, 0);
-        this.hoverLabel.position.copy(point).add(offset);
-        this.hoverLabel.visible = true;
-      }
-      return;
-    }
-
-    // Build the merged hierarchy from all nearby cells
-    // Map: level -> Map<cellKey, { cell, childQuadrants: Set<0|1|2|3> }>
-    const hierarchyByLevel: Map<number, Map<string, { cell: QuadTreeCell; childQuadrants: Set<number> }>> = new Map();
-
-    // Initialize with the leaf cells (resolution level)
-    const leafLevel = this.resolutionLevel;
-    hierarchyByLevel.set(leafLevel, new Map());
-    for (const cell of nearbyCells) {
-      const key = this.cellKey(cell);
-      hierarchyByLevel.get(leafLevel)!.set(key, { cell, childQuadrants: new Set() });
-    }
-
-    // Build hierarchy going up from leaf level to level 0
-    for (let level = leafLevel; level > 0; level--) {
-      const currentLevelCells = hierarchyByLevel.get(level);
-      if (!currentLevelCells) continue;
-
-      const parentLevel = level - 1;
-      if (!hierarchyByLevel.has(parentLevel)) {
-        hierarchyByLevel.set(parentLevel, new Map());
-      }
-      const parentLevelCells = hierarchyByLevel.get(parentLevel)!;
-
-      for (const [, { cell }] of currentLevelCells) {
-        const parent = this.getParentCell(cell);
-        if (!parent) continue;
-
-        const parentKey = this.cellKey(parent);
-        const childQuadrant = this.getQuadrantInParent(cell);
-
-        if (!parentLevelCells.has(parentKey)) {
-          parentLevelCells.set(parentKey, { cell: parent, childQuadrants: new Set() });
-        }
-        parentLevelCells.get(parentKey)!.childQuadrants.add(childQuadrant);
-      }
-    }
-
-    // Display the hierarchy from leaf level up to level 0
-    for (let level = leafLevel; level >= 0; level--) {
-      const levelCells = hierarchyByLevel.get(level);
-      if (!levelCells || levelCells.size === 0) continue;
-
-      // Use the actual quadtree level for coloring
-      const color = LEVEL_COLORS[level % LEVEL_COLORS.length];
-
-      for (const [, { cell, childQuadrants }] of levelCells) {
-        // Display the cell outline with child quadrant info
-        const displayInfo = {
-          cell,
-          isSelected: false,
-          childQuadrants: childQuadrants.size > 0 ? childQuadrants : undefined,
-        };
-        this.cubeRenderer.displayHoverCell(displayInfo, color);
-
-        // Calculate UV bounds for this cell
-        const gridSize = getGridSize(cell.level);
-        const u0 = -1 + (2 * cell.x) / gridSize;
-        const u1 = -1 + (2 * (cell.x + 1)) / gridSize;
-        const v0 = -1 + (2 * cell.y) / gridSize;
-        const v1 = -1 + (2 * (cell.y + 1)) / gridSize;
-
-        // Display triangulated quadrants, excluding those occupied by children
-        this.cubeRenderer.displayTriangulatedQuadrants(
-          { u0, u1, v0, v1 },
-          cell.face,
-          childQuadrants.size > 0 ? childQuadrants : undefined,
-          color
-        );
-      }
-    }
-
-    // Update label
-    if (this.labelDiv && this.hoverLabel) {
-      const distanceStr = this.distanceThreshold.toFixed(2);
-      const modeStr = isSphereMode ? 'arc' : 'cube';
-      const levelCount = hierarchyByLevel.size;
-      this.labelDiv.textContent = `Distance mode (${modeStr})\nThreshold: ${distanceStr}\nLeaf cells: ${nearbyCells.length}\nLevels: ${levelCount}`;
       const offset = new THREE.Vector3(-0.8, 0.2, 0);
       this.hoverLabel.position.copy(point).add(offset);
       this.hoverLabel.visible = true;
@@ -615,6 +425,7 @@ export class InteractionHandler {
    * Uses incremental updates to avoid clearing and regenerating all meshes.
    */
   private renderLOD(point: THREE.Vector3): void {
+    console.log("renderLOD")
     // Clear only cell outlines (not quadrant meshes - those are updated incrementally)
     this.cubeRenderer.clearHoverCellOutlines();
     this.lastHoveredCell = null;
@@ -747,19 +558,13 @@ export class InteractionHandler {
    * Only renders cells that are visible to the camera.
    */
   private renderFrustumLOD(): void {
-    // Use debug camera for LOD computation if enabled, otherwise use main camera
-    const lodCamera = (this.useDebugCamera && this.debugCamera)
-      ? this.debugCamera
-      : this.sceneSetup.camera;
+
+    // Fly cam always drives LOD computation; fall back to orbit cam if not set yet
+    const lodCamera = this.flyCam?.camera ?? this.sceneSetup.camera;
 
     const canvas = this.sceneSetup.renderer.domElement;
     const screenWidth = canvas.clientWidth;
     const screenHeight = canvas.clientHeight;
-
-    // Update debug camera helper if visible
-    if (this.useDebugCamera && this.debugCameraHelper) {
-      this.debugCameraHelper.update();
-    }
 
     // Update LOD config based on current settings
     const cameraDistToSphere = computeCameraDistanceToSphere(lodCamera);
@@ -776,13 +581,13 @@ export class InteractionHandler {
       sphereMode: this.cubeRenderer.isSphereMode(),
     });
 
-    // Compute LOD using the appropriate camera
+    // Compute LOD using the fly camera
     const result = this.viewFrustumLOD.computeLOD(lodCamera, screenWidth, screenHeight);
 
     // Clear only cell outlines (meshes are updated incrementally)
     this.cubeRenderer.clearHoverCellOutlines();
 
-    // Display cell outlines (optional, for debugging)
+    // Display cell outlines
     for (const cellInfo of result.cellsToDisplay) {
       const displayInfo = {
         cell: cellInfo.cell,
@@ -798,13 +603,12 @@ export class InteractionHandler {
     // Update label with stats
     if (this.labelDiv && this.hoverLabel) {
       const modeStr = this.cubeRenderer.isSphereMode() ? 'sphere' : 'cube';
-      const cameraStr = this.useDebugCamera ? 'DEBUG CAM' : 'main cam';
       const levelStats: string[] = [];
       for (const [level, count] of result.stats.cellsPerLevel) {
         levelStats.push(`L${level}: ${count}`);
       }
       this.labelDiv.textContent =
-        `Frustum LOD (${modeStr}) [${cameraStr}]\n` +
+        `Frustum LOD (${modeStr}) [fly cam]\n` +
         `Camera dist: ${cameraDistToSphere.toFixed(2)}\n` +
         `Max depth: ${maxDepth}\n` +
         `Target error: ${this.targetScreenSpaceError}px\n` +
@@ -812,14 +616,13 @@ export class InteractionHandler {
         `Max level: ${result.stats.maxLevelReached}\n` +
         `Cells: ${levelStats.slice(0, 4).join(', ')}`;
 
-      // Position label near the debug camera if in use, otherwise fixed position
-      if (this.useDebugCamera && this.debugCamera) {
-        const labelPos = this.debugCamera.position.clone();
-        labelPos.y += 0.15; // Slightly above the camera sphere
+      // Position label near the fly camera
+      if (this.flyCam) {
+        const labelPos = this.flyCam.camera.position.clone();
+        labelPos.y += 0.15;
         this.hoverLabel.position.copy(labelPos);
       } else {
-        const labelPos = new THREE.Vector3(-0.8, 0.8, 0);
-        this.hoverLabel.position.copy(labelPos);
+        this.hoverLabel.position.set(-0.8, 0.8, 0);
       }
       this.hoverLabel.visible = true;
     }
@@ -921,20 +724,6 @@ export class InteractionHandler {
   }
 
   /**
-   * Gets the parent cell (one level up in the hierarchy).
-   */
-  private getParentCell(cell: QuadTreeCell): QuadTreeCell | null {
-    if (cell.level === 0) return null;
-
-    return {
-      face: cell.face,
-      level: cell.level - 1,
-      x: Math.floor(cell.x / 2),
-      y: Math.floor(cell.y / 2),
-    };
-  }
-
-  /**
    * Gets which quadrant (0-3) the cell occupies within its parent.
    * 0=BL, 1=BR, 2=TR, 3=TL
    */
@@ -947,34 +736,6 @@ export class InteractionHandler {
     } else {
       return qx === 0 ? 3 : 2; // 3=TL, 2=TR
     }
-  }
-
-  /**
-   * Finds all cells at a given level that have at least one vertex within the distance threshold.
-   */
-  private findCellsWithinDistance(
-    referencePoint: THREE.Vector3,
-    level: number,
-    threshold: number,
-    useSphereDistance: boolean
-  ): QuadTreeCell[] {
-    const result: QuadTreeCell[] = [];
-    const gridSize = getGridSize(level);
-
-    // Iterate over all 6 faces
-    for (let face = 0; face < 6; face++) {
-      for (let x = 0; x < gridSize; x++) {
-        for (let y = 0; y < gridSize; y++) {
-          const cell: QuadTreeCell = { face: face as CubeFace, level, x, y };
-
-          if (this.isCellWithinDistance(cell, referencePoint, threshold, useSphereDistance)) {
-            result.push(cell);
-          }
-        }
-      }
-    }
-
-    return result;
   }
 
   /**
@@ -1127,21 +888,5 @@ export class InteractionHandler {
       this.labelDiv.parentNode.removeChild(this.labelDiv);
     }
     this.labelDiv = null;
-
-    // Dispose debug camera resources
-    if (this.debugCameraSphere) {
-      this.sceneSetup.scene.remove(this.debugCameraSphere);
-      this.debugCameraSphere.geometry.dispose();
-      (this.debugCameraSphere.material as THREE.Material).dispose();
-      this.debugCameraSphere = null;
-    }
-
-    if (this.debugCameraHelper) {
-      this.sceneSetup.scene.remove(this.debugCameraHelper);
-      this.debugCameraHelper.dispose();
-      this.debugCameraHelper = null;
-    }
-
-    this.debugCamera = null;
   }
 }

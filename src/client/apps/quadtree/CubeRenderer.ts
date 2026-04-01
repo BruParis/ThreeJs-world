@@ -951,6 +951,7 @@ export class CubeRenderer {
    */
   async updateLODQuadrants(neededQuadrants: Map<string, QuadrantSpec>): Promise<void> {
     if (this.subdivisionFactor <= 0) return;
+    const start_time = performance.now();
 
     // Find quadrants to remove (in current but not in needed)
     const toRemove: string[] = [];
@@ -959,6 +960,7 @@ export class CubeRenderer {
         toRemove.push(key);
       }
     }
+    const time_remove = performance.now();
 
     // Find quadrants to add (in needed but not in current)
     const toAdd: QuadrantSpec[] = [];
@@ -967,6 +969,7 @@ export class CubeRenderer {
         toAdd.push(spec);
       }
     }
+    const time_add = performance.now();
 
     // If nothing to add, just remove obsolete and return
     if (toAdd.length === 0) {
@@ -982,6 +985,12 @@ export class CubeRenderer {
       return;
     }
 
+    console.log("[CubeRenderer] LOD quadrant update - to add: " + toAdd.length + ", to remove: " + toRemove.length);
+
+    const time_0 = performance.now();
+    console.log("[CubeRenderer] Identified quadrants to remove - duration: " + (time_add - time_remove).toFixed(2));
+    console.log("[CubeRenderer] Identified quadrants to add - duration: " + (time_0 - time_add).toFixed(2));
+    console.log("[CubeRenderer] Total preparation time before generation: " + (time_0 - start_time).toFixed(2));
     // Generate new quadrants
     if (this.useWorkers) {
       // Use workers for new quadrants
@@ -1007,6 +1016,7 @@ export class CubeRenderer {
         id: spec.key,
       }));
 
+      const time_0 = performance.now();
       try {
         // Generate meshes distributed across all workers, with progressive rendering
         await this.meshService.generateMeshesBatchedParallel(requests, (batchResults) => {
@@ -1074,6 +1084,9 @@ export class CubeRenderer {
         this.scene.add(mesh);
         this.hoverQuadrantMeshes.set(key, mesh);
       }
+      const end_time = performance.now();
+      console.log(`[CubeRenderer-Sync] Updated LOD quadrants - added ${newMeshes.length}, removed ${toRemove.length}, duration: ${(end_time - time_0).toFixed(2)}ms`);
+      console.log(`[CubeRenderer-Sync] Total update duration: ${(end_time - start_time).toFixed(2)}ms`);
     }
   }
 

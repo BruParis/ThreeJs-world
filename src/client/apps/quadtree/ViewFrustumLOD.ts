@@ -218,6 +218,7 @@ export class ViewFrustumLOD {
     // First, check if this cell is visible in the frustum
     if (!this.isCellInFrustum(cell)) {
       counters.culled++;
+      // console.log(`Culled cell ${cellKey} at level ${cell.level}`);
       return;
     }
 
@@ -405,20 +406,32 @@ export class ViewFrustumLOD {
     }
 
     // Add a small margin to the radius to prevent popping
-    this.tempSphere.set(center, maxRadius * 1.1);
+    const boundingRadius = maxRadius * 1.1;
+    this.tempSphere.set(center, boundingRadius);
 
-    if (!this.frustum.intersectsSphere(this.tempSphere)) return false;
+    // When the camera is inside the bounding sphere the frustum plane tests are
+    // unreliable (the frustum emanates from within the sphere, so side planes can
+    // score the center as "outside"). Skip only the frustum check; back-face
+    // culling is still valid and must still run to reject the far side of the sphere.
+    const cameraInsideSphere = this.lodCameraPosition.distanceTo(center) <= boundingRadius;
+    if (!cameraInsideSphere && !this.frustum.intersectsSphere(this.tempSphere)) return false;
 
     // Back-face culling for sphere: a point P on the unit sphere is visible from
     // camera C iff dot(P, C) > 1 (the camera is on the outward side of P's tangent plane).
-    // If ALL corners fail this test the entire patch is on the hidden hemisphere.
+    // We test corners AND the cell centre: for large cells (level 0) at close range the
+    // corners can all have dot ≤ 1 even though the centre is clearly front-facing.
     if (this.config.sphereMode) {
       const camPos = this.lodCameraPosition;
+      const center = computeCellCenterOnSphere(cell);
       let allBackFacing = true;
-      for (const v of vertices) {
-        if (v.dot(camPos) > 1.0) {
-          allBackFacing = false;
-          break;
+      if (center.dot(camPos) > 1.0) {
+        allBackFacing = false;
+      } else {
+        for (const v of vertices) {
+          if (v.dot(camPos) > 1.0) {
+            allBackFacing = false;
+            break;
+          }
         }
       }
       if (allBackFacing) return false;

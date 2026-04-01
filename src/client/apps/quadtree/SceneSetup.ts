@@ -14,6 +14,8 @@ export class SceneSetup {
   public readonly controls: OrbitControls;
 
   private contentArea: HTMLElement;
+  // When non-null, the scene is rendered from this camera instead of the orbit camera
+  private flyCamera: THREE.PerspectiveCamera | null = null;
 
   constructor(contentArea: HTMLElement) {
     this.contentArea = contentArea;
@@ -52,7 +54,7 @@ export class SceneSetup {
     // Create controls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.05;
+    this.controls.dampingFactor = 0.3;
 
     // Add lighting
     const ambientLight = new THREE.AmbientLight(0x404040, 2);
@@ -68,13 +70,24 @@ export class SceneSetup {
   }
 
   /**
+   * Switches the scene to render from a fly camera.
+   * Pass null to revert to the orbit camera.
+   */
+  setFlyCamera(camera: THREE.PerspectiveCamera | null): void {
+    this.flyCamera = camera;
+    // Orbit controls should not fight with fly mode
+    this.controls.enabled = (camera === null);
+  }
+
+  /**
    * Updates the renderer and camera size.
    */
   updateSize(contentArea: HTMLElement): void {
-    const width = contentArea.clientWidth;
+    const width  = contentArea.clientWidth;
     const height = contentArea.clientHeight;
+    const aspect = width / height;
 
-    this.camera.aspect = width / height;
+    this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
 
     this.renderer.setSize(width, height);
@@ -85,9 +98,12 @@ export class SceneSetup {
    * Renders the scene.
    */
   render(): void {
-    this.controls.update();
-    this.renderer.render(this.scene, this.camera);
-    this.labelRenderer.render(this.scene, this.camera);
+    const activeCamera = this.flyCamera ?? this.camera;
+    if (!this.flyCamera) {
+      this.controls.update();
+    }
+    this.renderer.render(this.scene, activeCamera);
+    this.labelRenderer.render(this.scene, activeCamera);
   }
 
   /**
