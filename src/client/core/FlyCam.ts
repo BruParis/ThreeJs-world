@@ -29,11 +29,12 @@ export class FlyCam {
   private isPointerLocked = false;
   private flyEnabled = false;
 
-  // Speed: at distance d from sphere centre → speed = BASE_SPEED * max(MIN_DIST, d)
-  private readonly BASE_SPEED   = 1.5;   // units / second at the surface (d = 1)
-  private readonly MIN_DIST     = 0.05;  // prevents speed from reaching 0 inside sphere
-  // Minimum distance from centre allowed (sphere radius = 1; 1.002 ≈ 0.2% above surface)
-  private readonly MIN_ALTITUDE = 1.01;
+  // Speed: at altitude h above the sphere surface → speed = BASE_SPEED * max(MIN_DIST, h)
+  // This gives strong natural dampening near the surface without any abrupt cutoff.
+  private readonly BASE_SPEED   = 3.0;   // units / second at 1 unit of altitude
+  private readonly MIN_DIST     = 0.001; // minimum altitude factor (prevents freezing at the surface)
+  // Minimum distance from centre allowed (sphere radius = 1; 1.001 ≈ 0.1% above surface)
+  private readonly MIN_ALTITUDE = 1.002;
 
   // Mouse sensitivity (radians per pixel)
   private readonly SENSITIVITY = 0.002;
@@ -50,7 +51,7 @@ export class FlyCam {
     this.domElement = domElement;
 
     // ── Camera ────────────────────────────────────────────────────────────────
-    this.camera = new THREE.PerspectiveCamera(60, aspect, 0.0001, 100);
+    this.camera = new THREE.PerspectiveCamera(60, aspect, 0.00001, 100);
     this.camera.position.set(2.5, 0.5, 0);
     this.camera.lookAt(0, 0, 0);
     this.camera.updateMatrixWorld();
@@ -138,9 +139,13 @@ export class FlyCam {
    */
   update(dt: number): void {
     if (this.flyEnabled && this.isPointerLocked) {
-      // Speed = BASE_SPEED * distance_to_centre (fast far away, slow near surface)
-      const dist  = this.camera.position.length();
-      const speed = this.BASE_SPEED * Math.max(this.MIN_DIST, dist);
+      // Speed = BASE_SPEED * altitude_above_surface.
+      // Using altitude (dist - 1) instead of dist gives strong dampening near the sphere:
+      // at 10× lower altitude the camera moves 10× slower, making close-surface
+      // navigation precise without an abrupt speed clamp.
+      const dist            = this.camera.position.length();
+      const altAboveSurface = dist - 1.0; // sphere radius = 1
+      const speed           = this.BASE_SPEED * Math.max(this.MIN_DIST, altAboveSurface);
 
       const moveDir = new THREE.Vector3();
       if (this.keys.has('KeyW')) moveDir.z -= 1;

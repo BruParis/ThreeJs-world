@@ -416,25 +416,48 @@ export class ViewFrustumLOD {
     const cameraInsideSphere = this.lodCameraPosition.distanceTo(center) <= boundingRadius;
     if (!cameraInsideSphere && !this.frustum.intersectsSphere(this.tempSphere)) return false;
 
-    // Back-face culling for sphere: a point P on the unit sphere is visible from
-    // camera C iff dot(P, C) > 1 (the camera is on the outward side of P's tangent plane).
-    // We test corners AND the cell centre: for large cells (level 0) at close range the
-    // corners can all have dot ≤ 1 even though the centre is clearly front-facing.
+    // Back-face culling for sphere using a spherical-cap horizon test.
+    //
+    // Point-sampling (testing center + corners) fails at minimal altitude: when the camera
+    // is directly above a boundary between two cube faces the visible cap is tiny (~2°) and
+    // none of the sampled points of any cell fall inside it, so every cell is incorrectly
+    // culled and nothing renders.
+    //
+    // Correct approach: treat the cell as a spherical cap and test whether that cap
+    // overlaps the visible cap (the "horizon cap").
+    //
+    //   Visible cap:  points P on unit sphere with dot(P, C) > 1
+    //                 ↔ angular dist from C/|C| < arccos(1/|C|)   [horizon half-angle α]
+    //   Cell cap:     center = normalised centroid of vertices, half-angle θ
+    //                 (largest angular dist from centre to any corner)
+    //
+    //   The two caps overlap iff  angular_dist(capCenter, C/|C|) < θ + α
+    //   ↔  dot(capCenter, C/|C|) > cos(θ + α)
+    //                            = cos(θ)·cos(α) − sin(θ)·sin(α)
+    //
+    // This handles all camera positions correctly, including above face edges and corners.
     if (this.config.sphereMode) {
       const camPos = this.lodCameraPosition;
-      const center = computeCellCenterOnSphere(cell);
-      let allBackFacing = true;
-      if (center.dot(camPos) > 1.0) {
-        allBackFacing = false;
-      } else {
+      const camDist = camPos.length();
+      if (camDist > 1.0) {
+        // Cell's spherical bounding cap
+        const capCenter = center.clone().normalize(); // unit direction of cell centroid
+        let cosCapHalf = 1.0;
         for (const v of vertices) {
-          if (v.dot(camPos) > 1.0) {
-            allBackFacing = false;
-            break;
-          }
+          const c = capCenter.dot(v); // v is on unit sphere → c = cos(angular dist)
+          if (c < cosCapHalf) cosCapHalf = c;
         }
+        const sinCapHalf = Math.sqrt(Math.max(0.0, 1.0 - cosCapHalf * cosCapHalf));
+
+        // Horizon cap from camera
+        const cosHorizon = 1.0 / camDist;                                          // cos(α)
+        const sinHorizon = Math.sqrt(Math.max(0.0, 1.0 - cosHorizon * cosHorizon)); // sin(α)
+
+        // Cell is entirely below the horizon when the two caps don't overlap
+        const cosThreshold = cosCapHalf * cosHorizon - sinCapHalf * sinHorizon; // cos(θ+α)
+        const dotCamDir    = capCenter.dot(camPos) / camDist;                   // dot(capCenter, C/|C|)
+        if (dotCamDir < cosThreshold) return false;
       }
-      if (allBackFacing) return false;
     }
 
     return true;
