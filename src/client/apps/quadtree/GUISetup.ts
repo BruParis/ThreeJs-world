@@ -86,7 +86,7 @@ export class GUISetup {
 
       // In frustumLOD mode the mesh subdivision per patch is fixed — the quadtree depth
       // (driven by Screen Error) is the sole LOD control.
-      const FRUSTUM_LOD_FIXED_SUBDIVISION = 4;
+      const FRUSTUM_LOD_FIXED_SUBDIVISION = 12;
       // Holds the subdivision controller once created, so the displayMode onChange closure
       // can reference it without a forward-declaration TypeScript error.
       const subdivisionRef: { controller?: { domElement: HTMLElement } } = {};
@@ -97,9 +97,7 @@ export class GUISetup {
         subdivisionFactor: cubeRenderer.getSubdivisionFactor(),
         showSubdivisionWireframe: cubeRenderer.getQuadrantWireframe(),
         useWebWorkers: cubeRenderer.getUseWorkers(),
-        // Frustum LOD settings
         targetScreenSpaceError: interactionHandler.getTargetScreenSpaceError(),
-        autoAdjustDepth: interactionHandler.getAutoAdjustDepth(),
       };
 
       // Mode selector
@@ -109,13 +107,13 @@ export class GUISetup {
         .onChange((value: DisplayMode) => {
           interactionHandler.setDisplayMode(value);
           cubeRenderer.clearHoverDisplay(false);
-          // Show/hide frustum LOD settings
+          // Show Screen Error only in frustumLOD mode
           screenSpaceErrorController.domElement.parentElement!.parentElement!.style.display =
             value === 'frustumLOD' ? '' : 'none';
-          autoAdjustDepthController.domElement.parentElement!.parentElement!.style.display =
-            value === 'frustumLOD' ? '' : 'none';
+          // Show Max Depth only in hierarchy mode
+          maxDepthController.domElement.parentElement!.parentElement!.style.display =
+            value === 'hierarchy' ? '' : 'none';
           // In frustumLOD mode, subdivision per patch is fixed — hide the slider.
-          // In other modes, restore the slider and the user's chosen value.
           if (subdivisionRef.controller) {
             subdivisionRef.controller.domElement.parentElement!.parentElement!.style.display =
               value === 'frustumLOD' ? 'none' : '';
@@ -127,7 +125,7 @@ export class GUISetup {
           }
         });
 
-      hoverFolder
+      const maxDepthController = hoverFolder
         .add(hoverState, 'resolutionLevel', 0, 20, 1)
         .name('Max Depth')
         .onChange((value: number) => {
@@ -144,23 +142,12 @@ export class GUISetup {
           cubeRenderer.clearHoverDisplay(false);
         });
 
-      // Frustum LOD: Auto-adjust depth based on camera distance
-      const autoAdjustDepthController = hoverFolder
-        .add(hoverState, 'autoAdjustDepth')
-        .name('Auto Adjust Depth')
-        .onChange((value: boolean) => {
-          interactionHandler.setAutoAdjustDepth(value);
-          cubeRenderer.clearHoverDisplay(false);
-        });
-
-      // Hide frustum LOD settings initially if not in frustumLOD mode.
-      // In frustumLOD mode, apply the fixed subdivision and hide the subdivision slider
-      // (set after subdivisionRef.controller is created, below).
-      if (hoverState.displayMode !== 'frustumLOD') {
-        screenSpaceErrorController.domElement.parentElement!.parentElement!.style.display = 'none';
-        autoAdjustDepthController.domElement.parentElement!.parentElement!.style.display = 'none';
-      } else {
+      // Show/hide controls based on initial mode
+      if (hoverState.displayMode === 'frustumLOD') {
+        maxDepthController.domElement.parentElement!.parentElement!.style.display = 'none';
         cubeRenderer.setSubdivisionFactor(FRUSTUM_LOD_FIXED_SUBDIVISION);
+      } else {
+        screenSpaceErrorController.domElement.parentElement!.parentElement!.style.display = 'none';
       }
 
       subdivisionRef.controller = hoverFolder

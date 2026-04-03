@@ -41,27 +41,21 @@ const LEVEL_COLORS = [
  * Configuration for the view frustum LOD system.
  */
 export interface LODConfig {
-  /** Maximum depth level (default: 20) */
+  /** Maximum depth level — safety cap, not a user control (default: 20) */
   maxDepth: number;
-  /** Minimum level to render meshes (default: 3) - levels below this are skipped */
-  minRenderLevel: number;
   /** Target screen-space error in pixels (default: 64) - smaller = more detail */
   targetScreenSpaceError: number;
   /** Extra margin around the frustum for culling (prevents popping, default: 0.1) */
   frustumMargin: number;
   /** Whether to use spherical distance for LOD (default: true) */
   sphereMode: boolean;
-  /** Minimum cells to render even at coarsest level (default: 1) */
-  minCellsAtLevel0: number;
 }
 
 const DEFAULT_CONFIG: LODConfig = {
   maxDepth: 20,
-  minRenderLevel: 3,
   targetScreenSpaceError: 64,
   frustumMargin: 0.1,
   sphereMode: true,
-  minCellsAtLevel0: 1,
 };
 
 /**
@@ -222,28 +216,20 @@ export class ViewFrustumLOD {
       return;
     }
 
-    // Check if we've reached max depth
+    // At max depth: always render (safety cap)
     if (cell.level >= this.config.maxDepth) {
-      // Render this cell (leaf node at max depth)
       this.addCellToResult(cell, quadrants, cellsToDisplay, cellsPerLevel);
       displayedLeafCells.add(cellKey);
-      if (cell.level > counters.maxLevel) {
-        counters.maxLevel = cell.level;
-      }
+      if (cell.level > counters.maxLevel) counters.maxLevel = cell.level;
       return;
     }
 
-    // Compute screen-space error to decide if we need to subdivide
+    // Small enough on screen: render as leaf
     const screenSpaceSize = this.computeScreenSpaceSize(cell, camera, screenWidth, screenHeight);
-
-    // If the cell is small enough on screen AND we've reached minimum render level, render it as a leaf
-    // Cells below minRenderLevel are always subdivided (never rendered)
-    if (screenSpaceSize < this.config.targetScreenSpaceError && cell.level >= this.config.minRenderLevel) {
+    if (screenSpaceSize < this.config.targetScreenSpaceError) {
       this.addCellToResult(cell, quadrants, cellsToDisplay, cellsPerLevel);
       displayedLeafCells.add(cellKey);
-      if (cell.level > counters.maxLevel) {
-        counters.maxLevel = cell.level;
-      }
+      if (cell.level > counters.maxLevel) counters.maxLevel = cell.level;
       return;
     }
 
@@ -280,9 +266,8 @@ export class ViewFrustumLOD {
     if (childQuadrantsDisplayed.size > 0) {
       cellsWithChildren.add(cellKey);
 
-      // If not all children are displayed (some were culled), we need to fill the gaps
-      // But only if we're at or above the minimum render level
-      if (childQuadrantsDisplayed.size < 4 && cell.level >= this.config.minRenderLevel) {
+      // If not all children are displayed (some were culled), fill the gaps at this level
+      if (childQuadrantsDisplayed.size < 4) {
         // Add quadrants for the culled children at this level
         const color = this.getLevelColor(cell.level);
         const gridSize = getGridSize(cell.level);
@@ -544,40 +529,3 @@ export class ViewFrustumLOD {
   }
 }
 
-/**
- * Computes the distance from the camera to the sphere surface.
- * Returns 0 if camera is inside the sphere.
- */
-export function computeCameraDistanceToSphere(
-  camera: THREE.Camera,
-  sphereRadius: number = 1
-): number {
-  const cameraDistance = camera.position.length();
-  return Math.max(0, cameraDistance - sphereRadius);
-}
-
-/**
- * Suggests a max depth based on camera distance to sphere.
- * Closer = deeper LOD levels.
- */
-export function suggestMaxDepthFromDistance(
-  cameraDistance: number,
-  baseDepth: number = 6,
-  maxDepth: number = 20
-): number {
-  // At distance 2, use baseDepth
-  // At distance 0.1, use maxDepth
-  // Logarithmic scaling
-  if (cameraDistance < 0.01) {
-    return maxDepth;
-  }
-
-  const logDist = Math.log2(cameraDistance);
-  const logRef = Math.log2(2); // Reference distance
-
-  // More negative logDist = closer = higher depth
-  const depthBonus = (logRef - logDist) * 2;
-  const suggestedDepth = Math.round(baseDepth + depthBonus);
-
-  return Math.max(baseDepth, Math.min(maxDepth, suggestedDepth));
-}

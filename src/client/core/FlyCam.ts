@@ -34,7 +34,7 @@ export class FlyCam {
   private readonly BASE_SPEED   = 3.0;   // units / second at 1 unit of altitude
   private readonly MIN_DIST     = 0.001; // minimum altitude factor (prevents freezing at the surface)
   // Minimum distance from centre allowed (sphere radius = 1; 1.001 ≈ 0.1% above surface)
-  private readonly MIN_ALTITUDE = 1.002;
+  private readonly MIN_ALTITUDE = 1.0012;
 
   // Mouse sensitivity (radians per pixel)
   private readonly SENSITIVITY = 0.002;

@@ -11,11 +11,7 @@ import {
 } from './QuadTreeEncoding';
 import { spherePointToCell } from './QuadTreeGeometry';
 import { ProjectionManager } from '@core/geometry/SphereProjection';
-import {
-  ViewFrustumLOD,
-  computeCameraDistanceToSphere,
-  suggestMaxDepthFromDistance,
-} from './ViewFrustumLOD';
+import { ViewFrustumLOD } from './ViewFrustumLOD';
 
 export type DisplayMode = 'hierarchy' | 'frustumLOD';
 
@@ -50,10 +46,8 @@ export class InteractionHandler {
 
   // View frustum LOD system
   private viewFrustumLOD!: ViewFrustumLOD;
-  // Whether to auto-adjust max depth based on camera distance
-  private autoAdjustDepth: boolean = true;
   // Target screen-space error for frustum LOD (in pixels)
-  private targetScreenSpaceError: number = 64;
+  private targetScreenSpaceError: number = 128;
 
   // Fly camera used for frustum LOD computation (always active)
   private flyCam: FlyCam | null = null;
@@ -84,7 +78,6 @@ export class InteractionHandler {
 
     // Initialize view frustum LOD system
     this.viewFrustumLOD = new ViewFrustumLOD({
-      maxDepth: this.resolutionLevel,
       targetScreenSpaceError: this.targetScreenSpaceError,
       sphereMode: this.cubeRenderer.isSphereMode(),
     });
@@ -166,7 +159,7 @@ export class InteractionHandler {
    * Sets the resolution level.
    */
   setResolutionLevel(level: number): void {
-    this.resolutionLevel = Math.max(0, Math.min(10, Math.floor(level)));
+    this.resolutionLevel = Math.max(0, Math.min(20, Math.floor(level)));
     this.lastHoveredCell = null;
   }
 
@@ -341,28 +334,14 @@ export class InteractionHandler {
     const screenWidth = canvas.clientWidth;
     const screenHeight = canvas.clientHeight;
 
-    // Update LOD config based on current settings
-    const cameraDistToSphere = computeCameraDistanceToSphere(lodCamera);
-
-    // Auto-adjust max depth based on camera distance
-    let maxDepth = this.resolutionLevel;
-    if (this.autoAdjustDepth) {
-      maxDepth = suggestMaxDepthFromDistance(cameraDistToSphere, this.resolutionLevel, 20);
-    }
-
     this.viewFrustumLOD.setConfig({
-      maxDepth,
       targetScreenSpaceError: this.targetScreenSpaceError,
       sphereMode: this.cubeRenderer.isSphereMode(),
     });
 
-    // Compute LOD using the fly camera
     const result = this.viewFrustumLOD.computeLOD(lodCamera, screenWidth, screenHeight);
-
-    // Update quadrant meshes incrementally (no cell outlines in frustumLOD mode)
     this.cubeRenderer.updateLODQuadrants(result.quadrants);
 
-    // Update label with stats
     if (this.labelDiv && this.hoverLabel) {
       const modeStr = this.cubeRenderer.isSphereMode() ? 'sphere' : 'cube';
       const levelStats: string[] = [];
@@ -370,15 +349,12 @@ export class InteractionHandler {
         levelStats.push(`L${level}: ${count}`);
       }
       this.labelDiv.textContent =
-        `Frustum LOD (${modeStr}) [fly cam]\n` +
-        `Camera dist: ${cameraDistToSphere.toFixed(2)}\n` +
-        `Max depth: ${maxDepth}\n` +
+        `Frustum LOD (${modeStr})\n` +
         `Target error: ${this.targetScreenSpaceError}px\n` +
         `Quadrants: ${result.quadrants.size}\n` +
         `Max level: ${result.stats.maxLevelReached}\n` +
-        `Cells: ${levelStats.slice(0, 4).join(', ')}`;
+        `Cells: ${levelStats.slice(0, 6).join(', ')}`;
 
-      // Position label near the fly camera
       if (this.flyCam) {
         const labelPos = this.flyCam.camera.position.clone();
         labelPos.y += 0.15;
@@ -390,33 +366,12 @@ export class InteractionHandler {
     }
   }
 
-  /**
-   * Gets the target screen-space error for frustum LOD.
-   */
   getTargetScreenSpaceError(): number {
     return this.targetScreenSpaceError;
   }
 
-  /**
-   * Sets the target screen-space error for frustum LOD.
-   * Smaller values = more detail (more subdivisions).
-   */
   setTargetScreenSpaceError(value: number): void {
     this.targetScreenSpaceError = Math.max(8, Math.min(256, value));
-  }
-
-  /**
-   * Gets whether auto-adjust depth is enabled.
-   */
-  getAutoAdjustDepth(): boolean {
-    return this.autoAdjustDepth;
-  }
-
-  /**
-   * Sets whether to auto-adjust max depth based on camera distance.
-   */
-  setAutoAdjustDepth(enabled: boolean): void {
-    this.autoAdjustDepth = enabled;
   }
 
   /**
