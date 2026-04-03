@@ -3,33 +3,17 @@ import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { CubeRenderer } from './CubeRenderer';
 import { SceneSetup } from './SceneSetup';
 import { FlyCam } from '@core/FlyCam';
+import { QuadTreeCell, getGridSize } from '@core/quadtree/QuadTreeEncoding';
 import {
-  QuadTreeCell,
   computeDisplayHierarchy,
   formatCell,
-  getGridSize,
-} from './QuadTreeEncoding';
-import { spherePointToCell } from './QuadTreeGeometry';
+  getLevelColor,
+} from './QuadTreeDisplay';
+import { spherePointToCell } from '@core/quadtree/QuadTreeGeometry';
 import { ProjectionManager } from '@core/geometry/SphereProjection';
-import { ViewFrustumLOD } from './ViewFrustumLOD';
+import { ViewFrustumLOD } from '@core/quadtree/ViewFrustumLOD';
 
 export type DisplayMode = 'hierarchy' | 'frustumLOD';
-
-// Colors for quadtree levels (index = level number)
-// Level 0 is the coarsest (full face), higher levels are finer subdivisions
-const LEVEL_COLORS = [
-  0xff0000,  // Level 0 - red (full face)
-  0xff8800,  // Level 1 - orange
-  0xffff00,  // Level 2 - yellow
-  0x88ff00,  // Level 3 - lime
-  0x00ff00,  // Level 4 - green
-  0x00ff88,  // Level 5 - spring green
-  0x00ffff,  // Level 6 - cyan
-  0x0088ff,  // Level 7 - sky blue
-  0x0000ff,  // Level 8 - blue
-  0x8800ff,  // Level 9 - purple
-  0xff00ff,  // Level 10 - magenta
-];
 
 /**
  * Handles mouse interaction for QuadTree cell hover detection.
@@ -265,7 +249,7 @@ export class InteractionHandler {
       const levelInfo = hierarchy.levels[i];
       const currentCell = levelInfo.cell;
       // Use the actual quadtree level for coloring
-      const color = LEVEL_COLORS[currentCell.level % LEVEL_COLORS.length];
+      const color = getLevelColor(currentCell.level);
 
       // Display the cell outline
       this.cubeRenderer.displayHoverCell(levelInfo, color);

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { QuadTreeCellDisplayInfo } from './QuadTreeEncoding';
-import { computeCellVertices } from './QuadTreeGeometry';
+import { computeCellVertices } from '@core/quadtree/QuadTreeGeometry';
+import { QuadrantSpec } from '@core/quadtree/ViewFrustumLOD';
+import { QuadTreeCellDisplayInfo, getLevelColor } from './QuadTreeDisplay';
 import { ProjectionManager } from '@core/geometry/SphereProjection';
 import {
   QuadrantMeshService,
@@ -14,19 +15,8 @@ export interface GUIParams {
   baseShape: 'sphere' | 'cube' | 'none';
 }
 
-/**
- * Specification for a quadrant mesh to be displayed.
- * The key format is "face:level:x:y:quadrantIndex".
- */
-export interface QuadrantSpec {
-  key: string;
-  u0: number;
-  u1: number;
-  v0: number;
-  v1: number;
-  face: number;
-  color: number;
-}
+// Re-export so existing consumers of CubeRenderer don't break
+export type { QuadrantSpec };
 
 // Number of segments to subdivide great arcs
 const GREAT_ARC_SEGMENTS = 16;
@@ -1009,7 +999,7 @@ export class CubeRenderer {
         subdivisions: this.subdivisionFactor,
         sphereMode: this.isSphereMode(),
         offset: 0.001,
-        color: spec.color,
+        color: getLevelColor(spec.level),
         id: spec.key,
       }));
 
@@ -1056,7 +1046,7 @@ export class CubeRenderer {
         const mesh = this.createQuadrantMesh(
           { u0: spec.u0, u1: spec.u1, v0: spec.v0, v1: spec.v1 },
           spec.face,
-          spec.color
+          getLevelColor(spec.level)
         );
         if (mesh) {
           newMeshes.push({ key: spec.key, mesh });

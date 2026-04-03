@@ -1,6 +1,34 @@
 import * as THREE from 'three';
 
 /**
+ * Options for FlyCam construction.
+ */
+export interface FlyCamOptions {
+  /**
+   * Radius of the sphere the camera flies around.
+   * Speed is scaled by altitude above the surface (dist - sphereRadius).
+   * Default: 1.0
+   */
+  sphereRadius?: number;
+  /**
+   * Whether to add a red marker sphere and frustum helper to the scene.
+   * Useful during development; disable for production tabs.
+   * Default: true
+   */
+  showDebugHelpers?: boolean;
+  /**
+   * Base movement speed (units/second at 1 unit of altitude).
+   * Default: 3.0
+   */
+  baseSpeed?: number;
+  /**
+   * Mouse look sensitivity in radians per pixel.
+   * Default: 0.002
+   */
+  sensitivity?: number;
+}
+
+/**
  * Fly camera with classic FPS-style controls.
  *
  * Controls (when fly mode is active):
@@ -12,66 +40,72 @@ import * as THREE from 'three';
  *   Shift / Q     → move down
  *   Escape        → release mouse (browser default)
  *
- * Speed scales linearly with distance from the unit-sphere centre so movement
+ * Speed scales linearly with altitude above the sphere surface so movement
  * feels natural both at high altitude and when skimming the surface.
  */
 export class FlyCam {
   public readonly camera: THREE.PerspectiveCamera;
 
-  private readonly cameraSphere: THREE.Mesh;
-  private readonly cameraHelper: THREE.CameraHelper;
+  private readonly cameraSphere: THREE.Mesh | null;
+  private readonly cameraHelper: THREE.CameraHelper | null;
   private readonly scene: THREE.Scene;
   private readonly domElement: HTMLElement;
 
   // Input state
   private readonly keys = new Set<string>();
-  private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ'); // standard FPS order
+  private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
   private isPointerLocked = false;
   private flyEnabled = false;
 
-  // Speed: at altitude h above the sphere surface → speed = BASE_SPEED * max(MIN_DIST, h)
-  // This gives strong natural dampening near the surface without any abrupt cutoff.
-  private readonly BASE_SPEED   = 3.0;   // units / second at 1 unit of altitude
-  private readonly MIN_DIST     = 0.001; // minimum altitude factor (prevents freezing at the surface)
-  // Minimum distance from centre allowed (sphere radius = 1; 1.001 ≈ 0.1% above surface)
-  private readonly MIN_ALTITUDE = 1.0012;
+  private readonly sphereRadius: number;
+  private readonly BASE_SPEED: number;
+  private readonly MIN_DIST = 0.001;
+  private readonly MIN_ALTITUDE: number;
+  private readonly SENSITIVITY: number;
 
-  // Mouse sensitivity (radians per pixel)
-  private readonly SENSITIVITY = 0.002;
+  // Bound event handlers (stored for clean removal)
+  private readonly boundKeyDown:           (e: KeyboardEvent) => void;
+  private readonly boundKeyUp:             (e: KeyboardEvent) => void;
+  private readonly boundMouseMove:         (e: MouseEvent)    => void;
+  private readonly boundPointerLockChange: ()                 => void;
+  private readonly boundCanvasClick:       ()                 => void;
 
-  // Bound handlers (stored so we can remove them later)
-  private readonly boundKeyDown:          (e: KeyboardEvent) => void;
-  private readonly boundKeyUp:            (e: KeyboardEvent) => void;
-  private readonly boundMouseMove:        (e: MouseEvent)    => void;
-  private readonly boundPointerLockChange: ()                => void;
-  private readonly boundCanvasClick:      ()                 => void;
-
-  constructor(scene: THREE.Scene, domElement: HTMLElement, aspect: number) {
+  constructor(scene: THREE.Scene, domElement: HTMLElement, aspect: number, options: FlyCamOptions = {}) {
     this.scene      = scene;
     this.domElement = domElement;
 
+    this.sphereRadius  = options.sphereRadius  ?? 1.0;
+    this.BASE_SPEED    = options.baseSpeed      ?? 3.0;
+    this.SENSITIVITY   = options.sensitivity   ?? 0.002;
+    // Keep the camera just above the sphere surface (0.12% clearance)
+    this.MIN_ALTITUDE  = this.sphereRadius * 1.0012;
+
     // ── Camera ────────────────────────────────────────────────────────────────
     this.camera = new THREE.PerspectiveCamera(60, aspect, 0.00001, 100);
-    this.camera.position.set(2.5, 0.5, 0);
+    this.camera.position.set(this.sphereRadius * 2.5, this.sphereRadius * 0.5, 0);
     this.camera.lookAt(0, 0, 0);
     this.camera.updateMatrixWorld();
-    // Sync euler from the initial rotation so mouse-look is coherent on first use
     this.euler.setFromQuaternion(this.camera.quaternion);
 
-    // ── Visual indicators ─────────────────────────────────────────────────────
-    const sphereGeo = new THREE.SphereGeometry(0.06, 16, 16);
-    const sphereMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
-    this.cameraSphere = new THREE.Mesh(sphereGeo, sphereMat);
-    this.cameraSphere.position.copy(this.camera.position);
-    scene.add(this.cameraSphere);
+    // ── Optional debug helpers ────────────────────────────────────────────────
+    const showHelpers = options.showDebugHelpers ?? true;
+    if (showHelpers) {
+      const sphereGeo = new THREE.SphereGeometry(0.06, 16, 16);
+      const sphereMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+      this.cameraSphere = new THREE.Mesh(sphereGeo, sphereMat);
+      this.cameraSphere.position.copy(this.camera.position);
+      scene.add(this.cameraSphere);
 
-    this.cameraHelper = new THREE.CameraHelper(this.camera);
-    scene.add(this.cameraHelper);
+      this.cameraHelper = new THREE.CameraHelper(this.camera);
+      scene.add(this.cameraHelper);
+    } else {
+      this.cameraSphere = null;
+      this.cameraHelper = null;
+    }
 
     // ── Event handlers ────────────────────────────────────────────────────────
     this.boundKeyDown = (e) => {
       this.keys.add(e.code);
-      // Prevent Space from scrolling the page while flying
       if (this.flyEnabled && e.code === 'Space') e.preventDefault();
     };
     this.boundKeyUp = (e) => { this.keys.delete(e.code); };
@@ -80,7 +114,6 @@ export class FlyCam {
       if (!this.isPointerLocked) return;
       this.euler.y -= e.movementX * this.SENSITIVITY;
       this.euler.x -= e.movementY * this.SENSITIVITY;
-      // Clamp pitch so the camera never flips over
       this.euler.x = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.euler.x));
       this.camera.quaternion.setFromEuler(this.euler);
     };
@@ -89,7 +122,6 @@ export class FlyCam {
       this.isPointerLocked = document.pointerLockElement === this.domElement;
     };
 
-    // Clicking the canvas requests pointer lock (user gesture required by browser)
     this.boundCanvasClick = () => {
       if (this.flyEnabled && !this.isPointerLocked) {
         this.domElement.requestPointerLock();
@@ -134,17 +166,13 @@ export class FlyCam {
   }
 
   /**
-   * Must be called every frame.
+   * Advance the fly camera by one frame.
    * @param dt  Delta time in seconds.
    */
   update(dt: number): void {
     if (this.flyEnabled && this.isPointerLocked) {
-      // Speed = BASE_SPEED * altitude_above_surface.
-      // Using altitude (dist - 1) instead of dist gives strong dampening near the sphere:
-      // at 10× lower altitude the camera moves 10× slower, making close-surface
-      // navigation precise without an abrupt speed clamp.
       const dist            = this.camera.position.length();
-      const altAboveSurface = dist - 1.0; // sphere radius = 1
+      const altAboveSurface = dist - this.sphereRadius;
       const speed           = this.BASE_SPEED * Math.max(this.MIN_DIST, altAboveSurface);
 
       const moveDir = new THREE.Vector3();
@@ -152,8 +180,8 @@ export class FlyCam {
       if (this.keys.has('KeyS')) moveDir.z += 1;
       if (this.keys.has('KeyA')) moveDir.x -= 1;
       if (this.keys.has('KeyD')) moveDir.x += 1;
-      if (this.keys.has('Space')      || this.keys.has('KeyE')) moveDir.y += 1;
-      if (this.keys.has('ShiftLeft')  || this.keys.has('ShiftRight') ||
+      if (this.keys.has('Space')     || this.keys.has('KeyE'))  moveDir.y += 1;
+      if (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ||
           this.keys.has('KeyQ'))                                moveDir.y -= 1;
 
       if (moveDir.lengthSq() > 0) {
@@ -161,26 +189,32 @@ export class FlyCam {
         this.camera.position.addScaledVector(moveDir, speed * dt);
       }
 
-      // Clamp to minimum altitude above the unit sphere
-      const distFromCentre = this.camera.position.length();
-      if (distFromCentre < this.MIN_ALTITUDE) {
+      if (this.camera.position.length() < this.MIN_ALTITUDE) {
         this.camera.position.setLength(this.MIN_ALTITUDE);
       }
 
-      this.cameraSphere.position.copy(this.camera.position);
+      if (this.cameraSphere) {
+        this.cameraSphere.position.copy(this.camera.position);
+      }
     }
 
-    // Always keep the frustum helper in sync
-    this.cameraHelper.update();
+    if (this.cameraHelper) {
+      this.cameraHelper.update();
+    }
   }
 
   dispose(): void {
     this.disable();
     document.removeEventListener('pointerlockchange', this.boundPointerLockChange);
-    this.scene.remove(this.cameraSphere);
-    this.scene.remove(this.cameraHelper);
-    (this.cameraSphere.material as THREE.Material).dispose();
-    this.cameraSphere.geometry.dispose();
-    this.cameraHelper.dispose();
+
+    if (this.cameraSphere) {
+      this.scene.remove(this.cameraSphere);
+      (this.cameraSphere.material as THREE.Material).dispose();
+      this.cameraSphere.geometry.dispose();
+    }
+    if (this.cameraHelper) {
+      this.scene.remove(this.cameraHelper);
+      this.cameraHelper.dispose();
+    }
   }
 }
