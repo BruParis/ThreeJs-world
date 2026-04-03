@@ -15,6 +15,8 @@ export class SceneManager {
   private raycaster: THREE.Raycaster;
   private mouse: THREE.Vector2;
   private axesHelper: THREE.AxesHelper;
+  // When non-null the scene is rendered from this camera instead of the orbit camera
+  private flyCamera: THREE.PerspectiveCamera | null = null;
 
   constructor() {
     // Initialize scene
@@ -93,11 +95,33 @@ export class SceneManager {
   }
 
   /**
+   * Switches the active rendering camera to a fly camera.
+   * Pass null to revert to the orbit camera.
+   * Orbit controls are disabled while a fly camera is active.
+   */
+  public setFlyCamera(camera: THREE.PerspectiveCamera | null): void {
+    this.flyCamera = camera;
+    this.controls.enabled = (camera === null);
+  }
+
+  /**
+   * Returns the camera that is currently used for rendering
+   * (fly camera when active, otherwise the default orbit camera).
+   */
+  public getActiveCamera(): THREE.PerspectiveCamera {
+    return this.flyCamera ?? this.camera;
+  }
+
+  /**
    * Renders the scene with both renderers.
    */
   public render(): void {
-    this.renderer.render(this.scene, this.camera);
-    this.labelRenderer.render(this.scene, this.camera);
+    const activeCamera = this.flyCamera ?? this.camera;
+    if (!this.flyCamera) {
+      this.controls.update();
+    }
+    this.renderer.render(this.scene, activeCamera);
+    this.labelRenderer.render(this.scene, activeCamera);
   }
 
   // Getters for all state

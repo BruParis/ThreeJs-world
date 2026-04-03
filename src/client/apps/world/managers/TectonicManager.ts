@@ -24,6 +24,7 @@ import {
 import { makeLineSegments2ForTileMotionVec, makeLineSegments2ForAllBoundariesByType, makeLineSegments2ForAllBoundariesGradient, makeLineSegments2ForDominanceIndicators, makeLineSegments2ForTransformSlideIndicators } from '../visualization/TectonicsDrawingUtils';
 import { VisualizationManager } from './VisualizationManager';
 import { SceneManager } from './SceneManager';
+import { TileQuadTree, defaultLevelForDegree } from '../tectonics/TileQuadTree';
 import { idToHSLColor, assignColorToTriangle } from '../../../shared/utils/ColorUtils';
 
 /**
@@ -33,6 +34,7 @@ export class TectonicManager {
   private visualizationManager: VisualizationManager;
   private sceneManager: SceneManager;
   private tectonicSystem: TectonicSystem | null = null;
+  private tileQuadTree: TileQuadTree | null = null;
   private plateDisplayMode: PlateDisplayMode = PlateDisplayMode.CATEGORY;
   private netRotation: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
   private geologyDisplayEnabled: boolean = false;
@@ -158,6 +160,11 @@ export class TectonicManager {
 
     // Assign geological types to tiles (orogeny at convergent boundaries)
     assignGeologicalTypes(this.tectonicSystem);
+
+    // Build spatial index: maps quadtree cells → tiles for fast point/patch queries
+    const degree = this.visualizationManager.getIcoParams().degree;
+    const indexLevel = defaultLevelForDegree(degree);
+    this.tileQuadTree = new TileQuadTree(this._allTiles(), indexLevel);
 
     console.log('Generated tectonic network with', this.tectonicSystem.plates.size, 'plates.');
     this.refreshPlateDisplay();
@@ -561,6 +568,23 @@ export class TectonicManager {
    */
   public getTectonicSystem(): TectonicSystem | null {
     return this.tectonicSystem;
+  }
+
+  /**
+   * Returns the spatial tile index (built after every rebuildTectonicPlates call).
+   * Use this to query tiles by sphere point or quadtree cell/patch.
+   */
+  public getTileQuadTree(): TileQuadTree | null {
+    return this.tileQuadTree;
+  }
+
+  private *_allTiles() {
+    if (!this.tectonicSystem) return;
+    for (const plate of this.tectonicSystem.plates) {
+      for (const tile of plate.tiles) {
+        yield tile;
+      }
+    }
   }
 
   /**

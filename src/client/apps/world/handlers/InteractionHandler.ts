@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Tile } from '../tectonics/data/Plate';
 import { SceneManager } from '../managers/SceneManager';
 import { VisualizationManager } from '../managers/VisualizationManager';
 import { TectonicManager } from '../managers/TectonicManager';
@@ -47,7 +48,6 @@ export class InteractionHandler {
     const raycaster = this.sceneManager.getRaycaster();
     const camera = this.sceneManager.getCamera();
     const dualMesh = this.visualizationManager.getDualMesh();
-    const icoHalfedgeDualGraph = this.visualizationManager.getIcoHalfedgeDualGraph();
     const icosahedron = this.visualizationManager.getIcosahedron();
     const tectonicSystem = this.tectonicManager.getTectonicSystem();
 
@@ -73,21 +73,35 @@ export class InteractionHandler {
     const intersects = raycaster.intersectObject(dualMesh);
 
     if (intersects.length > 0) {
-      // Get the first intersection
       const intersect = intersects[0];
-      const faceIndex = intersect.faceIndex!;
-
-      console.log('Clicked face index on dual mesh:', faceIndex);
-      const clickedHeId = dualMesh.geometry.userData.face2HalfedgeMap.get(faceIndex);
-      console.log('Corresponding halfedge id in dual graph:', clickedHeId);
-      const clickedHe = icoHalfedgeDualGraph.halfedges.get(clickedHeId);
-      if (!clickedHe) {
-        console.warn('No halfedge found for clicked halfedge id:', clickedHeId);
-        return;
-      }
 
       if (!tectonicSystem) {
         console.warn('No tectonic system available.');
+        return;
+      }
+
+      // Resolve which halfedge was clicked, preferring the quad tree when available
+      let clickedHe: import('@core/halfedge/Halfedge').Halfedge | undefined;
+
+      const tileQuadTree = this.tectonicManager.getTileQuadTree();
+      if (tileQuadTree) {
+        // Transform world-space hit point to mesh local space, then normalize onto unit sphere
+        const localPoint = dualMesh.worldToLocal(intersect.point.clone()).normalize();
+        const candidates = tileQuadTree.queryPoint(localPoint);
+        const tile = this._closestTile(localPoint, candidates);
+        if (tile) {
+          clickedHe = tile.edge;
+        }
+      } else {
+        // Fallback: face index → halfedge map lookup
+        const icoHalfedgeDualGraph = this.visualizationManager.getIcoHalfedgeDualGraph();
+        const faceIndex = intersect.faceIndex!;
+        const clickedHeId = dualMesh.geometry.userData.face2HalfedgeMap.get(faceIndex);
+        clickedHe = icoHalfedgeDualGraph.halfedges.get(clickedHeId);
+      }
+
+      if (!clickedHe) {
+        console.warn('No tile found at click point.');
         return;
       }
 
@@ -121,6 +135,18 @@ export class InteractionHandler {
       // this.tectonicManager.transferTileAtEdge(clickedHe);
       // this.tectonicManager.absorbPlateFromEdge(clickedHe);
     }
+  }
+
+  private _closestTile(point: THREE.Vector3, tiles: Tile[]): Tile | null {
+    if (tiles.length === 0) return null;
+    if (tiles.length === 1) return tiles[0];
+    let best = tiles[0];
+    let bestDist = point.distanceToSquared(tiles[0].centroid);
+    for (let i = 1; i < tiles.length; i++) {
+      const d = point.distanceToSquared(tiles[i].centroid);
+      if (d < bestDist) { bestDist = d; best = tiles[i]; }
+    }
+    return best;
   }
 
   /**

@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { TabApplication } from '../../tabs/TabManager';
 import { SceneManager } from './managers/SceneManager';
 import { VisualizationManager } from './managers/VisualizationManager';
@@ -6,6 +7,8 @@ import { NoiseManager } from './managers/NoiseManager';
 import { GUIManager } from './managers/GUIManager';
 import { InteractionHandler } from './handlers/InteractionHandler';
 import { GeometryBuilder } from './builders/GeometryBuilder';
+import { FlyCam } from '@core/FlyCam';
+import { LODTileRenderer } from './lod/LODTileRenderer';
 
 /**
  * World application - the main tectonic plate simulation.
@@ -19,6 +22,11 @@ export class WorldApplication implements TabApplication {
   private noiseManager: NoiseManager;
   private interactionHandler: InteractionHandler;
   private guiManager: GUIManager | null = null;
+
+  private flyCam: FlyCam | null = null;
+  private lodTileRenderer: LODTileRenderer | null = null;
+  private readonly clock = new THREE.Clock();
+  private boundOnResize: () => void;
 
   private initialized = false;
   private active = false;
@@ -44,6 +52,8 @@ export class WorldApplication implements TabApplication {
       this.visualizationManager,
       this.tectonicManager
     );
+
+    this.boundOnResize = this.onResize.bind(this);
   }
 
   /**
@@ -78,11 +88,49 @@ export class WorldApplication implements TabApplication {
 
     // 4. Rebuild tectonics
     this.tectonicManager.rebuildTectonicPlates();
+
+    // 5. Invalidate LOD tile meshes since tile colors have changed
+    this.lodTileRenderer?.invalidate();
+  }
+
+  private onFlyCamToggle(enabled: boolean): void {
+    if (!this.flyCam) return;
+    if (enabled) {
+      this.flyCam.enable();
+      this.sceneManager.setFlyCamera(this.flyCam.camera);
+    } else {
+      this.flyCam.disable();
+      this.sceneManager.setFlyCamera(null);
+    }
+  }
+
+  private onResize(): void {
+    const contentArea = this.getContentArea();
+    const aspect = contentArea.clientWidth / contentArea.clientHeight;
+    this.flyCam?.updateAspect(aspect);
+  }
+
+  private getContentArea(): HTMLElement {
+    return document.getElementById('content-area') || document.body;
   }
 
   public activate(): void {
     if (!this.initialized) {
-      // First-time initialization
+      // Use the content-area element for aspect ratio — the renderer domElement has
+      // display:none at this point so its clientWidth/Height would be 0 (NaN aspect).
+      const contentArea = this.getContentArea();
+      const aspect = contentArea.clientWidth / contentArea.clientHeight;
+      this.flyCam = new FlyCam(
+        this.sceneManager.getScene(),
+        this.sceneManager.getRenderer().domElement,
+        aspect,
+        { showDebugHelpers: false }
+      );
+
+      // Create LOD tile renderer
+      this.lodTileRenderer = new LODTileRenderer(this.sceneManager.getScene());
+
+      // First-time initialization (also builds tectonic system + tile quad tree)
       this.reset();
 
       // Create GUI when first activated
@@ -94,11 +142,19 @@ export class WorldApplication implements TabApplication {
         (degree: number) => this.reset(degree)
       );
 
+      // Wire LOD controls into GUI
+      this.guiManager.setupLODFolder(
+        this.flyCam,
+        this.lodTileRenderer,
+        (enabled) => this.onFlyCamToggle(enabled)
+      );
+
       this.initialized = true;
     }
 
     // Attach event listeners (re-attach on every activation)
     this.interactionHandler.attachEventListeners();
+    window.addEventListener('resize', this.boundOnResize);
 
     // Show renderer and GUI
     this.sceneManager.getRenderer().domElement.style.display = 'block';
@@ -108,12 +164,19 @@ export class WorldApplication implements TabApplication {
       this.guiManager.getGUI().domElement.style.display = 'block';
     }
 
+    this.clock.start();
     this.active = true;
   }
 
   public deactivate(): void {
+    // Always exit fly mode when the tab is deactivated
+    if (this.flyCam?.isEnabled()) {
+      this.onFlyCamToggle(false);
+    }
+
     // Detach event listeners
     this.interactionHandler.detachEventListeners();
+    window.removeEventListener('resize', this.boundOnResize);
 
     // Hide renderer and GUI
     this.sceneManager.getRenderer().domElement.style.display = 'none';
@@ -123,20 +186,38 @@ export class WorldApplication implements TabApplication {
       this.guiManager.getGUI().domElement.style.display = 'none';
     }
 
+    this.clock.stop();
     this.active = false;
   }
 
   public update(): void {
-    if (this.active) {
-      this.sceneManager.render();
-    }
+    if (!this.active) return;
+
+    const dt = this.clock.getDelta();
+
+    // Advance fly camera
+    this.flyCam?.update(dt);
+
+    // Compute LOD camera: fly cam always drives LOD (same pattern as QuadTree tab)
+    const lodCamera = this.flyCam?.camera ?? this.sceneManager.getCamera();
+    const canvas = this.sceneManager.getRenderer().domElement;
+    const tileTree = this.tectonicManager.getTileQuadTree();
+    this.lodTileRenderer?.update(lodCamera, canvas.clientWidth, canvas.clientHeight, tileTree);
+
+    this.sceneManager.render();
   }
 
   public dispose(): void {
     this.interactionHandler.detachEventListeners();
+    window.removeEventListener('resize', this.boundOnResize);
+
     if (this.guiManager) {
       this.guiManager.dispose();
     }
+
+    this.flyCam?.dispose();
+    this.lodTileRenderer?.dispose();
+
     this.noiseManager.clear();
     this.tectonicManager.clear();
   }

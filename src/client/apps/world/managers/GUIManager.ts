@@ -6,6 +6,8 @@ import { NoiseManager } from './NoiseManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
 import { PlateDisplayMode, PLATE_VISUALIZATION_LEGEND, rgbToHex } from '../visualization/PlateColors';
 import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
+import { LODTileRenderer, LODColorMode } from '../lod/LODTileRenderer';
+import { FlyCam } from '@core/FlyCam';
 
 const MIN_DEGREE = 0;
 const MAX_DEGREE = 7;
@@ -21,6 +23,7 @@ export class GUIManager {
   private interactionHandler: InteractionHandler;
   private onResetCallback: (degree: number) => void;
   private netRotationParams = { x: 0, y: 0, z: 0, magnitude: 0 };
+  private lodRenderer: LODTileRenderer | null = null;
 
   constructor(
     visualizationManager: VisualizationManager,
@@ -164,7 +167,10 @@ export class GUIManager {
     geologyGui
       .add({ show: this.tectonicManager.isGeologyDisplayEnabled() }, 'show')
       .name('Show')
-      .onChange((value: boolean) => this.tectonicManager.setGeologyDisplayEnabled(value));
+      .onChange((value: boolean) => {
+        this.tectonicManager.setGeologyDisplayEnabled(value);
+        this.lodRenderer?.setColorMode(value ? LODColorMode.GEOLOGY : LODColorMode.PLATE);
+      });
     geologyGui
       .add({ reset: this.tectonicManager.isRecomputeOrogenyMode() }, 'reset')
       .name('Reset Orogeny')
@@ -191,6 +197,85 @@ export class GUIManager {
     faceDistGui.add(icoDualParams, 'pentagons').name('Pentagons').listen();
     faceDistGui.add(icoDualParams, 'hexagons').name('Hexagons').listen();
     faceDistGui.add(icoDualParams, 'heptagons').name('Heptagons').listen();
+  }
+
+  /**
+   * Adds an "LOD View" folder to the GUI.
+   * Call once after constructing both the FlyCam and LODTileRenderer.
+   *
+   * @param flyCam        - fly camera instance
+   * @param lodRenderer   - tile-colored LOD renderer
+   * @param onFlyCamToggle - callback to enable/disable fly camera on the scene
+   */
+  public setupLODFolder(
+    flyCam: FlyCam,
+    lodRenderer: LODTileRenderer,
+    onFlyCamToggle: (enabled: boolean) => void
+  ): void {
+    this.lodRenderer = lodRenderer;
+    const lodGui = this.gui.addFolder('LOD View');
+
+    // Grab legacy-view materials so we can hide/show them when LOD is toggled
+    const dualMaterial = this.visualizationManager.getDualMaterial();
+    const icosahedronMaterial = this.visualizationManager.getIcosahedronMaterial();
+    const graphLinesMaterial = this.visualizationManager.getGraphLinesMaterial();
+    const motionVecLinesMaterial = this.visualizationManager.getMotionVecLinesMaterial();
+    const neighborTilesLinesMaterial = this.visualizationManager.getNeighborTilesLinesMaterial();
+
+    // Saved state so we can restore when LOD is disabled
+    let savedVisible = {
+      dual: dualMaterial.visible,
+      ico: icosahedronMaterial.visible,
+      graphLines: graphLinesMaterial.visible,
+      motionVec: motionVecLinesMaterial.visible,
+      neighborTiles: neighborTilesLinesMaterial.visible,
+    };
+
+    // Fly Camera toggle
+    const flyParams = { enabled: flyCam.isEnabled() };
+    lodGui
+      .add(flyParams, 'enabled')
+      .name('Fly Camera')
+      .onChange((value: boolean) => onFlyCamToggle(value));
+
+    // Frustum LOD toggle — hides legacy view while active
+    const lodParams = { enabled: lodRenderer.isEnabled() };
+    lodGui
+      .add(lodParams, 'enabled')
+      .name('Frustum LOD')
+      .onChange((value: boolean) => {
+        if (value) {
+          savedVisible = {
+            dual: dualMaterial.visible,
+            ico: icosahedronMaterial.visible,
+            graphLines: graphLinesMaterial.visible,
+            motionVec: motionVecLinesMaterial.visible,
+            neighborTiles: neighborTilesLinesMaterial.visible,
+          };
+          dualMaterial.visible = false;
+          icosahedronMaterial.visible = false;
+          graphLinesMaterial.visible = false;
+          motionVecLinesMaterial.visible = false;
+          neighborTilesLinesMaterial.visible = false;
+        } else {
+          dualMaterial.visible = savedVisible.dual;
+          icosahedronMaterial.visible = savedVisible.ico;
+          graphLinesMaterial.visible = savedVisible.graphLines;
+          motionVecLinesMaterial.visible = savedVisible.motionVec;
+          neighborTilesLinesMaterial.visible = savedVisible.neighborTiles;
+        }
+        lodRenderer.setEnabled(value);
+      });
+
+    // Screen-space error slider (lower = more detail)
+    const errorParams = { error: lodRenderer.getTargetScreenSpaceError() };
+    lodGui
+      .add(errorParams, 'error', 8, 256)
+      .step(8)
+      .name('Screen Error')
+      .onChange((value: number) => lodRenderer.setTargetScreenSpaceError(value));
+
+    lodGui.open();
   }
 
   /**

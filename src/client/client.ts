@@ -4,5 +4,5 @@ import { TabManager, WorldApplication, QuadTreeApplication } from './tabs';
 const tabManager = new TabManager();
 
 // Register applications
-tabManager.register('quadtree', 'QuadTree', new QuadTreeApplication());
 tabManager.register('world', 'World', new WorldApplication());
+tabManager.register('quadtree', 'QuadTree', new QuadTreeApplication());
