@@ -19,6 +19,7 @@ import { Tile } from './data/Plate';
 import {
   QuadTreeCell,
   cellKey,
+  getGridSize,
   spherePointToCell,
 } from '@core/quadtree';
 
@@ -40,11 +41,42 @@ export class TileQuadTree {
 
   /**
    * Returns all tiles whose coverage includes the cell that contains `point`.
+   *
+   * If the exact cell has no registrations (coverage gap due to discrete
+   * sampling), falls back to the 8 same-face neighbours.  This handles the
+   * two main failure modes of the point-sampling build strategy:
+   *   - interior gap  : a cell lies inside a tile polygon but no sample landed in it
+   *   - boundary gap  : a cell is crossed by a tile edge between two sample points
    */
   queryPoint(point: THREE.Vector3): Tile[] {
     const cell = spherePointToCell(point, this.level);
     if (!cell) return [];
-    return this.cellToTiles.get(cellKey(cell)) ?? [];
+
+    const exact = this.cellToTiles.get(cellKey(cell));
+    if (exact && exact.length > 0) return exact;
+
+    // Fallback: aggregate same-face neighbours (no cross-face lookup needed
+    // because closestTile will still pick the correct candidate).
+    const gridSize = getGridSize(this.level);
+    const seen = new Set<number>();
+    const result: Tile[] = [];
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = cell.x + dx;
+        const ny = cell.y + dy;
+        if (nx < 0 || nx >= gridSize || ny < 0 || ny >= gridSize) continue;
+        const bucket = this.cellToTiles.get(
+          cellKey({ face: cell.face, level: this.level, x: nx, y: ny })
+        );
+        if (bucket) {
+          for (const t of bucket) {
+            if (!seen.has(t.id)) { seen.add(t.id); result.push(t); }
+          }
+        }
+      }
+    }
+    return result;
   }
 
   /**
@@ -116,10 +148,13 @@ export class TileQuadTree {
    * Collects all index-level cells that this tile overlaps by sampling:
    *   • the tile centroid
    *   • each polygon vertex
-   *   • the midpoint of each polygon edge (normalized to the sphere)
+   *   • sphere-surface points at ¼, ½ and ¾ along each polygon edge
+   *   • sphere-surface midpoints between the centroid and each vertex (interior)
    *
-   * This three-point sampling is sufficient for typical tile sizes relative to
-   * the cell size at the index level.
+   * The denser edge sampling (vs. the old ½-only approach) prevents the two
+   * main coverage-gap failure modes:
+   *   - interior gap  : a cell lies inside the polygon but no sample landed there
+   *   - boundary gap  : a curved projected edge crosses a cell without a sample
    */
   private _coverageCells(tile: Tile): QuadTreeCell[] {
     const seen = new Set<string>();
@@ -143,12 +178,20 @@ export class TileQuadTree {
       verts.push(he.vertex.position);
     }
 
-    const mid = new THREE.Vector3();
+    const tmp = new THREE.Vector3();
     for (let i = 0; i < verts.length; i++) {
-      add(verts[i]);
-      // Sphere-surface midpoint of edge i → i+1
-      mid.addVectors(verts[i], verts[(i + 1) % verts.length]).normalize();
-      add(mid.clone());
+      const v0 = verts[i];
+      const v1 = verts[(i + 1) % verts.length];
+
+      add(v0);
+
+      // ¼, ½, ¾ along each edge — sphere-surface points via lerp + normalize
+      for (const t of [0.25, 0.5, 0.75]) {
+        add(tmp.lerpVectors(v0, v1, t).normalize().clone());
+      }
+
+      // Interior sample: midpoint between centroid and this vertex
+      add(tmp.addVectors(tile.centroid, v0).normalize().clone());
     }
 
     return cells;
@@ -205,9 +248,17 @@ export class TileQuadTree {
 /**
  * Chooses an appropriate index level for a given icosahedron subdivision degree.
  *
- * At degree D the dual graph has ~10·4^D tiles.  We target ~4–8 tiles per cell
- * on average, which gives index level D + 2.
+ * At degree D the dual graph has ~10·4^D tiles.
+ * At level L there are 6·4^L cells total.
+ *
+ * Cells per tile = 6·4^L / (10·4^D) = (6/10)·4^(L−D).
+ * With L = D+2 that gives ~9.6 cells/tile.  Each tile only has ~13 sample
+ * points (centroid + vertices + edge midpoints), so some cells in the interior
+ * of large or projection-distorted tiles are never registered → gray patches.
+ *
+ * L = D+1 gives ~2.4 cells/tile, well within the 13-sample budget, and
+ * ~5.4 registrations/cell (vs ~1.35 at D+2 → ~26 % empty cells).
  */
 export function defaultLevelForDegree(degree: number): number {
-  return degree + 2;
+  return degree + 1;
 }

@@ -40,6 +40,7 @@ export class LODTileRenderer {
 
   private targetScreenSpaceError = 128;
   private colorMode: LODColorMode = LODColorMode.PLATE;
+  private wireframe = false;
   private enabled = false; // off by default; user enables via GUI
 
   /**
@@ -66,6 +67,16 @@ export class LODTileRenderer {
     if (this.colorMode === mode) return;
     this.colorMode = mode;
     this.clearMeshes(); // force regeneration with new colors
+  }
+
+  isWireframe(): boolean { return this.wireframe; }
+
+  setWireframe(v: boolean): void {
+    if (this.wireframe === v) return;
+    this.wireframe = v;
+    for (const mesh of this.quadrantMeshes.values()) {
+      (mesh.material as THREE.MeshBasicMaterial).wireframe = v;
+    }
   }
 
   getColorMode(): LODColorMode { return this.colorMode; }
@@ -176,6 +187,7 @@ export class LODTileRenderer {
     const mat = new THREE.MeshBasicMaterial({
       vertexColors: true,
       side: THREE.FrontSide,
+      wireframe: this.wireframe,
     });
 
     return new THREE.Mesh(geo, mat);

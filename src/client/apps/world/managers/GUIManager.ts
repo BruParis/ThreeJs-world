@@ -216,20 +216,23 @@ export class GUIManager {
     const lodGui = this.gui.addFolder('LOD View');
 
     // Grab legacy-view materials so we can hide/show them when LOD is toggled
-    const dualMaterial = this.visualizationManager.getDualMaterial();
-    const icosahedronMaterial = this.visualizationManager.getIcosahedronMaterial();
-    const graphLinesMaterial = this.visualizationManager.getGraphLinesMaterial();
-    const motionVecLinesMaterial = this.visualizationManager.getMotionVecLinesMaterial();
-    const neighborTilesLinesMaterial = this.visualizationManager.getNeighborTilesLinesMaterial();
+    const legacyMaterials = [
+      this.visualizationManager.getDualMaterial(),
+      this.visualizationManager.getIcosahedronMaterial(),
+      this.visualizationManager.getGraphLinesMaterial(),
+      this.visualizationManager.getTileLinesMaterial(),
+      this.visualizationManager.getPlateLinesMaterial(),
+      this.visualizationManager.getMotionVecLinesMaterial(),
+      this.visualizationManager.getBoundaryLinesMaterial(),
+      this.visualizationManager.getAllBoundariesLinesMaterial(),
+      this.visualizationManager.getDominanceIndicatorsLinesMaterial(),
+      this.visualizationManager.getTransformSlideLinesMaterial(),
+      this.visualizationManager.getNeighborTilesLinesMaterial(),
+      this.visualizationManager.getNoiseGradientLinesMaterial(),
+    ];
 
     // Saved state so we can restore when LOD is disabled
-    let savedVisible = {
-      dual: dualMaterial.visible,
-      ico: icosahedronMaterial.visible,
-      graphLines: graphLinesMaterial.visible,
-      motionVec: motionVecLinesMaterial.visible,
-      neighborTiles: neighborTilesLinesMaterial.visible,
-    };
+    let savedVisible: boolean[] = legacyMaterials.map(m => m.visible);
 
     // Fly Camera toggle
     const flyParams = { enabled: flyCam.isEnabled() };
@@ -245,27 +248,20 @@ export class GUIManager {
       .name('Frustum LOD')
       .onChange((value: boolean) => {
         if (value) {
-          savedVisible = {
-            dual: dualMaterial.visible,
-            ico: icosahedronMaterial.visible,
-            graphLines: graphLinesMaterial.visible,
-            motionVec: motionVecLinesMaterial.visible,
-            neighborTiles: neighborTilesLinesMaterial.visible,
-          };
-          dualMaterial.visible = false;
-          icosahedronMaterial.visible = false;
-          graphLinesMaterial.visible = false;
-          motionVecLinesMaterial.visible = false;
-          neighborTilesLinesMaterial.visible = false;
+          savedVisible = legacyMaterials.map(m => m.visible);
+          for (const m of legacyMaterials) m.visible = false;
         } else {
-          dualMaterial.visible = savedVisible.dual;
-          icosahedronMaterial.visible = savedVisible.ico;
-          graphLinesMaterial.visible = savedVisible.graphLines;
-          motionVecLinesMaterial.visible = savedVisible.motionVec;
-          neighborTilesLinesMaterial.visible = savedVisible.neighborTiles;
+          legacyMaterials.forEach((m, i) => { m.visible = savedVisible[i]; });
         }
         lodRenderer.setEnabled(value);
       });
+
+    // Wireframe toggle
+    const wireframeParams = { enabled: lodRenderer.isWireframe() };
+    lodGui
+      .add(wireframeParams, 'enabled')
+      .name('Wireframe')
+      .onChange((value: boolean) => lodRenderer.setWireframe(value));
 
     // Screen-space error slider (lower = more detail)
     const errorParams = { error: lodRenderer.getTargetScreenSpaceError() };
