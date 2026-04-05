@@ -9,6 +9,7 @@ import { InteractionHandler } from './handlers/InteractionHandler';
 import { GeometryBuilder } from './builders/GeometryBuilder';
 import { FlyCam } from '@core/FlyCam';
 import { LODTileRenderer } from './lod/LODTileRenderer';
+import { TileShaderPatchOperation } from './lod/TileShaderPatchOperation';
 
 /**
  * World application - the main tectonic plate simulation.
@@ -24,6 +25,7 @@ export class WorldApplication implements TabApplication {
   private guiManager: GUIManager | null = null;
 
   private flyCam: FlyCam | null = null;
+  private patchOperation: TileShaderPatchOperation | null = null;
   private lodTileRenderer: LODTileRenderer | null = null;
   private readonly clock = new THREE.Clock();
   private boundOnResize: () => void;
@@ -89,7 +91,8 @@ export class WorldApplication implements TabApplication {
     // 4. Rebuild tectonics
     this.tectonicManager.rebuildTectonicPlates();
 
-    // 5. Invalidate LOD tile meshes since tile colors have changed
+    // 5. Push new tile data to the patch operation, then invalidate cached meshes
+    this.patchOperation?.setTileTree(this.tectonicManager.getTileQuadTree());
     this.lodTileRenderer?.invalidate();
   }
 
@@ -127,8 +130,9 @@ export class WorldApplication implements TabApplication {
         { showDebugHelpers: false }
       );
 
-      // Create LOD tile renderer
-      this.lodTileRenderer = new LODTileRenderer(this.sceneManager.getScene());
+      // Create patch operation and LOD tile renderer
+      this.patchOperation = new TileShaderPatchOperation();
+      this.lodTileRenderer = new LODTileRenderer(this.sceneManager.getScene(), this.patchOperation);
 
       // First-time initialization (also builds tectonic system + tile quad tree)
       this.reset();
@@ -146,6 +150,7 @@ export class WorldApplication implements TabApplication {
       this.guiManager.setupLODFolder(
         this.flyCam,
         this.lodTileRenderer,
+        this.patchOperation,
         (enabled) => this.onFlyCamToggle(enabled)
       );
 
@@ -201,8 +206,7 @@ export class WorldApplication implements TabApplication {
     // Compute LOD camera: fly cam always drives LOD (same pattern as QuadTree tab)
     const lodCamera = this.flyCam?.camera ?? this.sceneManager.getCamera();
     const canvas = this.sceneManager.getRenderer().domElement;
-    const tileTree = this.tectonicManager.getTileQuadTree();
-    this.lodTileRenderer?.update(lodCamera, canvas.clientWidth, canvas.clientHeight, tileTree);
+    this.lodTileRenderer?.update(lodCamera, canvas.clientWidth, canvas.clientHeight);
 
     this.sceneManager.render();
   }

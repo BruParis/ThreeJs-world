@@ -6,7 +6,8 @@ import { NoiseManager } from './NoiseManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
 import { PlateDisplayMode, PLATE_VISUALIZATION_LEGEND, rgbToHex } from '../visualization/PlateColors';
 import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
-import { LODTileRenderer, LODColorMode } from '../lod/LODTileRenderer';
+import { LODTileRenderer } from '../lod/LODTileRenderer';
+import { TileShaderPatchOperation, LODColorMode } from '../lod/TileShaderPatchOperation';
 import { FlyCam } from '@core/FlyCam';
 
 const MIN_DEGREE = 0;
@@ -24,6 +25,7 @@ export class GUIManager {
   private onResetCallback: (degree: number) => void;
   private netRotationParams = { x: 0, y: 0, z: 0, magnitude: 0 };
   private lodRenderer: LODTileRenderer | null = null;
+  private patchOperation: TileShaderPatchOperation | null = null;
 
   constructor(
     visualizationManager: VisualizationManager,
@@ -169,7 +171,8 @@ export class GUIManager {
       .name('Show')
       .onChange((value: boolean) => {
         this.tectonicManager.setGeologyDisplayEnabled(value);
-        this.lodRenderer?.setColorMode(value ? LODColorMode.GEOLOGY : LODColorMode.PLATE);
+        this.patchOperation?.setColorMode(value ? LODColorMode.GEOLOGY : LODColorMode.PLATE);
+        this.lodRenderer?.invalidate();
       });
     geologyGui
       .add({ reset: this.tectonicManager.isRecomputeOrogenyMode() }, 'reset')
@@ -210,9 +213,11 @@ export class GUIManager {
   public setupLODFolder(
     flyCam: FlyCam,
     lodRenderer: LODTileRenderer,
+    patchOperation: TileShaderPatchOperation,
     onFlyCamToggle: (enabled: boolean) => void
   ): void {
     this.lodRenderer = lodRenderer;
+    this.patchOperation = patchOperation;
     const lodGui = this.gui.addFolder('LOD View');
 
     // Grab legacy-view materials so we can hide/show them when LOD is toggled
