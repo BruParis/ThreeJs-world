@@ -22,8 +22,10 @@ export const tileFragmentShader = /* glsl */`
 
 uniform highp sampler2D uTileData;
 uniform int uNumTiles;
+uniform int uColorMode;  // 0 = tile color (plate/geology), 1 = elevation (black→white)
 
-in vec3 vSphereNormal;
+in vec3  vSphereNormal;
+in float vElevation;
 
 out vec4 fragColor;
 
@@ -55,7 +57,11 @@ void main() {
     }
 
     if (inside) {
-      fragColor = vec4(color, 1.0);
+      if (uColorMode == 1) {
+        fragColor = vec4(vElevation, vElevation, vElevation, 1.0);
+      } else {
+        fragColor = vec4(color, 1.0);
+      }
       return;
     }
   }

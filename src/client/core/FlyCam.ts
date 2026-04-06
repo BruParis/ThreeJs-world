@@ -17,6 +17,22 @@ export interface FlyCamOptions {
    */
   showDebugHelpers?: boolean;
   /**
+   * Minimum allowed distance from origin (world units).
+   * Overrides the default surface-clearance minimum when provided.
+   */
+  minAltitude?: number;
+  /**
+   * Camera frustum near clip distance (world units).
+   * Default: 0.00001. Should be set proportionally to the minimum altitude
+   * to keep the near/far ratio manageable for the depth buffer.
+   */
+  near?: number;
+  /**
+   * Camera frustum far clip distance (world units).
+   * Default: 100.
+   */
+  far?: number;
+  /**
    * Base movement speed (units/second at 1 unit of altitude).
    * Default: 3.0
    */
@@ -77,11 +93,13 @@ export class FlyCam {
     this.sphereRadius  = options.sphereRadius  ?? 1.0;
     this.BASE_SPEED    = options.baseSpeed      ?? 3.0;
     this.SENSITIVITY   = options.sensitivity   ?? 0.002;
-    // Keep the camera just above the sphere surface (0.12% clearance)
-    this.MIN_ALTITUDE  = this.sphereRadius * 1.0012;
+    // Use provided minAltitude, or default to just above the sphere surface (0.12% clearance)
+    this.MIN_ALTITUDE  = options.minAltitude   ?? this.sphereRadius * 1.0012;
 
     // ── Camera ────────────────────────────────────────────────────────────────
-    this.camera = new THREE.PerspectiveCamera(60, aspect, 0.00001, 100);
+    const near = options.near ?? 0.00001;
+    const far  = options.far  ?? 100;
+    this.camera = new THREE.PerspectiveCamera(60, aspect, near, far);
     this.camera.position.set(this.sphereRadius * 2.5, this.sphereRadius * 0.5, 0);
     this.camera.lookAt(0, 0, 0);
     this.camera.updateMatrixWorld();

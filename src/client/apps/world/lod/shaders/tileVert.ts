@@ -2,8 +2,12 @@
  * Vertex shader for tectonic tile LOD patches.
  *
  * Receives raw sphere positions (normalized, on unit sphere) and displaces
- * them along the surface normal using 3D simplex noise, producing consistent
- * elevation across all patches with no seams.
+ * them along the surface normal using classic 3D Perlin noise, producing
+ * consistent elevation across all patches with no seams.
+ *
+ * The noise implementation is imported from perlinGLSL.ts, which embeds the
+ * Ken Perlin reference permutation table at build time.  This gives bit-for-bit
+ * identical output to PerlinNoise3D (no-seed) on the CPU.
  *
  * Uniforms
  *   uNoiseScale          – frequency of the noise input (sphere-space)
@@ -13,84 +17,95 @@
  * Varyings out
  *   vSphereNormal – undisplaced normalized sphere position, used by the
  *                   fragment shader for tile polygon lookup
+ *   vElevation    – normalized elevation [0, 1]: 0 = sea level, 1 = max
  */
+
+import { perlinNoiseGLSL } from '@core/noise/perlinGLSL';
+
 export const tileVertexShader = /* glsl */`
 
-// ── Simplex noise (Stefan Gustavson, public domain) ───────────────────────────
-
-vec3 _mod289v3(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-vec4 _mod289v4(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-vec4 _permute(vec4 x)  { return _mod289v4(((x * 34.0) + 1.0) * x); }
-vec4 _taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
-
-float snoise(vec3 v) {
-  const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
-  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
-
-  vec3 i  = floor(v + dot(v, C.yyy));
-  vec3 x0 = v - i + dot(i, C.xxx);
-
-  vec3 g  = step(x0.yzx, x0.xyz);
-  vec3 l  = 1.0 - g;
-  vec3 i1 = min(g.xyz, l.zxy);
-  vec3 i2 = max(g.xyz, l.zxy);
-
-  vec3 x1 = x0 - i1 + C.xxx;
-  vec3 x2 = x0 - i2 + C.yyy;
-  vec3 x3 = x0 - D.yyy;
-
-  i = _mod289v3(i);
-  vec4 p = _permute(_permute(_permute(
-      i.z + vec4(0.0, i1.z, i2.z, 1.0))
-    + i.y + vec4(0.0, i1.y, i2.y, 1.0))
-    + i.x + vec4(0.0, i1.x, i2.x, 1.0));
-
-  float n_ = 0.142857142857;
-  vec3  ns = n_ * D.wyz - D.xzx;
-  vec4 j   = p - 49.0 * floor(p * ns.z * ns.z);
-  vec4 x_  = floor(j * ns.z);
-  vec4 y_  = floor(j - 7.0 * x_);
-  vec4 xg  = x_ * ns.x + ns.yyyy;
-  vec4 yg  = y_ * ns.x + ns.yyyy;
-  vec4 h   = 1.0 - abs(xg) - abs(yg);
-
-  vec4 b0 = vec4(xg.xy, yg.xy);
-  vec4 b1 = vec4(xg.zw, yg.zw);
-  vec4 s0 = floor(b0) * 2.0 + 1.0;
-  vec4 s1 = floor(b1) * 2.0 + 1.0;
-  vec4 sh = -step(h, vec4(0.0));
-
-  vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
-  vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
-
-  vec3 p0 = vec3(a0.xy, h.x);
-  vec3 p1 = vec3(a0.zw, h.y);
-  vec3 p2 = vec3(a1.xy, h.z);
-  vec3 p3 = vec3(a1.zw, h.w);
-
-  vec4 norm = _taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
-  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
-
-  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
-  m = m * m;
-  return 42.0 * dot(m * m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
-}
+${perlinNoiseGLSL}
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+uniform highp sampler2D uTileData;
+uniform int   uNumTiles;
 uniform float uNoiseScale;
+uniform int   uNoiseOctaves;
+uniform float uNoisePersistence;
+uniform float uNoiseLacunarity;
 uniform float uElevationAmplitude;
 uniform float uSphereOffset;
+uniform float uElevBlendWidth;
 
-out vec3 vSphereNormal;
+const int MAX_TILES = 256;
+const int MAX_VERTS = 8;
+
+out vec3  vSphereNormal;
+out float vElevation;   // normalized [0, 1]: 0 = sea level, 1 = max elevation
 
 void main() {
   // Sphere-surface normal = normalized position (positions lie on unit sphere)
   vec3 n = normalize(position);
   vSphereNormal = n;
 
-  // Displace radially by noise sampled at sphere position
-  float elev = snoise(n * uNoiseScale) * uElevationAmplitude;
+  // ── Elevation weight: 0 = oceanic (flat), 1 = continental (perlin) ──────────
+  //
+  // Run the same spherical PiP test as the fragment shader to find which tile
+  // this vertex belongs to, then blend elevation at tile boundaries so oceanic
+  // tiles stay flat while continental tiles slope smoothly down to sea level.
+  //
+  // Per-tile DataTexture encoding (set by TileShaderPatchOperation):
+  //   Row 0   w : nv + ownElevWeight * 0.1   (fract * 10 decodes ownWeight)
+  //   Row 1+j w : elevation weight of the neighbor tile across edge j
+
+  float ownElevWeight      = 1.0; // default: displace (safe for unmatched vertices)
+  float neighborElevWeight = 1.0;
+  float nearestEdgeDist    = -1e9; // normalized signed dist to nearest edge; 0 = on edge
+
+  for (int i = 0; i < MAX_TILES; i++) {
+    if (i >= uNumTiles) break;
+
+    vec4  meta = texelFetch(uTileData, ivec2(i, 0), 0);
+    float a    = meta.a;
+    int   nv   = int(a + 0.5);
+    if (nv < 3) continue;
+
+    bool  inside   = true;
+    float minEdge  = -1e9;
+    float minNeigh = 1.0;
+
+    for (int j = 0; j < MAX_VERTS; j++) {
+      if (j >= nv) break;
+      vec4 rowJ  = texelFetch(uTileData, ivec2(i, 1 + j),             0);
+      vec4 rowJN = texelFetch(uTileData, ivec2(i, 1 + (j + 1) % nv), 0);
+      vec3 edgeN = cross(rowJ.xyz, rowJN.xyz);
+      float len  = length(edgeN);
+      // Normalized signed distance: negative = inside polygon, 0 = on edge
+      float d    = (len > 0.0) ? dot(edgeN, n) / len : 0.0;
+      if (d > 0.0) { inside = false; break; }
+      if (d > minEdge) {
+        minEdge  = d;
+        minNeigh = rowJ.w; // neighbor elevation weight for edge j stored in row j
+      }
+    }
+
+    if (inside) {
+      ownElevWeight      = step(0.05, fract(a)); // fract ≈ 0.1 → 1.0, fract ≈ 0.0 → 0.0
+      neighborElevWeight = minNeigh;
+      nearestEdgeDist    = minEdge;
+      break;
+    }
+  }
+
+  // Blend only downward (min): prevents ocean vertices from rising at coast edges.
+  // Continental tiles slope to 0 near ocean; oceanic tiles stay flat.
+  float blend      = smoothstep(-uElevBlendWidth, 0.0, nearestEdgeDist);
+  float elevWeight = mix(ownElevWeight, min(ownElevWeight, neighborElevWeight), blend);
+
+  float elev = (perlinFbm(n * uNoiseScale, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5)
+               * uElevationAmplitude * elevWeight;
+  vElevation = (uElevationAmplitude > 0.0) ? elev / uElevationAmplitude : 0.0;
   vec3 displaced = (uSphereOffset + elev) * n;
 
   gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);

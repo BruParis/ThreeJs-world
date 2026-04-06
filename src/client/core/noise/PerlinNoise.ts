@@ -1,19 +1,33 @@
+import { REFERENCE_PERMUTATION } from './PerlinReference';
+
 /**
  * 3D Perlin Noise implementation with fractal variations.
  * Provides coherent noise suitable for terrain generation, textures, and procedural content.
+ *
+ * When constructed with no seed, uses the Ken Perlin reference permutation table
+ * (see PerlinReference.ts).  This produces bit-for-bit identical output to the
+ * GLSL perlinNoise() function in perlinGLSL.ts for the same (x, y, z) inputs.
+ *
+ * When constructed with a seed, the table is shuffled and output will differ
+ * from the GPU shader (by design — seeded instances generate unique noise per plate).
  */
 export class PerlinNoise3D {
   private permutation: number[];
 
   constructor(seed?: number) {
-    this.permutation = [];
-    for (let i = 0; i < 256; i++) {
-      this.permutation[i] = i;
-    }
+    this.permutation = [...REFERENCE_PERMUTATION];
     if (seed !== undefined) {
       this.shuffle(seed);
     }
     this.permutation = [...this.permutation, ...this.permutation];
+  }
+
+  /**
+   * Returns the first 256 entries of the (doubled) permutation table.
+   * Used by TileShaderPatchOperation to upload the table to the GPU as a texture.
+   */
+  getPermutation256(): number[] {
+    return this.permutation.slice(0, 256);
   }
 
   private shuffle(seed: number): void {

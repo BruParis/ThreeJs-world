@@ -18,19 +18,23 @@
 import * as THREE from 'three';
 import { QuadrantSpec } from '@core/quadtree';
 import { CubeFace, ProjectionManager } from '@core/geometry/SphereProjection';
+import { Halfedge } from '@core/halfedge/Halfedge';
 import { TileQuadTree } from '../tectonics/TileQuadTree';
-import { Tile } from '../tectonics/data/Plate';
+import { Tile, GeologicalType, PlateCategory } from '../tectonics/data/Plate';
 import { getPlateColor } from '../visualization/PlateColors';
 import { getGeologicalColor } from '../visualization/GeologyColors';
 import { IPatchOperation } from './IPatchOperation';
 import { tileVertexShader } from './shaders/tileVert';
 import { tileFragmentShader } from './shaders/tileFrag';
+import { kmToDistance } from '../../../shared/world/World';
+import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export enum LODColorMode {
-  PLATE   = 'plate',
-  GEOLOGY = 'geology',
+  PLATE      = 'plate',
+  GEOLOGY    = 'geology',
+  ELEVATION  = 'elevation',
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -42,19 +46,82 @@ const MAX_TILES = 256;
 const MAX_VERTS = 8;
 
 /** Radial offset above the dual mesh to prevent z-fighting. */
-const SURFACE_OFFSET = 1.003;
+export const SURFACE_OFFSET = 1.003;
 
 // ── TileShaderPatchOperation ──────────────────────────────────────────────────
+
+// Default noise parameters — match the GUI initial values
+const DEFAULT_NOISE = { seed: 42, scale: 2.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
 
 export class TileShaderPatchOperation implements IPatchOperation {
   private tileTree: TileQuadTree | null = null;
   private colorMode: LODColorMode = LODColorMode.PLATE;
   private subdivisionFactor = 8;
+  private edgeTileMap: Map<Halfedge, Tile> | null = null;
+
+  // ── Noise state ────────────────────────────────────────────────────────────
+  private noiseScale       = DEFAULT_NOISE.scale;
+  private noiseOctaves     = DEFAULT_NOISE.octaves;
+  private noisePersistence = DEFAULT_NOISE.persistence;
+  private noiseLacunarity  = DEFAULT_NOISE.lacunarity;
+  // Shared 256×1 R32F texture: texel i holds perm[i] as an exact float.
+  // All patches reference this single object; updating needsUpdate re-uploads it.
+  private permTexture: THREE.DataTexture;
+
+  constructor() {
+    this.permTexture = this.buildPermTexture(DEFAULT_NOISE.seed);
+  }
+
+  // ── Noise API ──────────────────────────────────────────────────────────────
+
+  /**
+   * Update Perlin noise parameters used by the LOD elevation shader.
+   * Rebuilds the permutation texture from the new seed and stores the other
+   * params so they are included in every subsequent createPatch() call.
+   * The caller is responsible for invalidating the LOD renderer afterwards.
+   */
+  setNoiseParams(
+    seed: number,
+    scale: number,
+    octaves: number,
+    persistence: number,
+    lacunarity: number
+  ): void {
+    this.noiseScale       = scale;
+    this.noiseOctaves     = octaves;
+    this.noisePersistence = persistence;
+    this.noiseLacunarity  = lacunarity;
+    this.permTexture.dispose();
+    this.permTexture = this.buildPermTexture(seed);
+  }
+
+  dispose(): void {
+    this.permTexture.dispose();
+  }
+
+  // Builds a 256×1 R32F DataTexture whose texel i holds perm[i] as a float.
+  private buildPermTexture(seed: number): THREE.DataTexture {
+    const perm = new PerlinNoise3D(seed).getPermutation256();
+    const data = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      data[i] = perm[i]; // exact integer stored as float32
+    }
+    const tex = new THREE.DataTexture(data, 256, 1, THREE.RedFormat, THREE.FloatType);
+    tex.minFilter     = THREE.NearestFilter;
+    tex.magFilter     = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate   = true;
+    return tex;
+  }
 
   // ── Configuration ──────────────────────────────────────────────────────────
 
   setTileTree(tree: TileQuadTree | null): void {
     this.tileTree = tree;
+  }
+
+  setEdgeTileMap(map: Map<Halfedge, Tile> | null): void {
+    this.edgeTileMap = map;
   }
 
   setColorMode(mode: LODColorMode): void {
@@ -119,31 +186,43 @@ export class TileShaderPatchOperation implements IPatchOperation {
     for (let i = 0; i < numTiles; i++) {
       const tile = tiles[i];
       const [r, g, b] = this.tileColor(tile);
+      const ownWeight = this.tileElevWeight(tile);
 
-      // Collect polygon vertices from the halfedge loop
+      // Collect polygon vertices + halfedges from the halfedge loop
       const verts: THREE.Vector3[] = [];
+      const halfedges: Halfedge[] = [];
       for (const he of tile.loop()) {
         verts.push(he.vertex.position);
+        halfedges.push(he);
         if (verts.length >= MAX_VERTS) break;
       }
       const nv = verts.length;
 
-      // Row 0: (r, g, b, numVertices) for tile i
+      // Row 0: (r, g, b, nv + ownWeight * 0.1)
+      //   Fragment decode: int(a + 0.5) still gives nv correctly.
+      //   Vertex decode:   fract(a) * 10.0 gives ownWeight (0.0 or 1.0).
       const r0 = (0 * texWidth + i) * 4;
       texData[r0 + 0] = r;
       texData[r0 + 1] = g;
       texData[r0 + 2] = b;
-      texData[r0 + 3] = nv;
+      texData[r0 + 3] = nv + ownWeight * 0.1;
 
-      // Rows 1..MAX_VERTS: polygon vertices for tile i
+      // Rows 1..MAX_VERTS: (vx, vy, vz, neighborElevWeight)
+      //   w = elevation weight of the tile across edge j (halfedge[j] → halfedge[(j+1)%nv]).
       for (let j = 0; j < MAX_VERTS; j++) {
         const rj = ((1 + j) * texWidth + i) * 4;
         if (j < nv) {
           texData[rj + 0] = verts[j].x;
           texData[rj + 1] = verts[j].y;
           texData[rj + 2] = verts[j].z;
+          const neighborTile = this.edgeTileMap?.get(halfedges[j].twin) ?? null;
+          texData[rj + 3] = neighborTile !== null ? this.tileElevWeight(neighborTile) : 1.0;
+        } else {
+          texData[rj + 0] = 0;
+          texData[rj + 1] = 0;
+          texData[rj + 2] = 0;
+          texData[rj + 3] = 0;
         }
-        texData[rj + 3] = 0;
       }
     }
 
@@ -195,9 +274,15 @@ export class TileShaderPatchOperation implements IPatchOperation {
       uniforms: {
         uTileData:           { value: tileData },
         uNumTiles:           { value: numTiles },
-        uNoiseScale:         { value: 3.0 },
-        uElevationAmplitude: { value: 0.02 },
+        uPermTex:            { value: this.permTexture },
+        uNoiseScale:         { value: this.noiseScale },
+        uNoiseOctaves:       { value: this.noiseOctaves },
+        uNoisePersistence:   { value: this.noisePersistence },
+        uNoiseLacunarity:    { value: this.noiseLacunarity },
+        uElevationAmplitude: { value: kmToDistance(10) },
         uSphereOffset:       { value: SURFACE_OFFSET },
+        uElevBlendWidth:     { value: 0.02 },
+        uColorMode:          { value: this.colorMode === LODColorMode.ELEVATION ? 1 : 0 },
       },
       vertexShader:   tileVertexShader,
       fragmentShader: tileFragmentShader,
@@ -217,6 +302,13 @@ export class TileShaderPatchOperation implements IPatchOperation {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  private tileElevWeight(tile: Tile): number {
+    if (!tile.hasPlate) return 1.0;
+    if (tile.plate.category === PlateCategory.OCEANIC) return 0.0;
+    if (tile.geologicalType === GeologicalType.OCEANIC_CRUST) return 0.0;
+    return 1.0;
+  }
 
   private tileColor(tile: Tile): [number, number, number] {
     if (this.colorMode === LODColorMode.GEOLOGY) {

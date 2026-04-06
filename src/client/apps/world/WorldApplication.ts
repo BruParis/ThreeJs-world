@@ -9,7 +9,8 @@ import { InteractionHandler } from './handlers/InteractionHandler';
 import { GeometryBuilder } from './builders/GeometryBuilder';
 import { FlyCam } from '@core/FlyCam';
 import { LODTileRenderer } from './lod/LODTileRenderer';
-import { TileShaderPatchOperation } from './lod/TileShaderPatchOperation';
+import { TileShaderPatchOperation, SURFACE_OFFSET } from './lod/TileShaderPatchOperation';
+import { kmToDistance } from '../../shared/world/World';
 
 /**
  * World application - the main tectonic plate simulation.
@@ -93,6 +94,7 @@ export class WorldApplication implements TabApplication {
 
     // 5. Push new tile data to the patch operation, then invalidate cached meshes
     this.patchOperation?.setTileTree(this.tectonicManager.getTileQuadTree());
+    this.patchOperation?.setEdgeTileMap(this.tectonicManager.getTectonicSystem()?.edge2TileMap ?? null);
     this.lodTileRenderer?.invalidate();
   }
 
@@ -123,11 +125,17 @@ export class WorldApplication implements TabApplication {
       // display:none at this point so its clientWidth/Height would be 0 (NaN aspect).
       const contentArea = this.getContentArea();
       const aspect = contentArea.clientWidth / contentArea.clientHeight;
+      const MIN_CAMERA_ALTITUDE_KM = 20;
       this.flyCam = new FlyCam(
         this.sceneManager.getScene(),
         this.sceneManager.getRenderer().domElement,
         aspect,
-        { showDebugHelpers: false }
+        {
+          showDebugHelpers: false,
+          minAltitude: SURFACE_OFFSET + kmToDistance(MIN_CAMERA_ALTITUDE_KM),
+          near: kmToDistance(1),   // 1 km — well below min altitude, avoids near-clip artifacts
+          far:  10,                // ~63 700 km — covers the whole planet from any orbit
+        }
       );
 
       // Create patch operation and LOD tile renderer

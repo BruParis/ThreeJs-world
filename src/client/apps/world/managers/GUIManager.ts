@@ -73,6 +73,19 @@ export class GUIManager {
       .name('Selection')
       .onChange((value: boolean) => this.interactionHandler.setSelectionMode(value));
 
+    // Color mode — top-level since it is the primary view toggle
+    const colorModeParams = { mode: LODColorMode.PLATE };
+    this.gui
+      .add(colorModeParams, 'mode', { 'Plate': LODColorMode.PLATE, 'Geology': LODColorMode.GEOLOGY, 'Elevation': LODColorMode.ELEVATION })
+      .name('Color Mode')
+      .onChange((value: LODColorMode) => {
+        const isGeology = value === LODColorMode.GEOLOGY;
+        this.tectonicManager.setGeologyDisplayEnabled(isGeology);
+        this.tectonicManager.setPlateDisplayMode(isGeology ? PlateDisplayMode.NONE : PlateDisplayMode.CATEGORY);
+        this.patchOperation?.setColorMode(value);
+        this.lodRenderer?.invalidate();
+      });
+
     // View - consolidated visibility toggles
     // Some elements are lazy-loaded when first enabled
     const viewGui = this.gui.addFolder('View');
@@ -111,6 +124,14 @@ export class GUIManager {
         noiseParams.persistence,
         noiseParams.lacunarity
       );
+      this.patchOperation?.setNoiseParams(
+        noiseParams.seed,
+        noiseParams.scale,
+        noiseParams.octaves,
+        noiseParams.persistence,
+        noiseParams.lacunarity
+      );
+      this.lodRenderer?.invalidate();
     }, 150);
 
     noiseGui
@@ -132,11 +153,6 @@ export class GUIManager {
     tectonicGui
       .add({ rebuild: () => { this.tectonicManager.rebuildTectonicPlates(); this.updateNetRotationDisplay(); } }, 'rebuild')
       .name('Rebuild');
-    tectonicGui
-      .add({ plateDisplay: this.tectonicManager.getPlateDisplayMode() }, 'plateDisplay',
-        { 'None': PlateDisplayMode.NONE, 'Category': PlateDisplayMode.CATEGORY })
-      .name('Plate Display')
-      .onChange((value: PlateDisplayMode) => this.tectonicManager.setPlateDisplayMode(value));
     tectonicGui
       .add({ boundaryDisplay: this.interactionHandler.getBoundaryDisplayMode() }, 'boundaryDisplay',
         { 'Raw': BoundaryDisplayMode.RAW_TYPE, 'Refined': BoundaryDisplayMode.REFINED_TYPE, 'Edge Order': BoundaryDisplayMode.EDGE_ORDER })
@@ -166,14 +182,6 @@ export class GUIManager {
 
     // Geology
     const geologyGui = this.gui.addFolder('Geology');
-    geologyGui
-      .add({ show: this.tectonicManager.isGeologyDisplayEnabled() }, 'show')
-      .name('Show')
-      .onChange((value: boolean) => {
-        this.tectonicManager.setGeologyDisplayEnabled(value);
-        this.patchOperation?.setColorMode(value ? LODColorMode.GEOLOGY : LODColorMode.PLATE);
-        this.lodRenderer?.invalidate();
-      });
     geologyGui
       .add({ reset: this.tectonicManager.isRecomputeOrogenyMode() }, 'reset')
       .name('Reset Orogeny')

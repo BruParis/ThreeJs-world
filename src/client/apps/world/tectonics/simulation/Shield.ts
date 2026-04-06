@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Tile, Plate, PlateCategory, GeologicalType, TectonicSystem, PlateBoundary, BoundaryEdge } from '../data/Plate';
 import { getNeighborTilesInPlate, getUnassignedTiles } from './GeologyUtils';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
+import { kmToDistance } from '../../../../shared/world/World';
 
 // ============================================================================
 // Shield Configuration (Perlin Noise-based)
@@ -49,9 +50,6 @@ const PLATFORM_CONFIG = {
 // Continental Margin Refinement Configuration
 // ============================================================================
 
-// Earth radius for distance conversions (km to unit sphere)
-const EARTH_RADIUS_KM = 6371;
-
 /**
  * Configuration for refining Shield/Platform near oceanic boundaries.
  * Cratons (Shield/Platform) rarely extend to continental margins.
@@ -69,13 +67,6 @@ const MARGIN_REFINEMENT_CONFIG = {
   INLAND_WIDTH_MIN_KM: 100,
   INLAND_WIDTH_MAX_KM: 300,
 };
-
-/**
- * Converts kilometers to unit sphere distance (arc length on radius 1 sphere).
- */
-function kmToUnitSphere(km: number): number {
-  return km / EARTH_RADIUS_KM;
-}
 
 // ============================================================================
 // Continental Margin Refinement
@@ -272,8 +263,8 @@ function refineMarginGeology(plate: Plate, tectonicSystem: TectonicSystem): numb
         // Otherwise, just continue skipping (do nothing)
       } else if (isCratonic) {
         // Potentially start a new re-assignment zone or skip zone
-        const minAlong = kmToUnitSphere(MARGIN_REFINEMENT_CONFIG.ALONG_BOUNDARY_MIN_KM);
-        const maxAlong = kmToUnitSphere(MARGIN_REFINEMENT_CONFIG.ALONG_BOUNDARY_MAX_KM);
+        const minAlong = kmToDistance(MARGIN_REFINEMENT_CONFIG.ALONG_BOUNDARY_MIN_KM);
+        const maxAlong = kmToDistance(MARGIN_REFINEMENT_CONFIG.ALONG_BOUNDARY_MAX_KM);
         const alongDistance = minAlong + Math.random() * (maxAlong - minAlong);
 
         if (Math.random() < MARGIN_REFINEMENT_CONFIG.REASSIGNMENT_PROBABILITY) {
@@ -283,8 +274,8 @@ function refineMarginGeology(plate: Plate, tectonicSystem: TectonicSystem): numb
           zoneTargetAlongDistance = alongDistance;
 
           // Random inland width
-          const minInland = kmToUnitSphere(MARGIN_REFINEMENT_CONFIG.INLAND_WIDTH_MIN_KM);
-          const maxInland = kmToUnitSphere(MARGIN_REFINEMENT_CONFIG.INLAND_WIDTH_MAX_KM);
+          const minInland = kmToDistance(MARGIN_REFINEMENT_CONFIG.INLAND_WIDTH_MIN_KM);
+          const maxInland = kmToDistance(MARGIN_REFINEMENT_CONFIG.INLAND_WIDTH_MAX_KM);
           zoneInlandWidth = minInland + Math.random() * (maxInland - minInland);
 
           zoneBoundaryTiles.add(tile);
