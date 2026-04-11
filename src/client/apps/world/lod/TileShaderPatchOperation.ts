@@ -18,7 +18,6 @@
 import * as THREE from 'three';
 import { QuadrantSpec } from '@core/quadtree';
 import { CubeFace, ProjectionManager } from '@core/geometry/SphereProjection';
-import { Halfedge } from '@core/halfedge/Halfedge';
 import { TileQuadTree } from '../tectonics/TileQuadTree';
 import { Tile, GeologicalType, PlateCategory } from '../tectonics/data/Plate';
 import { getPlateColor } from '../visualization/PlateColors';
@@ -26,7 +25,7 @@ import { getGeologicalColor } from '../visualization/GeologyColors';
 import { IPatchOperation } from './IPatchOperation';
 import { tileVertexShader } from './shaders/tileVert';
 import { tileFragmentShader } from './shaders/tileFrag';
-import { kmToDistance } from '../../../shared/world/World';
+import { realElevKmToApparent, apparentElevKmToDistance } from '../../../shared/world/World';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -57,19 +56,27 @@ export class TileShaderPatchOperation implements IPatchOperation {
   private tileTree: TileQuadTree | null = null;
   private colorMode: LODColorMode = LODColorMode.PLATE;
   private subdivisionFactor = 8;
-  private edgeTileMap: Map<Halfedge, Tile> | null = null;
 
   // ── Noise state ────────────────────────────────────────────────────────────
   private noiseScale       = DEFAULT_NOISE.scale;
   private noiseOctaves     = DEFAULT_NOISE.octaves;
   private noisePersistence = DEFAULT_NOISE.persistence;
   private noiseLacunarity  = DEFAULT_NOISE.lacunarity;
+
+  // ── Elevation amplitude ────────────────────────────────────────────────────
+  /** Apparent (visually exaggerated) elevation amplitude in km. */
+  private elevationAmplitudeApparentKm = realElevKmToApparent(10); // default: 10 km real → 100 km apparent
+
   // Shared 256×1 R32F texture: texel i holds perm[i] as an exact float.
   // All patches reference this single object; updating needsUpdate re-uploads it.
   private permTexture: THREE.DataTexture;
+  // CPU-side noise instance kept in sync with the GPU permutation texture.
+  // new PerlinNoise3D(seed) produces the same output as the seeded GPU shader.
+  private cpuNoise: PerlinNoise3D;
 
   constructor() {
     this.permTexture = this.buildPermTexture(DEFAULT_NOISE.seed);
+    this.cpuNoise    = new PerlinNoise3D(DEFAULT_NOISE.seed);
   }
 
   // ── Noise API ──────────────────────────────────────────────────────────────
@@ -93,6 +100,56 @@ export class TileShaderPatchOperation implements IPatchOperation {
     this.noiseLacunarity  = lacunarity;
     this.permTexture.dispose();
     this.permTexture = this.buildPermTexture(seed);
+    this.cpuNoise    = new PerlinNoise3D(seed);
+  }
+
+  // ── Elevation amplitude API ────────────────────────────────────────────────
+
+  /**
+   * Set the apparent (visually exaggerated) elevation amplitude in km.
+   * The caller is responsible for invalidating the LOD renderer afterwards.
+   */
+  setElevationAmplitudeApparentKm(apparentKm: number): void {
+    this.elevationAmplitudeApparentKm = apparentKm;
+  }
+
+  getElevationAmplitudeApparentKm(): number {
+    return this.elevationAmplitudeApparentKm;
+  }
+
+  /**
+   * Returns the terrain surface radius (distance from world origin) at the
+   * given unit-sphere direction, matching what the GPU vertex shader displaces
+   * to.  Use this to dynamically floor the fly camera above the terrain.
+   *
+   * @param normalizedDir - Unit-length direction vector pointing at the surface.
+   */
+  sampleSurfaceRadiusAt(normalizedDir: THREE.Vector3): number {
+    // Resolve tile elevation weight (0 = oceanic/flat, 1 = continental)
+    let elevWeight = 1.0; // conservative default: assume raised terrain
+    const candidates = this.tileTree?.queryPoint(normalizedDir) ?? [];
+    if (candidates.length > 0) {
+      // Pick the candidate whose centroid is closest to the query direction
+      let best = candidates[0];
+      let bestDot = best.centroid.dot(normalizedDir);
+      for (let i = 1; i < candidates.length; i++) {
+        const d = candidates[i].centroid.dot(normalizedDir);
+        if (d > bestDot) { bestDot = d; best = candidates[i]; }
+      }
+      elevWeight = this.tileElevWeight(best);
+    }
+
+    // Mirror the vertex shader: fbm output is in [-1, 1], remapped to [0, 1]
+    const sx = normalizedDir.x * this.noiseScale;
+    const sy = normalizedDir.y * this.noiseScale;
+    const sz = normalizedDir.z * this.noiseScale;
+    const fbmVal = this.cpuNoise.fbm(sx, sy, sz,
+      this.noiseOctaves, this.noisePersistence, this.noiseLacunarity);
+    const elev = (fbmVal * 0.5 + 0.5)
+      * apparentElevKmToDistance(this.elevationAmplitudeApparentKm)
+      * elevWeight;
+
+    return SURFACE_OFFSET + elev;
   }
 
   dispose(): void {
@@ -118,10 +175,6 @@ export class TileShaderPatchOperation implements IPatchOperation {
 
   setTileTree(tree: TileQuadTree | null): void {
     this.tileTree = tree;
-  }
-
-  setEdgeTileMap(map: Map<Halfedge, Tile> | null): void {
-    this.edgeTileMap = map;
   }
 
   setColorMode(mode: LODColorMode): void {
@@ -188,12 +241,10 @@ export class TileShaderPatchOperation implements IPatchOperation {
       const [r, g, b] = this.tileColor(tile);
       const ownWeight = this.tileElevWeight(tile);
 
-      // Collect polygon vertices + halfedges from the halfedge loop
+      // Collect polygon vertices from the halfedge loop
       const verts: THREE.Vector3[] = [];
-      const halfedges: Halfedge[] = [];
       for (const he of tile.loop()) {
         verts.push(he.vertex.position);
-        halfedges.push(he);
         if (verts.length >= MAX_VERTS) break;
       }
       const nv = verts.length;
@@ -207,16 +258,14 @@ export class TileShaderPatchOperation implements IPatchOperation {
       texData[r0 + 2] = b;
       texData[r0 + 3] = nv + ownWeight * 0.1;
 
-      // Rows 1..MAX_VERTS: (vx, vy, vz, neighborElevWeight)
-      //   w = elevation weight of the tile across edge j (halfedge[j] → halfedge[(j+1)%nv]).
+      // Rows 1..MAX_VERTS: (vx, vy, vz, unused_w)
       for (let j = 0; j < MAX_VERTS; j++) {
         const rj = ((1 + j) * texWidth + i) * 4;
         if (j < nv) {
           texData[rj + 0] = verts[j].x;
           texData[rj + 1] = verts[j].y;
           texData[rj + 2] = verts[j].z;
-          const neighborTile = this.edgeTileMap?.get(halfedges[j].twin) ?? null;
-          texData[rj + 3] = neighborTile !== null ? this.tileElevWeight(neighborTile) : 1.0;
+          texData[rj + 3] = 0;
         } else {
           texData[rj + 0] = 0;
           texData[rj + 1] = 0;
@@ -279,9 +328,8 @@ export class TileShaderPatchOperation implements IPatchOperation {
         uNoiseOctaves:       { value: this.noiseOctaves },
         uNoisePersistence:   { value: this.noisePersistence },
         uNoiseLacunarity:    { value: this.noiseLacunarity },
-        uElevationAmplitude: { value: kmToDistance(10) },
+        uElevationAmplitude: { value: apparentElevKmToDistance(this.elevationAmplitudeApparentKm) },
         uSphereOffset:       { value: SURFACE_OFFSET },
-        uElevBlendWidth:     { value: 0.02 },
         uColorMode:          { value: this.colorMode === LODColorMode.ELEVATION ? 1 : 0 },
       },
       vertexShader:   tileVertexShader,

@@ -17,6 +17,12 @@ import { kmToDistance } from '../../shared/world/World';
  * Wrapped as a TabApplication for use with TabManager.
  */
 export class WorldApplication implements TabApplication {
+  /**
+   * Minimum clearance (km) between the camera eye and the terrain surface.
+   * Must be > near_clip (1 km) so the near plane cannot intersect the terrain
+   * at shallow viewing angles — the classical "pilot eye height" constraint.
+   */
+  private static readonly GROUND_CLEARANCE_KM = 100;
   private sceneManager: SceneManager;
   private geometryBuilder: GeometryBuilder;
   private visualizationManager: VisualizationManager;
@@ -29,6 +35,7 @@ export class WorldApplication implements TabApplication {
   private patchOperation: TileShaderPatchOperation | null = null;
   private lodTileRenderer: LODTileRenderer | null = null;
   private readonly clock = new THREE.Clock();
+  private readonly _footDir = new THREE.Vector3(); // reused each frame for terrain floor query
   private boundOnResize: () => void;
 
   private initialized = false;
@@ -94,7 +101,6 @@ export class WorldApplication implements TabApplication {
 
     // 5. Push new tile data to the patch operation, then invalidate cached meshes
     this.patchOperation?.setTileTree(this.tectonicManager.getTileQuadTree());
-    this.patchOperation?.setEdgeTileMap(this.tectonicManager.getTectonicSystem()?.edge2TileMap ?? null);
     this.lodTileRenderer?.invalidate();
   }
 
@@ -125,16 +131,15 @@ export class WorldApplication implements TabApplication {
       // display:none at this point so its clientWidth/Height would be 0 (NaN aspect).
       const contentArea = this.getContentArea();
       const aspect = contentArea.clientWidth / contentArea.clientHeight;
-      const MIN_CAMERA_ALTITUDE_KM = 20;
       this.flyCam = new FlyCam(
         this.sceneManager.getScene(),
         this.sceneManager.getRenderer().domElement,
         aspect,
         {
           showDebugHelpers: false,
-          minAltitude: SURFACE_OFFSET + kmToDistance(MIN_CAMERA_ALTITUDE_KM),
-          near: kmToDistance(1),   // 1 km — well below min altitude, avoids near-clip artifacts
-          far:  10,                // ~63 700 km — covers the whole planet from any orbit
+          minAltitude: SURFACE_OFFSET, // hard floor at the bare sphere surface; terrain sampler provides the real floor
+          near: kmToDistance(1),       // 1 km — avoids near-clip artifacts
+          far:  10,                    // ~63 700 km — covers the whole planet from any orbit
         }
       );
 
@@ -210,6 +215,20 @@ export class WorldApplication implements TabApplication {
 
     // Advance fly camera
     this.flyCam?.update(dt);
+
+    // Clamp fly camera above the terrain surface.
+    // The camera eye must sit at least GROUND_CLEARANCE above the terrain so
+    // the near-clip plane cannot intersect the surface at any viewing angle.
+    // This is the classical "pilot eye height" technique used in terrain engines.
+    if (this.flyCam && this.patchOperation) {
+      const cam = this.flyCam.camera;
+      this._footDir.copy(cam.position).normalize();
+      const terrainRadius  = this.patchOperation.sampleSurfaceRadiusAt(this._footDir);
+      const floorRadius    = terrainRadius + kmToDistance(WorldApplication.GROUND_CLEARANCE_KM);
+      if (cam.position.length() < floorRadius) {
+        cam.position.setLength(floorRadius);
+      }
+    }
 
     // Compute LOD camera: fly cam always drives LOD (same pattern as QuadTree tab)
     const lodCamera = this.flyCam?.camera ?? this.sceneManager.getCamera();

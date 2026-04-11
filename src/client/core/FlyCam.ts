@@ -22,6 +22,12 @@ export interface FlyCamOptions {
    */
   minAltitude?: number;
   /**
+   * Minimum allowed Y coordinate (world units).
+   * When set, clamps camera.position.y instead of using the sphere-distance
+   * check — use this for flat-world scenarios where the terrain sits on the XZ plane.
+   */
+  minY?: number;
+  /**
    * Camera frustum near clip distance (world units).
    * Default: 0.00001. Should be set proportionally to the minimum altitude
    * to keep the near/far ratio manageable for the depth buffer.
@@ -77,6 +83,7 @@ export class FlyCam {
   private readonly BASE_SPEED: number;
   private readonly MIN_DIST = 0.001;
   private readonly MIN_ALTITUDE: number;
+  private readonly MIN_Y: number | undefined;
   private readonly SENSITIVITY: number;
 
   // Bound event handlers (stored for clean removal)
@@ -95,6 +102,7 @@ export class FlyCam {
     this.SENSITIVITY   = options.sensitivity   ?? 0.002;
     // Use provided minAltitude, or default to just above the sphere surface (0.12% clearance)
     this.MIN_ALTITUDE  = options.minAltitude   ?? this.sphereRadius * 1.0012;
+    this.MIN_Y         = options.minY;
 
     // ── Camera ────────────────────────────────────────────────────────────────
     const near = options.near ?? 0.00001;
@@ -207,7 +215,11 @@ export class FlyCam {
         this.camera.position.addScaledVector(moveDir, speed * dt);
       }
 
-      if (this.camera.position.length() < this.MIN_ALTITUDE) {
+      if (this.MIN_Y !== undefined) {
+        if (this.camera.position.y < this.MIN_Y) {
+          this.camera.position.y = this.MIN_Y;
+        }
+      } else if (this.camera.position.length() < this.MIN_ALTITUDE) {
         this.camera.position.setLength(this.MIN_ALTITUDE);
       }
 

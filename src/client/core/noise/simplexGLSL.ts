@@ -70,5 +70,20 @@ float snoise(vec3 v) {
   return 42.0 * dot(m * m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
 }
 
+// Fractal Brownian Motion over simplex noise.  Output in [-1, 1].
+float simplexFbm(vec3 p, int octaves, float persistence, float lacunarity) {
+  float total  = 0.0;
+  float amp    = 1.0;
+  float freq   = 1.0;
+  float maxVal = 0.0;
+  for (int i = 0; i < octaves; i++) {
+    total  += snoise(p * freq) * amp;
+    maxVal += amp;
+    amp    *= persistence;
+    freq   *= lacunarity;
+  }
+  return total / maxVal;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 `;

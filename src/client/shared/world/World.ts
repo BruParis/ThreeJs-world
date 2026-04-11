@@ -135,3 +135,50 @@ export function velocityToKmPerYear(unitVelocity: number, timeUnitYears: number 
 export function velocityToCmPerYear(unitVelocity: number, timeUnitYears: number = 1_000_000): number {
   return velocityToKmPerYear(unitVelocity, timeUnitYears) * 100_000; // km to cm
 }
+
+// ============================================================================
+// Elevation Display Conversions
+// ============================================================================
+
+/**
+ * Ratio between apparent (visual) elevation and real (physical) elevation.
+ * Apparent elevation is exaggerated for visual clarity; real elevation stays
+ * within geologically reasonable bounds.
+ *
+ * Example: with scale = 10, 10 km real → 100 km apparent displacement on screen.
+ */
+export const ELEVATION_DISPLAY_SCALE = 10;
+
+/**
+ * Converts a real (physical) elevation in km to an apparent (visual) elevation in km.
+ * The apparent value is what is passed to the GPU for displacement.
+ *
+ * @param realKm - Elevation in physically realistic km
+ * @param displayScale - Exaggeration factor (default: ELEVATION_DISPLAY_SCALE)
+ * @returns Apparent elevation in km (exaggerated for display)
+ */
+export function realElevKmToApparent(realKm: number, displayScale: number = ELEVATION_DISPLAY_SCALE): number {
+  return realKm * displayScale;
+}
+
+/**
+ * Converts an apparent (visual) elevation in km back to real (physical) km.
+ *
+ * @param apparentKm - Apparent elevation in km (as displayed / used for GPU displacement)
+ * @param displayScale - Exaggeration factor (default: ELEVATION_DISPLAY_SCALE)
+ * @returns Real elevation in physically meaningful km
+ */
+export function apparentElevKmToReal(apparentKm: number, displayScale: number = ELEVATION_DISPLAY_SCALE): number {
+  return apparentKm / displayScale;
+}
+
+/**
+ * Converts an apparent (visual) elevation in km to a unit-sphere radial distance,
+ * suitable for use as a shader displacement uniform.
+ *
+ * @param apparentKm - Apparent elevation in km
+ * @returns Radial displacement in unit-sphere units
+ */
+export function apparentElevKmToDistance(apparentKm: number): number {
+  return kmToDistance(apparentKm);
+}

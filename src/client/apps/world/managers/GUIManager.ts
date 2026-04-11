@@ -8,6 +8,7 @@ import { PlateDisplayMode, PLATE_VISUALIZATION_LEGEND, rgbToHex } from '../visua
 import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
 import { LODTileRenderer } from '../lod/LODTileRenderer';
 import { TileShaderPatchOperation, LODColorMode } from '../lod/TileShaderPatchOperation';
+import { apparentElevKmToReal } from '../../../shared/world/World';
 import { FlyCam } from '@core/FlyCam';
 
 const MIN_DEGREE = 0;
@@ -147,6 +148,25 @@ export class GUIManager {
     noiseGui.add(noiseParams, 'octaves', 1, 8).step(1).name('Octaves').onChange(regenerateNoise);
     noiseGui.add(noiseParams, 'persistence', 0.1, 1.0).step(0.05).name('Persist.').onChange(regenerateNoise);
     noiseGui.add(noiseParams, 'lacunarity', 1.0, 4.0).step(0.1).name('Lacunar.').onChange(regenerateNoise);
+
+    // Elevation amplitude — apparent (visual) vs real (physical) unit conversion
+    const elevParams = {
+      apparentKm: this.patchOperation?.getElevationAmplitudeApparentKm() ?? 100,
+      realKm: apparentElevKmToReal(this.patchOperation?.getElevationAmplitudeApparentKm() ?? 100),
+    };
+    noiseGui
+      .add(elevParams, 'apparentKm', 10, 500)
+      .step(5)
+      .name('Elev. apparent (km)')
+      .onChange((value: number) => {
+        elevParams.realKm = apparentElevKmToReal(value);
+        this.patchOperation?.setElevationAmplitudeApparentKm(value);
+        this.lodRenderer?.invalidate();
+      });
+    noiseGui
+      .add(elevParams, 'realKm')
+      .name('Elev. real (km)')
+      .listen();
 
     // Tectonic
     const tectonicGui = this.gui.addFolder('Tectonic');
