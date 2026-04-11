@@ -1,9 +1,13 @@
 /**
  * Shader Demo tab — flat heightfield terrain.
  *
- * Renders a single flat NxN grid on the XZ plane whose vertices are
- * displaced upward by Perlin FBM noise, letting you experiment with
- * every shader parameter in isolation before applying them to the sphere.
+ * Elevation is produced by blending two layers:
+ *   Layer 1 – diagonal gradient across the patch
+ *   Layer 2 – simplex FBM noise
+ *
+ * When "Show Layers" is enabled two greyscale overlay panels appear in the
+ * bottom-left corner of the viewport, one per layer, so you can inspect each
+ * contribution independently.
  *
  * Camera: OrbitControls by default; switch to free FlyCam via the GUI.
  */
@@ -16,6 +20,8 @@ import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 import { FlyCam } from '@core/FlyCam';
 import { demoVertexShader } from './shaders/demoVert';
 import { demoFragmentShader } from './shaders/demoFrag';
+import { layerOverlayVertexShader } from './shaders/layerOverlayVert';
+import { layerOverlayFragmentShader } from './shaders/layerOverlayFrag';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -24,6 +30,11 @@ const DEFAULT_AMPLITUDE    = 0.4;   // world units — max Y displacement
 const DEFAULT_PATCH_SIZE   = 2.0;   // world units — XZ extent of the whole grid
 const DEFAULT_SUBDIVISION  = 64;    // grid cells per side (power of 2)
 const DEFAULT_NUM_PATCHES  = 4;     // total patches (must be a perfect square: 1, 4, 9, 16 …)
+const DEFAULT_LAYER_MIX    = 0.5;   // 0 = gradient only, 1 = simplex only
+
+// Overlay panel dimensions (in pixels, independent of canvas size)
+const PANEL_SIZE   = 150;
+const PANEL_MARGIN = 10;
 
 const SUBDIVISION_OPTIONS: Record<string, number> = {
   '1': 1, '2': 2, '4': 4, '8': 8, '16': 16,
@@ -37,12 +48,18 @@ const PATCH_OPTIONS: Record<string, number> = {
 // ── ShaderDemoApplication ─────────────────────────────────────────────────────
 
 export class ShaderDemoApplication implements TabApplication {
-  // Three.js
+  // Three.js — main scene
   private renderer: THREE.WebGLRenderer | null = null;
   private orbitCamera: THREE.PerspectiveCamera | null = null;
   private scene: THREE.Scene | null = null;
   private controls: OrbitControls | null = null;
   private meshes: THREE.Mesh[] = [];
+
+  // Three.js — layer overlay
+  private overlayScene: THREE.Scene | null = null;
+  private overlayCamera: THREE.OrthographicCamera | null = null;
+  private overlayMeshes: THREE.Mesh[] = [];
+  private layerLabelContainer: HTMLElement | null = null;
 
   // Fly camera
   private flyCam: FlyCam | null = null;
@@ -61,7 +78,8 @@ export class ShaderDemoApplication implements TabApplication {
   private numPatches     = DEFAULT_NUM_PATCHES;
   private wireframe      = false;
   private colorMode      = 0; // 0 = terrain, 1 = greyscale
-  private noiseType      = 0; // 0 = Perlin, 1 = Simplex
+  private layerMix       = DEFAULT_LAYER_MIX;
+  private showLayers     = false;
 
   private initialized = false;
   private active = false;
@@ -80,6 +98,9 @@ export class ShaderDemoApplication implements TabApplication {
 
     if (this.renderer) this.renderer.domElement.style.display = 'block';
     if (this.gui)      this.gui.domElement.style.display = 'block';
+    if (this.layerLabelContainer && this.showLayers) {
+      this.layerLabelContainer.style.display = 'block';
+    }
 
     window.addEventListener('resize', this.boundOnResize);
     this.clock.start();
@@ -92,6 +113,7 @@ export class ShaderDemoApplication implements TabApplication {
 
     if (this.renderer) this.renderer.domElement.style.display = 'none';
     if (this.gui)      this.gui.domElement.style.display = 'none';
+    if (this.layerLabelContainer) this.layerLabelContainer.style.display = 'none';
 
     window.removeEventListener('resize', this.boundOnResize);
     this.clock.stop();
@@ -103,16 +125,25 @@ export class ShaderDemoApplication implements TabApplication {
 
     const dt = this.clock.getDelta();
 
+    let renderCam: THREE.PerspectiveCamera;
     if (this.flyCam?.isEnabled()) {
       this.flyCam.update(dt);
-      // Clamp camera above the actual terrain surface
       const cam = this.flyCam.camera;
       const floor = this.sampleTerrainHeight(cam.position.x, cam.position.z) + 0.05;
       if (cam.position.y < floor) cam.position.y = floor;
-      this.renderer.render(this.scene, this.flyCam.camera);
+      renderCam = this.flyCam.camera;
     } else {
       this.controls?.update();
-      this.renderer.render(this.scene, this.orbitCamera!);
+      renderCam = this.orbitCamera!;
+    }
+
+    this.renderer.render(this.scene, renderCam);
+
+    // Render layer overlay panels on top without clearing the frame
+    if (this.showLayers && this.overlayScene && this.overlayCamera) {
+      this.renderer.autoClear = false;
+      this.renderer.render(this.overlayScene, this.overlayCamera);
+      this.renderer.autoClear = true;
     }
   }
 
@@ -121,6 +152,7 @@ export class ShaderDemoApplication implements TabApplication {
     this.flyCam?.dispose();
     this.flyCam = null;
     this.disposeMeshes();
+    this.disposeOverlay();
     this.permTexture?.dispose();
     this.permTexture = null;
     this.controls?.dispose();
@@ -166,26 +198,28 @@ export class ShaderDemoApplication implements TabApplication {
     this.controls.enableDamping = true;
     this.controls.target.set(0, 0, 0);
 
-    // Fly camera — starts above-and-behind the patch
+    // Fly camera
     const aspect = w / h;
     this.flyCam = new FlyCam(this.scene, this.renderer.domElement, aspect, {
       showDebugHelpers: false,
-      sphereRadius:     0,   // flat world — no sphere floor
-      minY:             0,   // terrain-aware floor is applied in update()
+      sphereRadius:     0,
+      minY:             0,
       near:             0.02,
       far:              200,
       baseSpeed:        1.5,
     });
-    // Override default starting position to show the patch from a nice angle
     this.flyCam.camera.position.set(0, 1.5, 2.5);
     this.flyCam.camera.lookAt(0, 0, 0);
     this.flyCam.camera.updateMatrixWorld();
 
-    // Permutation texture for seeded Perlin noise
+    // Permutation texture (kept for potential Perlin use)
     this.permTexture = this.buildPermTexture(this.noiseParams.seed);
 
     // Initial mesh
     this.rebuildMesh();
+
+    // Layer overlay
+    this.setupOverlay(w, h, contentArea);
 
     // GUI
     this.setupGUI(contentArea);
@@ -222,7 +256,6 @@ export class ShaderDemoApplication implements TabApplication {
 
   /**
    * Flat NxN grid for a single patch on the XZ plane, local coords [0, cellSize].
-   * The mesh is translated to world position by the caller.
    * The vertex shader samples noise in world space, so patches are seamless.
    */
   private buildPatchGeometry(cellSize: number): THREE.BufferGeometry {
@@ -237,7 +270,6 @@ export class ShaderDemoApplication implements TabApplication {
       }
     }
 
-    // CCW winding when viewed from above (+Y)
     const indices: number[] = [];
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
@@ -260,13 +292,14 @@ export class ShaderDemoApplication implements TabApplication {
       glslVersion: THREE.GLSL3,
       uniforms: {
         uPermTex:          { value: this.permTexture },
-        uNoiseType:        { value: this.noiseType },
         uNoiseScale:       { value: this.noiseParams.scale },
         uNoiseOctaves:     { value: this.noiseParams.octaves },
         uNoisePersistence: { value: this.noiseParams.persistence },
         uNoiseLacunarity:  { value: this.noiseParams.lacunarity },
         uAmplitude:        { value: this.amplitude },
         uColorMode:        { value: this.colorMode },
+        uLayerMix:          { value: this.layerMix },
+        uPatchHalfSize:    { value: this.patchSize / 2 },
       },
       vertexShader:   demoVertexShader,
       fragmentShader: demoFragmentShader,
@@ -309,15 +342,131 @@ export class ShaderDemoApplication implements TabApplication {
     for (const mesh of this.meshes) {
       const mat = mesh.material as THREE.ShaderMaterial;
       mat.uniforms.uPermTex.value          = this.permTexture;
-      mat.uniforms.uNoiseType.value        = this.noiseType;
       mat.uniforms.uNoiseScale.value        = this.noiseParams.scale;
       mat.uniforms.uNoiseOctaves.value      = this.noiseParams.octaves;
       mat.uniforms.uNoisePersistence.value  = this.noiseParams.persistence;
       mat.uniforms.uNoiseLacunarity.value   = this.noiseParams.lacunarity;
       mat.uniforms.uAmplitude.value         = this.amplitude;
       mat.uniforms.uColorMode.value         = this.colorMode;
+      mat.uniforms.uLayerMix.value           = this.layerMix;
+      mat.uniforms.uPatchHalfSize.value     = this.patchSize / 2;
       mat.wireframe = this.wireframe;
     }
+    this.updateOverlayUniforms();
+  }
+
+  // ── Layer overlay ──────────────────────────────────────────────────────────
+
+  private setupOverlay(w: number, h: number, contentArea: HTMLElement): void {
+    this.overlayScene = new THREE.Scene();
+
+    // Orthographic camera in pixel space: (0,w) × (0,h), Y up
+    this.overlayCamera = new THREE.OrthographicCamera(0, w, h, 0, -1, 1);
+
+    const ps = PANEL_SIZE;
+    const m  = PANEL_MARGIN;
+
+    const makeOverlayMaterial = (layerIndex: number): THREE.ShaderMaterial =>
+      new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        uniforms: {
+          uLayerIndex:       { value: layerIndex },
+          uNoiseScale:       { value: this.noiseParams.scale },
+          uNoiseOctaves:     { value: this.noiseParams.octaves },
+          uNoisePersistence: { value: this.noiseParams.persistence },
+          uNoiseLacunarity:  { value: this.noiseParams.lacunarity },
+        },
+        vertexShader:   layerOverlayVertexShader,
+        fragmentShader: layerOverlayFragmentShader,
+        side:       THREE.DoubleSide,
+        depthTest:  false,
+        depthWrite: false,
+      });
+
+    // Panel 1 — gradient layer (bottom-left corner)
+    const geo1  = new THREE.PlaneGeometry(ps, ps);
+    const mesh1 = new THREE.Mesh(geo1, makeOverlayMaterial(0));
+    mesh1.position.set(m + ps / 2, m + ps / 2, 0);
+    this.overlayScene.add(mesh1);
+
+    // Panel 2 — simplex noise layer (next to panel 1)
+    const geo2  = new THREE.PlaneGeometry(ps, ps);
+    const mesh2 = new THREE.Mesh(geo2, makeOverlayMaterial(1));
+    mesh2.position.set(m * 2 + ps + ps / 2, m + ps / 2, 0);
+    this.overlayScene.add(mesh2);
+
+    this.overlayMeshes = [mesh1, mesh2];
+
+    // HTML labels positioned over the panels
+    this.setupLayerLabels(contentArea);
+  }
+
+  private setupLayerLabels(contentArea: HTMLElement): void {
+    const container = document.createElement('div');
+    container.style.cssText =
+      'position:absolute;bottom:0;left:0;width:100%;height:100%;pointer-events:none;display:none;';
+
+    const ps = PANEL_SIZE;
+    const m  = PANEL_MARGIN;
+
+    const labelDefs = [
+      { text: 'Layer 1: Gradient', x: m },
+      { text: 'Layer 2: Simplex',  x: m * 2 + ps },
+    ];
+
+    for (const { text, x } of labelDefs) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      div.style.cssText = [
+        `position:absolute`,
+        `left:${x}px`,
+        `bottom:${m}px`,
+        `color:#fff`,
+        `font-size:10px`,
+        `font-family:monospace`,
+        `background:rgba(0,0,0,0.65)`,
+        `padding:1px 4px`,
+        `border-radius:2px`,
+      ].join(';');
+      container.appendChild(div);
+    }
+
+    contentArea.appendChild(container);
+    this.layerLabelContainer = container;
+  }
+
+  private updateOverlayCamera(w: number, h: number): void {
+    if (!this.overlayCamera) return;
+    this.overlayCamera.left   = 0;
+    this.overlayCamera.right  = w;
+    this.overlayCamera.top    = h;
+    this.overlayCamera.bottom = 0;
+    this.overlayCamera.updateProjectionMatrix();
+  }
+
+  /** Sync noise params into the simplex overlay panel (panel index 1). */
+  private updateOverlayUniforms(): void {
+    if (this.overlayMeshes.length < 2) return;
+    const mat = this.overlayMeshes[1].material as THREE.ShaderMaterial;
+    mat.uniforms.uNoiseScale.value       = this.noiseParams.scale;
+    mat.uniforms.uNoiseOctaves.value     = this.noiseParams.octaves;
+    mat.uniforms.uNoisePersistence.value = this.noiseParams.persistence;
+    mat.uniforms.uNoiseLacunarity.value  = this.noiseParams.lacunarity;
+  }
+
+  private disposeOverlay(): void {
+    if (this.overlayScene) {
+      for (const mesh of this.overlayMeshes) {
+        this.overlayScene.remove(mesh);
+        mesh.geometry.dispose();
+        (mesh.material as THREE.ShaderMaterial).dispose();
+      }
+    }
+    this.overlayMeshes   = [];
+    this.overlayScene    = null;
+    this.overlayCamera   = null;
+    this.layerLabelContainer?.remove();
+    this.layerLabelContainer = null;
   }
 
   // ── GUI ────────────────────────────────────────────────────────────────────
@@ -392,36 +541,33 @@ export class ShaderDemoApplication implements TabApplication {
 
     patchGui.open();
 
-    // ── Noise Type ────────────────────────────────────────────────────────────
-    const noiseTypeGui    = this.gui.addFolder('Noise Type');
-    const noiseTypeParams = { type: 'perlin' };
+    // ── Layers ────────────────────────────────────────────────────────────────
+    const layersGui    = this.gui.addFolder('Layers');
+    const layersParams = { showLayers: this.showLayers, mix: this.layerMix };
 
-    noiseTypeGui
-      .add(noiseTypeParams, 'type', { 'Perlin': 'perlin', 'Simplex': 'simplex' })
-      .name('Algorithm')
-      .onChange((v: string) => {
-        this.noiseType = v === 'simplex' ? 1 : 0;
-        seedController.domElement.closest('li')!.style.display =
-          this.noiseType === 1 ? 'none' : '';
-        this.updateUniforms();
+    layersGui
+      .add(layersParams, 'showLayers')
+      .name('Show Layers')
+      .onChange((v: boolean) => {
+        this.showLayers = v;
+        if (this.layerLabelContainer) {
+          this.layerLabelContainer.style.display = v ? 'block' : 'none';
+        }
       });
 
-    noiseTypeGui.open();
-
-    // ── Perlin / Simplex Noise ────────────────────────────────────────────────
-    const noiseGui = this.gui.addFolder('Noise');
-
-    // dat.gui mutates this.noiseParams in-place; onChange callbacks just read it.
-    const seedController = noiseGui
-      .add(this.noiseParams, 'seed', 0, 1000)
-      .step(1)
-      .name('Seed (Perlin)')
+    layersGui
+      .add(layersParams, 'mix', 0.0, 1.0)
+      .step(0.01)
+      .name('Mix (Grad→Simplex)')
       .onChange((v: number) => {
-        const old = this.permTexture;
-        this.permTexture = this.buildPermTexture(v);
-        old?.dispose();
+        this.layerMix = v;
         this.updateUniforms();
       });
+
+    layersGui.open();
+
+    // ── Noise ─────────────────────────────────────────────────────────────────
+    const noiseGui = this.gui.addFolder('Noise (Layer 2)');
 
     noiseGui
       .add(this.noiseParams, 'scale', 0.5, 10.0)
@@ -494,5 +640,6 @@ export class ShaderDemoApplication implements TabApplication {
     this.orbitCamera.aspect = w / h;
     this.orbitCamera.updateProjectionMatrix();
     this.flyCam?.updateAspect(w / h);
+    this.updateOverlayCamera(w, h);
   }
 }
