@@ -4,10 +4,12 @@
         "module": "ESNext",
         "moduleResolution": "bundler",
         "strict": true,
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
         "baseUrl": ".",
         "paths": {
             "@core/*": ["core/*"]
-        }
+        },
+        "types": []
     },
     "include": ["**/*.ts"]
 }

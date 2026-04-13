@@ -1,72 +1,63 @@
 /**
- * Vertex shader for the Shader Demo tab — flat terrain.
+ * Vertex shader for the Shader Demo tab.
  *
- * Elevation is computed by blending two layers:
- *   Layer 1 – diagonal gradient across the full patch extent
- *   Layer 2 – simplex FBM noise
- *
- * The blend is controlled by uLayerMix:
- *   0.0 → gradient only
- *   1.0 → simplex noise only
- *   0.5 → equal blend of both
+ * Elevation is pre-computed by TerrainElevationGL (WebGL2 fragment shader) and
+ * uploaded to uElevationTex.  This shader only displaces geometry and derives
+ * surface normals from the texture via finite differences.
  *
  * Uniforms:
- *   uPermTex           – 256×1 R32F permutation texture (unused, kept for compat)
- *   uNoiseScale        – frequency multiplier for FBM input
- *   uNoiseOctaves      – FBM octave count
- *   uNoisePersistence  – amplitude decay per octave
- *   uNoiseLacunarity   – frequency growth per octave
- *   uAmplitude         – max Y displacement in world units
- *   uLayerMix          – blend between gradient (0) and simplex noise (1)
- *   uPatchHalfSize     – half the total patch extent (world units), for gradient normalisation
+ *   uElevationTex   – R32F texture, normalised elevation [0, 1] for the full terrain
+ *   uAmplitude      – max Y displacement in world units
+ *   uPatchHalfSize  – half the total terrain extent (world units)
  *
  * Varyings out:
  *   vElevation  – normalised elevation [0, 1]
+ *   vWorldPos   – displaced world position (Y = terrain height)
+ *   vNormal     – smooth surface normal computed by finite-differencing the elevation texture
  */
-
-import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
 
 export const demoVertexShader = /* glsl */`
 
-${simplexNoiseGLSL}
-
-uniform float uNoiseScale;
-uniform int   uNoiseOctaves;
-uniform float uNoisePersistence;
-uniform float uNoiseLacunarity;
-uniform float uAmplitude;
-uniform float uLayerMix;
-uniform float uPatchHalfSize;
+uniform sampler2D uElevationTex;
+uniform float     uAmplitude;
+uniform float     uPatchHalfSize;
 
 out float vElevation;
+out vec3  vWorldPos;
+out vec3  vNormal;
+
+const float SEA_LEVEL = 0.35;
+
+// Map world XZ to UV in the elevation texture [0, 1].
+vec2 elevUV(vec2 worldXZ) {
+  return (worldXZ + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+}
+
+float sampleElev(vec2 worldXZ) {
+  return texture(uElevationTex, elevUV(worldXZ)).r;
+}
+
+float elevToDisplY(float noise) {
+  return max(0.0, (noise - SEA_LEVEL) / (1.0 - SEA_LEVEL) * uAmplitude);
+}
 
 void main() {
-  // World-space position so adjacent patches share the same noise field
   vec3 worldPos = (modelMatrix * vec4(position, 1.0)).xyz;
 
-  // ── Layer 1: diagonal gradient ──────────────────────────────────────────────
-  // Ranges from 0 at (-half, -half) to 1 at (+half, +half).
-  float layer1 = clamp(
-    (worldPos.x + worldPos.z) / (2.0 * uPatchHalfSize) + 0.5,
-    0.0, 1.0
-  );
+  float noise  = sampleElev(worldPos.xz);
+  float displY = elevToDisplY(noise);
 
-  // ── Layer 2: simplex FBM noise ───────────────────────────────────────────────
-  vec3 p = worldPos * uNoiseScale;
-  float layer2 = simplexFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
-
-  // ── Blend ───────────────────────────────────────────────────────────────────
-  float noise = mix(layer1, layer2, uLayerMix);
-
-  // Sea level matches the ocean threshold in the fragment shader.
-  // Elevation is signed: negative below sea level, positive above.
-  const float SEA_LEVEL = 0.35;
-  float elev = (noise - SEA_LEVEL) / (1.0 - SEA_LEVEL) * uAmplitude;
-
-  // Pass raw noise as elevation so the fragment shader colour bands are unchanged.
   vElevation = noise;
+  vWorldPos  = vec3(worldPos.x, displY, worldPos.z);
 
-  // Underwater vertices sit at Y=0 (ocean surface) but keep their colour.
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position.x, max(0.0, elev), position.z, 1.0);
+  // Normals via finite differences using one texel step in world space.
+  vec2 texelSz = (uPatchHalfSize * 2.0) / vec2(textureSize(uElevationTex, 0));
+  float hL = elevToDisplY(sampleElev(worldPos.xz + vec2(-texelSz.x,       0.0)));
+  float hR = elevToDisplY(sampleElev(worldPos.xz + vec2( texelSz.x,       0.0)));
+  float hD = elevToDisplY(sampleElev(worldPos.xz + vec2(       0.0, -texelSz.y)));
+  float hU = elevToDisplY(sampleElev(worldPos.xz + vec2(       0.0,  texelSz.y)));
+  vNormal = normalize(vec3(hL - hR, 2.0 * texelSz.x, hD - hU));
+
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position.x, displY, position.z, 1.0);
 }
 `;
