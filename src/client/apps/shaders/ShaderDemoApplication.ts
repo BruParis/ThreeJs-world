@@ -70,6 +70,8 @@ export class ShaderDemoApplication implements TabApplication {
 
     const dt = this.clock.getDelta();
 
+    this.terrain.updateSuppNoise(this.renderer!);
+
     let renderCam: THREE.PerspectiveCamera;
     if (this.flyCam?.isEnabled()) {
       this.flyCam.update(dt);

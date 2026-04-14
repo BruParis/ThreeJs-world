@@ -41,32 +41,34 @@ vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal) {
     return mix(vec3(0.05, 0.10, 0.40), vec3(0.15, 0.55, 0.80), e / WATER_HEIGHT);
   }
 
-  // Breakup: high-frequency detail noise for surface variation
-  float breakup = simplexFbm(worldPos * 8.0, 4, 0.5, 2.0) * 0.5 + 0.5;
+  // Raw high-frequency detail noise
+  float noise = simplexFbm(worldPos * 8.0, 4, 0.5, 2.0) * 0.5 + 0.5;
+  // Breakup blended with elevation so biome boundaries track terrain features
+  float breakup = mix(noise, e, 0.4);
 
   // Cliff rock — base color for all above-water terrain
   vec3 color = CLIFF_COLOR;
 
   // Dirt — mixed in where breakup is low
-  color = mix(color, DIRT_COLOR, smoothstep(0.3, 0.0, breakup));
+  color = mix(color, DIRT_COLOR, smoothstep(0.45, 0.20, breakup));
 
   // Grass — flat surfaces just above sea level
   vec3 grassMix = mix(GRASS_COLOR1, GRASS_COLOR2,
-    smoothstep(0.4, 0.6, e + breakup * 0.3));
+    smoothstep(0.4, 0.6, e + noise * 0.3));
   color = mix(color, grassMix,
-    smoothstep(WATER_HEIGHT + 0.05, WATER_HEIGHT + 0.02, e - breakup * 0.02) *
-    smoothstep(0.8, 1.0, normal.y + breakup * 0.1));
+    smoothstep(WATER_HEIGHT + 0.15, WATER_HEIGHT + 0.01, e - noise * 0.04) *
+    smoothstep(0.55, 0.75, normal.y + noise * 0.15));
 
   // Snow — high peaks
   color = mix(color, vec3(1.0),
-    smoothstep(0.75, 0.85, e + breakup * 0.1));
+    smoothstep(0.72, 0.84, e + noise * 0.12));
 
   // Sand — narrow band at sea level
   color = mix(color, SAND_COLOR,
-    smoothstep(WATER_HEIGHT + 0.005, WATER_HEIGHT, e + breakup * 0.01));
+    smoothstep(WATER_HEIGHT + 0.005, WATER_HEIGHT, e + noise * 0.02));
 
   // Surface detail variation
-  color *= 1.0 + breakup * 0.5;
+  color *= 1.0 + noise * 0.4;
 
   return clamp(color, 0.0, 1.0);
 }

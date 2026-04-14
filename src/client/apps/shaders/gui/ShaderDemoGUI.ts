@@ -99,6 +99,18 @@ export function buildShaderDemoGUI(
 
   displayGui.open();
 
+  // ── Supplemental Noise ────────────────────────────────────────────────────
+  const suppGui    = gui.addFolder('Supp Noise');
+  const suppParams = {
+    enabled:  terrain.suppNoiseEnabled,
+    strength: terrain.suppNoiseStrength,
+  };
+
+  suppGui.add(suppParams, 'enabled').name('Enabled')
+    .onChange((v: boolean) => terrain.setSuppNoiseEnabled(v));
+  suppGui.add(suppParams, 'strength', 0.0, 2.0).step(0.05).name('Strength')
+    .onChange((v: number) => { terrain.suppNoiseStrength = v; terrain.syncSuppNoiseUniforms(); });
+
   // ── Erosion ───────────────────────────────────────────────────────────────
   const erosionGui    = gui.addFolder('Erosion');
   const erosionParams = {

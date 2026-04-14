@@ -50,13 +50,16 @@ void main() {
   vElevation = noise;
   vWorldPos  = vec3(worldPos.x, displY, worldPos.z);
 
-  // Normals via finite differences using one texel step in world space.
+  // Normals via finite differences — divide height deltas by step size to get
+  // true slopes, so normal.y stays near 1.0 on gentle terrain regardless of amplitude.
   vec2 texelSz = (uPatchHalfSize * 2.0) / vec2(textureSize(uElevationTex, 0));
   float hL = elevToDisplY(sampleElev(worldPos.xz + vec2(-texelSz.x,       0.0)));
   float hR = elevToDisplY(sampleElev(worldPos.xz + vec2( texelSz.x,       0.0)));
   float hD = elevToDisplY(sampleElev(worldPos.xz + vec2(       0.0, -texelSz.y)));
   float hU = elevToDisplY(sampleElev(worldPos.xz + vec2(       0.0,  texelSz.y)));
-  vNormal = normalize(vec3(hL - hR, 2.0 * texelSz.x, hD - hU));
+  float dhdx = (hR - hL) / (2.0 * texelSz.x);
+  float dhdz = (hU - hD) / (2.0 * texelSz.y);
+  vNormal = normalize(vec3(-dhdx, 1.0, -dhdz));
 
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position.x, displY, position.z, 1.0);
 }

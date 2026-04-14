@@ -20,6 +20,7 @@ import {
   DEFAULT_EROSION_LACUNARITY,
 } from '@core/shaders/erosionGLSL';
 import { TerrainElevationGL } from './TerrainElevationGL';
+import { SuppNoiseGL }        from './SuppNoiseGL';
 
 export class TerrainMesh {
   // Noise
@@ -33,6 +34,10 @@ export class TerrainMesh {
   numPatches   = DEFAULT_NUM_PATCHES;
   wireframe    = false;
   layerMix     = DEFAULT_LAYER_MIX;
+
+  // Supplemental noise
+  suppNoiseEnabled  = false;
+  suppNoiseStrength = 0.3;
 
   // Erosion
   erosionEnabled        = true;
@@ -55,6 +60,7 @@ export class TerrainMesh {
   private _meshes:          THREE.Mesh[] = [];
   private elevationTexture: THREE.DataTexture | null = null;
   private elevationGL:      TerrainElevationGL | null = null;
+  private suppNoiseGL:      SuppNoiseGL | null = null;
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -62,6 +68,7 @@ export class TerrainMesh {
 
   init(): void {
     this.elevationGL = TerrainElevationGL.create();
+    this.suppNoiseGL = new SuppNoiseGL(512);
     this.recomputeElevation();
     this.rebuildMeshes();
   }
@@ -141,6 +148,33 @@ export class TerrainMesh {
     }
   }
 
+  /**
+   * Re-render the supplemental noise texture if needed and sync it to all patch materials.
+   * Call once per frame before the main scene render — is a no-op when nothing has changed.
+   */
+  updateSuppNoise(renderer: THREE.WebGLRenderer): void {
+    if (!this.suppNoiseGL || !this.suppNoiseEnabled) return;
+    this.suppNoiseGL.update(renderer);
+    this.syncSuppNoiseUniforms();
+  }
+
+  /** Toggle supp noise on/off and sync the enabled uniform immediately. */
+  setSuppNoiseEnabled(enabled: boolean): void {
+    this.suppNoiseEnabled = enabled;
+    if (enabled) this.suppNoiseGL?.markDirty();
+    this.syncSuppNoiseUniforms();
+  }
+
+  /** Sync supp noise uniforms (enabled, strength, texture) to all patch materials. */
+  syncSuppNoiseUniforms(): void {
+    for (const mesh of this._meshes) {
+      const mat = mesh.material as THREE.ShaderMaterial;
+      mat.uniforms.uSuppNoiseTex.value      = this.suppNoiseGL?.texture ?? null;
+      mat.uniforms.uSuppNoiseEnabled.value  = this.suppNoiseEnabled ? 1 : 0;
+      mat.uniforms.uSuppNoiseStrength.value = this.suppNoiseStrength;
+    }
+  }
+
   /** Sample terrain height at world XZ using the CPU elevation grid. */
   sampleTerrainHeight(wx: number, wz: number): number {
     if (!this.elevationData) return 0;
@@ -161,6 +195,8 @@ export class TerrainMesh {
     this.elevationTexture = null;
     this.elevationGL?.dispose();
     this.elevationGL = null;
+    this.suppNoiseGL?.dispose();
+    this.suppNoiseGL = null;
   }
 
   // ── private ──────────────────────────────────────────────────────────────────
@@ -230,9 +266,12 @@ export class TerrainMesh {
     return new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: {
-        uElevationTex:  { value: this.elevationTexture },
-        uAmplitude:     { value: this.amplitude },
-        uPatchHalfSize: { value: this.patchSize / 2 },
+        uElevationTex:     { value: this.elevationTexture },
+        uAmplitude:        { value: this.amplitude },
+        uPatchHalfSize:    { value: this.patchSize / 2 },
+        uSuppNoiseTex:     { value: this.suppNoiseGL?.texture ?? null },
+        uSuppNoiseEnabled: { value: this.suppNoiseEnabled ? 1 : 0 },
+        uSuppNoiseStrength:{ value: this.suppNoiseStrength },
       },
       vertexShader:   demoVertexShader,
       fragmentShader: demoFragmentShader,
