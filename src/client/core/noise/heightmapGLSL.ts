@@ -1,13 +1,17 @@
 /**
  * Value noise with analytical derivatives and integrated directional erosion.
  *
- * Based on Inigo Quilez's derivative-based value noise FBM with directional erosion.
+ * The noise kernel assigns a pseudo-random scalar value to each integer lattice
+ * corner (via a sin-based hash) and interpolates them with a quintic smoothstep.
+ * Partial derivatives are computed analytically via the chain rule rather than
+ * finite differences, which is what makes slope-driven erosion possible.
+ * Based on IQ's derivative-based value noise FBM.
  *
  * Requires: Erosion() and SEA_LEVEL from erosionGLSL must be in scope.
  *
  * Exposes:
  *   vec3 noised(vec2 x)
- *     2D value noise, returns vec3(value [-1,1], dvalue/dx, dvalue/dy).
+ *     2D gradient noise, returns vec3(value [-1,1], dvalue/dx, dvalue/dy).
  *
  *   vec2 heightmapElevation(vec2 p)
  *     FBM terrain with slope-derived erosion built in.
@@ -19,29 +23,39 @@
 
 export const heightmapGLSL = /* glsl */`
 
+// Scalar hash: maps a 2D lattice point to a pseudo-random float in [-1, 1].
+// Used to assign a random value at each grid corner for value noise.
 float hm_hash(vec2 p) {
   float h = dot(p, vec2(127.1, 311.7));
   return -1.0 + 2.0 * fract(sin(h) * 43758.5453123);
 }
 
 // 2D value noise with analytical derivatives.
+// Interpolates scalar hashes at the four surrounding lattice corners using a
+// quintic smoothstep, and derives the partial derivatives analytically via the
+// chain rule — no finite differences needed.
 // Returns vec3(value [-1,1], dvalue/dx, dvalue/dy).
 vec3 noised(vec2 x) {
   vec2 i  = floor(x);
   vec2 f  = fract(x);
+
+  // Quintic smoothstep and its derivative for C2-continuous interpolation.
   vec2 u  = f*f*f*(f*(f*6.0 - 15.0) + 10.0);
   vec2 du = 30.0*f*f*(f*(f - 2.0) + 1.0);
 
+  // Scalar noise values at the four surrounding lattice corners.
   float a = hm_hash(i + vec2(0.0, 0.0));
   float b = hm_hash(i + vec2(1.0, 0.0));
   float c = hm_hash(i + vec2(0.0, 1.0));
   float d = hm_hash(i + vec2(1.0, 1.0));
 
+  // Bilinear coefficients.
   float k0 = a;
   float k1 = b - a;
   float k2 = c - a;
   float k4 = a - b - c + d;
 
+  // Interpolated value and its analytical partial derivatives.
   return vec3(k0 + k1*u.x + k2*u.y + k4*u.x*u.y,
               du.x * (k1 + k4*u.y),
               du.y * (k2 + k4*u.x));
@@ -70,9 +84,14 @@ vec2 heightmapElevation(vec2 p) {
   // Directional erosion FBM — direction steered by slope, then fed back.
   vec3  h = vec3(0.0);
 
-  if (uErosionEnabled == 1 && n.x > SEA_LEVEL) {
-    float a = 0.5 * smoothstep(SEA_LEVEL, SEA_LEVEL + 0.1, n.x);
+  if (uErosionEnabled == 1) {
+    float a = 0.5;
     float f = 1.0;
+
+    // Scale erosion amplitude down near and below the waterline.
+    // The wider fade zone ([-0.1, +0.2] around SEA_LEVEL) gives a softer
+    // coastal transition than a hard cutoff, matching the original Heightmap().
+    a *= smoothstep(SEA_LEVEL - 0.1, SEA_LEVEL + 0.2, n.x);
 
     for (int i = 0; i < uErosionOctaves; i++) {
       h += Erosion(p * uErosionTiles * f, dir + h.zy * vec2(1.0, -1.0) * uErosionBranchStrength) * a * vec3(1.0, f, f);

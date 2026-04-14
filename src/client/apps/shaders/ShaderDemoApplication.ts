@@ -74,7 +74,7 @@ export class ShaderDemoApplication implements TabApplication {
     if (this.flyCam?.isEnabled()) {
       this.flyCam.update(dt);
       const cam   = this.flyCam.camera;
-      const floor = this.terrain.sampleTerrainHeight(cam.position.x, cam.position.z) + 0.05;
+      const floor = this.terrain.sampleTerrainHeight(cam.position.x, cam.position.z) + 0.03;
       if (cam.position.y < floor) cam.position.y = floor;
       renderCam = this.flyCam.camera;
     } else {
