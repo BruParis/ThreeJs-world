@@ -1,52 +1,150 @@
 /**
  * Fragment shader for the layer overlay panels.
  *
- * Displays one of two layers in greyscale depending on uLayerIndex:
- *   0 = diagonal gradient (bottom-left → top-right)
- *   1 = simplex FBM noise
+ * UV space is mapped to the same world XZ range as the terrain so the panels
+ * show an exact top-down preview of what the GPU computes (UV.x → worldX,
+ * UV.y → worldZ with Y-flip so the panel aligns with the 3D view).
  *
- * Uniforms:
- *   uLayerIndex       – which layer to display
- *   uNoiseScale       – frequency multiplier (layer 1 only)
- *   uNoiseOctaves     – FBM octave count (layer 1 only)
- *   uNoisePersistence – amplitude decay per octave (layer 1 only)
- *   uNoiseLacunarity  – frequency growth per octave (layer 1 only)
+ * uLayerIndex acts as an early-return breakpoint through the pipeline:
+ *   0 = gradient  — diagonal XZ gradient (terrain l1)
+ *   1 = noise     — raw FBM result (same type as terrain)
+ *   2 = blended   — mix(gradient, noise, uLayerMix)
+ *   3 = erosion   — blended + hydraulic erosion pass
+ *                   (falls back to blended when noiseType == 2 or erosion disabled)
+ *
+ * uNoiseType selects the noise algorithm (0=simplex, 1=perlin, 2=heightmap).
  */
 
 import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
+import { perlinNoiseGLSL }  from '@core/noise/perlinGLSL';
+import { erosionGLSL }      from '@core/shaders/erosionGLSL';
 
 export const layerOverlayFragmentShader = /* glsl */`
 
 ${simplexNoiseGLSL}
+${perlinNoiseGLSL}
+${erosionGLSL}
 
 in vec2 vUv;
 out vec4 fragColor;
 
 uniform int   uLayerIndex;
+uniform int   uNoiseType;
 uniform float uNoiseScale;
 uniform int   uNoiseOctaves;
 uniform float uNoisePersistence;
 uniform float uNoiseLacunarity;
+uniform float uLayerMix;
+uniform float uPatchHalfSize;
+
+uniform int   uErosionEnabled;
+uniform int   uErosionOctaves;
+uniform float uErosionTiles;
+uniform float uErosionStrength;
+uniform float uErosionSlopeStrength;
+uniform float uErosionBranchStrength;
+uniform float uErosionGain;
+uniform float uErosionLacunarity;
+
+const float SEA_LEVEL = 0.35;
+
+// Value-noise FBM for heightmap preview (2D, no erosion uniforms needed).
+float hmHash(vec2 p) {
+  float h = dot(p, vec2(127.1, 311.7));
+  return -1.0 + 2.0 * fract(sin(h) * 43758.5453123);
+}
+float valueFbm(vec2 p) {
+  float value = 0.0;
+  float amp   = 0.5;
+  float freq  = 1.0;
+  for (int i = 0; i < uNoiseOctaves; i++) {
+    vec2 i2   = floor(p * freq);
+    vec2 f2   = fract(p * freq);
+    vec2 u    = f2 * f2 * (3.0 - 2.0 * f2);
+    float v00 = hmHash(i2);
+    float v10 = hmHash(i2 + vec2(1.0, 0.0));
+    float v01 = hmHash(i2 + vec2(0.0, 1.0));
+    float v11 = hmHash(i2 + vec2(1.0, 1.0));
+    value += amp * mix(mix(v00, v10, u.x), mix(v01, v11, u.x), u.y);
+    amp  *= uNoisePersistence;
+    freq *= uNoiseLacunarity;
+  }
+  return value * 0.5 + 0.5;
+}
+
+// UV [0,1] → world XZ matching the terrain coordinate frame:
+//   UV.x increases left→right  = world +X
+//   UV.y increases bottom→top  = world -Z  (flipped: camera sits at +Z)
+float computeGradientAtWorld(float worldX, float worldZ) {
+  return clamp((worldX + worldZ) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
+}
+
+float computeNoiseAtWorld(float worldX, float worldZ) {
+  vec3 p = vec3(worldX, 0.0, worldZ) * uNoiseScale;
+  if (uNoiseType == 1)
+    return perlinFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
+  else if (uNoiseType == 2)
+    return valueFbm(vec2(worldX, worldZ) * uNoiseScale);
+  else
+    return simplexFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
+}
+
+// Used for neighbour samples when computing the erosion slope.
+float computeBaseAtWorld(float worldX, float worldZ) {
+  return mix(
+    computeGradientAtWorld(worldX, worldZ),
+    computeNoiseAtWorld(worldX, worldZ),
+    uLayerMix
+  );
+}
+
+float computeLayer(vec2 uv) {
+  float worldX =  (uv.x - 0.5) * 2.0 * uPatchHalfSize;
+  float worldZ = -(uv.y - 0.5) * 2.0 * uPatchHalfSize;
+
+  // Step 0: diagonal XZ gradient
+  float l1 = computeGradientAtWorld(worldX, worldZ);
+  if (uLayerIndex == 0) return l1;
+
+  // Step 1: raw noise FBM
+  float l2 = computeNoiseAtWorld(worldX, worldZ);
+  if (uLayerIndex == 1) return l2;
+
+  // Step 2: gradient + noise blended
+  float base = mix(l1, l2, uLayerMix);
+  if (uLayerIndex == 2) return base;
+
+  // Step 3: hydraulic erosion pass
+  // Heightmap mode has erosion built in — show blended as fallback.
+  float eroded = base;
+  if (uNoiseType != 2 && uErosionEnabled != 0) {
+    float GE = 0.5 / max(uNoiseScale, 0.5);
+    float fL = computeBaseAtWorld(worldX - GE, worldZ);
+    float fR = computeBaseAtWorld(worldX + GE, worldZ);
+    float fD = computeBaseAtWorld(worldX, worldZ - GE);
+    float fU = computeBaseAtWorld(worldX, worldZ + GE);
+    vec2 slope = vec2(fL - fR, fD - fU) / (2.0 * GE);
+    eroded = clamp(base + applyErosion(
+      vec2(worldX, worldZ) * uNoiseScale, base,
+      uErosionOctaves, uErosionTiles, uErosionStrength,
+      uErosionSlopeStrength, uErosionBranchStrength,
+      uErosionGain, uErosionLacunarity,
+      SEA_LEVEL, slope
+    ), 0.0, 1.0);
+  }
+  if (uLayerIndex == 3) return eroded;
+
+  // Step 4: water-level clamping — mirrors elevToDisplY() in the vertex shader.
+  return max(0.0, (eroded - SEA_LEVEL) / (1.0 - SEA_LEVEL));
+}
 
 void main() {
-  float layer;
+  float layer = computeLayer(vUv);
 
-  if (uLayerIndex == 0) {
-    // Diagonal gradient: (0,0) bottom-left → (1,1) top-right
-    layer = vUv.x * 0.5 + vUv.y * 0.5;
-  } else {
-    // Simplex FBM noise sampled at UV-derived coordinates
-    vec3 p = vec3(vUv, 0.0) * uNoiseScale;
-    layer = simplexFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
-  }
-
-  // Thin grey border to delineate panel edges
   float bw = 0.025;
   bool onBorder = vUv.x < bw || vUv.x > 1.0 - bw || vUv.y < bw || vUv.y > 1.0 - bw;
-  if (onBorder) {
-    fragColor = vec4(0.75, 0.75, 0.75, 1.0);
-  } else {
-    fragColor = vec4(layer, layer, layer, 1.0);
-  }
+  fragColor = onBorder
+    ? vec4(0.75, 0.75, 0.75, 1.0)
+    : vec4(layer, layer, layer, 1.0);
 }
 `;

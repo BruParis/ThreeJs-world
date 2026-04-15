@@ -20,8 +20,8 @@ export const DEFAULT_NOISE_PARAMS: NoiseParams = {
 
 export const DEFAULT_AMPLITUDE   = 0.4;   // world units — max Y displacement
 export const DEFAULT_PATCH_SIZE  = 2.0;   // world units — XZ extent of the whole grid
-export const DEFAULT_SUBDIVISION = 64;    // grid cells per side (power of 2)
-export const DEFAULT_NUM_PATCHES = 4;     // total patches (must be a perfect square: 1, 4, 9, 16…)
+export const DEFAULT_SUBDIVISION = 256;    // grid cells per side (power of 2)
+export const DEFAULT_NUM_PATCHES = 1;     // total patches (must be a perfect square: 1, 4, 9, 16…)
 export const DEFAULT_LAYER_MIX   = 0.5;   // 0 = gradient only, 1 = simplex only
 
 // ── GUI option maps ────────────────────────────────────────────────────────────

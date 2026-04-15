@@ -165,7 +165,20 @@ export class ShaderDemoApplication implements TabApplication {
     this.terrain = new TerrainMesh(this.scene!);
     this.terrain.init();
 
-    this.overlay = new LayerOverlay(w, h, contentArea, this.terrain.noiseParams);
+    this.overlay = new LayerOverlay(w, h, contentArea, {
+      noiseParams:           this.terrain.noiseParams,
+      noiseType:             this.terrain.noiseType,
+      layerMix:              this.terrain.layerMix,
+      patchHalfSize:         this.terrain.patchSize / 2,
+      erosionEnabled:        this.terrain.erosionEnabled,
+      erosionOctaves:        this.terrain.erosionOctaves,
+      erosionTiles:          this.terrain.erosionTiles,
+      erosionStrength:       this.terrain.erosionStrength,
+      erosionSlopeStrength:  this.terrain.erosionSlopeStrength,
+      erosionBranchStrength: this.terrain.erosionBranchStrength,
+      erosionGain:           this.terrain.erosionGain,
+      erosionLacunarity:     this.terrain.erosionLacunarity,
+    });
 
     this.gui = buildShaderDemoGUI(
       contentArea,
