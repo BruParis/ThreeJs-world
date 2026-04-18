@@ -3,6 +3,7 @@ import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 import { terrainColorGLSL } from '@core/shaders/terrainColorGLSL';
 import {
   DEFAULT_NOISE_PARAMS,
+  DEFAULT_GAUSSIAN_PARAMS,
   DEFAULT_AMPLITUDE,
   DEFAULT_PATCH_SIZE,
   DEFAULT_SUBDIVISION,
@@ -22,6 +23,9 @@ import { TerrainElevationGL } from './TerrainElevationGL';
 import { SuppNoiseGL }        from './SuppNoiseGL';
 
 export class TerrainMesh {
+  // Gaussian (input to first elevation layer)
+  gaussianParams = { ...DEFAULT_GAUSSIAN_PARAMS };
+
   // Noise
   noiseParams = { ...DEFAULT_NOISE_PARAMS };
   noiseType   = 0; // 0 = simplex, 1 = perlin, 2 = heightmap
@@ -110,6 +114,8 @@ export class TerrainMesh {
         layerMix:              this.layerMix,
         patchHalfSize:         halfSize,
         noiseType:             this.noiseType,
+        gaussSigma:            this.gaussianParams.sigma,
+        gaussAmplitude:        this.gaussianParams.amplitude,
         erosionEnabled:        this.erosionEnabled ? 1 : 0,
         erosionOctaves:        this.erosionOctaves,
         erosionTiles:          this.erosionTiles,
@@ -367,18 +373,21 @@ varying vec3  vTerrainWorldNormal;
           vec3 suppData = texture2D(uSuppNoiseTex, suppUV).xyz;
           terrainNorWorld = normalize(terrainNorWorld + vec3(suppData.y, 0.0, suppData.z) * uSuppNoiseStrength);
         }
-        diffuseColor.rgb = terrainColor(vTerrainElev, vTerrainWorldPos, terrainNorWorld);
+        vec3 colorNormal = vTerrainElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
+        diffuseColor.rgb = terrainColor(vTerrainElev, vTerrainWorldPos, colorNormal);
         `,
       );
 
       // Override normal setup to use our world-space terrain normal (→ view space).
       // viewMatrix is orthogonal, so mat3(viewMatrix) correctly rotates world→view.
-      // terrainNorWorld was defined in map_fragment above (chunks share the same scope).
+      // colorNormal was defined in map_fragment above (chunks share the same scope).
+      // It uses vTerrainWorldNormal for water and terrainNorWorld for land,
+      // so suppNoise perturbation only affects land lighting.
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <normal_fragment_begin>',
         /* glsl */`
         float faceDirection = gl_FrontFacing ? 1.0 : -1.0;
-        vec3 normal = normalize(mat3(viewMatrix) * terrainNorWorld) * faceDirection;
+        vec3 normal = normalize(mat3(viewMatrix) * colorNormal) * faceDirection;
         vec3 nonPerturbedNormal = normal;
         `,
       );

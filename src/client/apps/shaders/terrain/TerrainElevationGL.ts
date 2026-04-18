@@ -32,6 +32,8 @@ export interface ElevationComputeParams {
   layerMix:             number;
   patchHalfSize:        number;
   noiseType:            number;
+  gaussSigma:           number;
+  gaussAmplitude:       number;
   erosionEnabled:       number;
   erosionOctaves:       number;
   erosionTiles:         number;
@@ -80,6 +82,8 @@ uniform float uNoisePersistence;
 uniform float uNoiseLacunarity;
 uniform float uLayerMix;
 uniform int   uNoiseType;
+uniform float uGaussSigma;
+uniform float uGaussAmplitude;
 uniform int   uErosionEnabled;
 uniform int   uErosionOctaves;
 uniform float uErosionTiles;
@@ -100,9 +104,16 @@ float noiseFbm(vec3 p) {
   return simplexFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity);
 }
 
+float gaussian2D(vec3 wPos) {
+  float sigma = max(uGaussSigma * uPatchHalfSize, 0.001);
+  return uGaussAmplitude * exp(-(wPos.x * wPos.x + wPos.z * wPos.z) / (2.0 * sigma * sigma));
+}
+
 float baseNoise(vec3 wPos) {
   float l1 = clamp((wPos.x + wPos.z) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
-  float l2 = noiseFbm(wPos * uNoiseScale) * 0.5 + 0.5;
+  float l2 = (uNoiseType == 3)
+    ? gaussian2D(wPos)
+    : noiseFbm(wPos * uNoiseScale) * 0.5 + 0.5;
   return mix(l1, l2, uLayerMix);
 }
 
@@ -346,6 +357,8 @@ export class TerrainElevationGL {
     gl.uniform1f(u('uNoiseLacunarity'),     p.noiseLacunarity);
     gl.uniform1f(u('uLayerMix'),            p.layerMix);
     gl.uniform1i(u('uNoiseType'),           p.noiseType);
+    gl.uniform1f(u('uGaussSigma'),          p.gaussSigma);
+    gl.uniform1f(u('uGaussAmplitude'),      p.gaussAmplitude);
     gl.uniform1i(u('uErosionEnabled'),      p.erosionEnabled);
     gl.uniform1i(u('uErosionOctaves'),      p.erosionOctaves);
     gl.uniform1f(u('uErosionTiles'),        p.erosionTiles);

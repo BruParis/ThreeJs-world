@@ -22,6 +22,8 @@ export const LAYER_DESCRIPTORS: readonly LayerDescriptor[] = [
 export interface OverlayParams {
   noiseParams:           NoiseParams;
   noiseType:             number;
+  gaussSigma:            number;
+  gaussAmplitude:        number;
   layerMix:              number;
   patchHalfSize:         number;
   erosionEnabled:        boolean;

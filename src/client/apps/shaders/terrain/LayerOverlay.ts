@@ -4,8 +4,8 @@ import { layerOverlayFragmentShader } from '../shaders/layerOverlayFrag';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 import { LAYER_DESCRIPTORS, OverlayParams } from './LayerDescriptors';
 
-const PANEL_SIZE   = 150;
-const PANEL_MARGIN = 10;
+const PANEL_SIZE   = 110;
+const PANEL_MARGIN = 8;
 
 const ARROW_LEN  = 40;
 const ARROW_PAD  = 20;
@@ -24,7 +24,7 @@ export class LayerOverlay {
   readonly scene:  THREE.Scene;
   readonly camera: THREE.OrthographicCamera;
 
-  showLayers = false;
+  showLayers = true;
 
   private meshes:         THREE.Mesh[]         = [];
   private xLines:         THREE.LineSegments[] = [];
@@ -65,6 +65,8 @@ export class LayerOverlay {
       mat.uniforms.uNoiseLacunarity.value   = params.noiseParams.lacunarity;
       mat.uniforms.uNoiseType.value         = params.noiseType;
       mat.uniforms.uPermTex.value           = this.permTex;
+      mat.uniforms.uGaussSigma.value        = params.gaussSigma;
+      mat.uniforms.uGaussAmplitude.value    = params.gaussAmplitude;
       mat.uniforms.uLayerMix.value          = params.layerMix;
       mat.uniforms.uPatchHalfSize.value     = params.patchHalfSize;
       mat.uniforms.uErosionEnabled.value    = params.erosionEnabled ? 1 : 0;
@@ -160,6 +162,8 @@ export class LayerOverlay {
           uNoiseOctaves:            { value: params.noiseParams.octaves },
           uNoisePersistence:        { value: params.noiseParams.persistence },
           uNoiseLacunarity:         { value: params.noiseParams.lacunarity },
+          uGaussSigma:              { value: params.gaussSigma },
+          uGaussAmplitude:          { value: params.gaussAmplitude },
           uLayerMix:                { value: params.layerMix },
           uPatchHalfSize:           { value: params.patchHalfSize },
           uErosionEnabled:          { value: params.erosionEnabled ? 1 : 0 },

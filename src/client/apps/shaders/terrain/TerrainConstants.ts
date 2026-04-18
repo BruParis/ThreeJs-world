@@ -8,6 +8,11 @@ export interface NoiseParams {
   lacunarity:  number;
 }
 
+export interface GaussianParams {
+  sigma:     number;  // [0.05, 2.0] normalized to patchHalfSize
+  amplitude: number;  // [0.0, 1.0] peak value
+}
+
 // ── Defaults ───────────────────────────────────────────────────────────────────
 
 export const DEFAULT_NOISE_PARAMS: NoiseParams = {
@@ -16,6 +21,11 @@ export const DEFAULT_NOISE_PARAMS: NoiseParams = {
   octaves:     4,
   persistence: 0.5,
   lacunarity:  2.0,
+};
+
+export const DEFAULT_GAUSSIAN_PARAMS: GaussianParams = {
+  sigma:     0.4,
+  amplitude: 1.0,
 };
 
 export const DEFAULT_AMPLITUDE   = 0.4;   // world units — max Y displacement

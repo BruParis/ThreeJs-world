@@ -35,12 +35,12 @@ export function buildShaderDemoGUI(
     pages: [
       { title: 'View'     },
       { title: 'Terrain'  },
-      { title: 'Noise'    },
+      { title: 'Elevation' },
       { title: 'Erosion'  },
       { title: 'Lighting' },
     ],
   });
-  const [viewPage, terrainPage, noisePage, erosionPage, lightingPage] = tab.pages;
+  const [viewPage, terrainPage, elevationPage, erosionPage, lightingPage] = tab.pages;
 
   // ── Shared callbacks ──────────────────────────────────────────────────────
 
@@ -49,6 +49,8 @@ export function buildShaderDemoGUI(
   const updOverlay = () => overlay.updateUniforms({
     noiseParams:           terrain.noiseParams,
     noiseType:             terrain.noiseType,
+    gaussSigma:            terrain.gaussianParams.sigma,
+    gaussAmplitude:        terrain.gaussianParams.amplitude,
     layerMix:              terrain.layerMix,
     patchHalfSize:         terrain.patchSize / 2,
     erosionEnabled:        terrain.erosionEnabled,
@@ -107,24 +109,43 @@ export function buildShaderDemoGUI(
   terrainPage.addBinding(terrainParams, 'amplitude', { label: 'Amplitude', min: 0.0, max: 2.0, step: 0.05 })
     .on('change', ({ value }) => { terrain.amplitude = value; updDisplay(); });
 
-  // ── Tab: Noise ────────────────────────────────────────────────────────────
+  // ── Tab: Elevation ───────────────────────────────────────────────────────
 
-  const noiseTypeParams = { type: 2 }; // default: heightmap
-  noisePage.addBinding(noiseTypeParams, 'type', {
+  const isGaussian = () => terrain.noiseType === 3;
+
+  const noiseTypeParams = { type: terrain.noiseType };
+  elevationPage.addBinding(noiseTypeParams, 'type', {
     label: 'Type',
-    options: { Simplex: 0, Perlin: 1, Heightmap: 2 },
-  }).on('change', ({ value }) => { terrain.noiseType = Number(value); updElevation(); });
+    options: { Simplex: 0, Perlin: 1, Heightmap: 2, Gaussian: 3 },
+  }).on('change', ({ value }) => {
+    terrain.noiseType = Number(value);
+    noiseFolder.hidden  = isGaussian();
+    gaussFolder.hidden  = !isGaussian();
+    updElevation();
+  });
 
-  noisePage.addBinding(terrain.noiseParams, 'scale',       { label: 'Scale',       min: 0.5, max: 10.0, step: 0.1  }).on('change', updNoise);
-  noisePage.addBinding(terrain.noiseParams, 'octaves',     { label: 'Octaves',     min: 1,   max: 8,    step: 1    }).on('change', updNoise);
-  noisePage.addBinding(terrain.noiseParams, 'persistence', { label: 'Persistence', min: 0.1, max: 1.0,  step: 0.05 }).on('change', updNoise);
-  noisePage.addBinding(terrain.noiseParams, 'lacunarity',  { label: 'Lacunarity',  min: 1.0, max: 4.0,  step: 0.1  }).on('change', updNoise);
+  const noiseFolder = elevationPage.addFolder({ title: 'Noise', expanded: true });
+  noiseFolder.addBinding(terrain.noiseParams, 'scale',       { label: 'Scale',       min: 0.5, max: 10.0, step: 0.1  }).on('change', updNoise);
+  noiseFolder.addBinding(terrain.noiseParams, 'octaves',     { label: 'Octaves',     min: 1,   max: 8,    step: 1    }).on('change', updNoise);
+  noiseFolder.addBinding(terrain.noiseParams, 'persistence', { label: 'Persistence', min: 0.1, max: 1.0,  step: 0.05 }).on('change', updNoise);
+  noiseFolder.addBinding(terrain.noiseParams, 'lacunarity',  { label: 'Lacunarity',  min: 1.0, max: 4.0,  step: 0.1  }).on('change', updNoise);
+
+  const gaussFolder = elevationPage.addFolder({ title: 'Gaussian', expanded: true });
+  const gaussParams  = { sigma: terrain.gaussianParams.sigma, amplitude: terrain.gaussianParams.amplitude };
+  gaussFolder.addBinding(gaussParams, 'sigma',     { label: 'Sigma',     min: 0.05, max: 2.0, step: 0.01 })
+    .on('change', ({ value }) => { terrain.gaussianParams.sigma = value; updElevation(); });
+  gaussFolder.addBinding(gaussParams, 'amplitude', { label: 'Amplitude', min: 0.0,  max: 1.0, step: 0.01 })
+    .on('change', ({ value }) => { terrain.gaussianParams.amplitude = value; updElevation(); });
+
+  // Initial visibility
+  noiseFolder.hidden = isGaussian();
+  gaussFolder.hidden = !isGaussian();
 
   const layerParams = { mix: terrain.layerMix };
-  noisePage.addBinding(layerParams, 'mix', { label: 'Layer Mix', min: 0.0, max: 1.0, step: 0.01 })
+  elevationPage.addBinding(layerParams, 'mix', { label: 'Layer Mix', min: 0.0, max: 1.0, step: 0.01 })
     .on('change', ({ value }) => { terrain.layerMix = value; updElevation(); });
 
-  const suppFolder = noisePage.addFolder({ title: 'Supplemental', expanded: false });
+  const suppFolder = elevationPage.addFolder({ title: 'Supplemental', expanded: false });
   const suppParams = { enabled: terrain.suppNoiseEnabled, strength: terrain.suppNoiseStrength };
   suppFolder.addBinding(suppParams, 'enabled', { label: 'Enabled' })
     .on('change', ({ value }) => terrain.setSuppNoiseEnabled(value));

@@ -34,6 +34,8 @@ uniform float uNoiseScale;
 uniform int   uNoiseOctaves;
 uniform float uNoisePersistence;
 uniform float uNoiseLacunarity;
+uniform float uGaussSigma;
+uniform float uGaussAmplitude;
 uniform float uLayerMix;
 uniform float uPatchHalfSize;
 
@@ -79,7 +81,13 @@ float computeGradientAtWorld(float worldX, float worldZ) {
   return clamp((worldX + worldZ) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
 }
 
+float computeGaussianAtWorld(float worldX, float worldZ) {
+  float sigma = max(uGaussSigma * uPatchHalfSize, 0.001);
+  return uGaussAmplitude * exp(-(worldX * worldX + worldZ * worldZ) / (2.0 * sigma * sigma));
+}
+
 float computeNoiseAtWorld(float worldX, float worldZ) {
+  if (uNoiseType == 3) return computeGaussianAtWorld(worldX, worldZ);
   vec3 p = vec3(worldX, 0.0, worldZ) * uNoiseScale;
   if (uNoiseType == 1)
     return perlinFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
