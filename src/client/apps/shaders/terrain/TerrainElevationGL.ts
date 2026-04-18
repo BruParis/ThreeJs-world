@@ -19,29 +19,33 @@ import { erosionGLSL }      from '@core/shaders/erosionGLSL';
 import { heightmapGLSL }    from '@core/noise/heightmapGLSL';
 
 export interface ElevationComputeParams {
-  gridWidth:            number;
-  gridHeight:           number;
-  originX:              number;
-  originZ:              number;
-  stepX:                number;
-  stepZ:                number;
-  noiseScale:           number;
-  noiseOctaves:         number;
-  noisePersistence:     number;
-  noiseLacunarity:      number;
-  layerMix:             number;
-  patchHalfSize:        number;
-  noiseType:            number;
-  gaussSigma:           number;
-  gaussAmplitude:       number;
-  erosionEnabled:       number;
-  erosionOctaves:       number;
-  erosionTiles:         number;
-  erosionStrength:      number;
-  erosionSlopeStrength: number;
-  erosionBranchStrength:number;
-  erosionGain:          number;
-  erosionLacunarity:    number;
+  gridWidth:              number;
+  gridHeight:             number;
+  originX:                number;
+  originZ:                number;
+  stepX:                  number;
+  stepZ:                  number;
+  noiseScale:             number;
+  noiseOctaves:           number;
+  noisePersistence:       number;
+  noiseLacunarity:        number;
+  layerMix:               number;
+  patchHalfSize:          number;
+  noiseType:              number;
+  gaussSigma:             number;
+  gaussAmplitude:         number;
+  erosionEnabled:         number;
+  erosionOctaves:         number;
+  erosionScale:           number;
+  erosionStrength:        number;
+  erosionGullyWeight:     number;
+  erosionDetail:          number;
+  erosionGain:            number;
+  erosionLacunarity:      number;
+  erosionCellScale:       number;
+  erosionNormalization:   number;
+  erosionRidgeRounding:   number;
+  erosionCreaseRounding:  number;
 }
 
 // ── Shaders ───────────────────────────────────────────────────────────────────
@@ -86,12 +90,16 @@ uniform float uGaussSigma;
 uniform float uGaussAmplitude;
 uniform int   uErosionEnabled;
 uniform int   uErosionOctaves;
-uniform float uErosionTiles;
+uniform float uErosionScale;
 uniform float uErosionStrength;
-uniform float uErosionSlopeStrength;
-uniform float uErosionBranchStrength;
+uniform float uErosionGullyWeight;
+uniform float uErosionDetail;
 uniform float uErosionGain;
 uniform float uErosionLacunarity;
+uniform float uErosionCellScale;
+uniform float uErosionNormalization;
+uniform float uErosionRidgeRounding;
+uniform float uErosionCreaseRounding;
 
 out vec4 fragColor;
 
@@ -133,13 +141,20 @@ float computeElevation(vec3 wPos) {
       float fR = baseNoise(wPos + vec3(GE, 0.0, 0.0));
       float fD = baseNoise(wPos - vec3(0.0, 0.0, GE));
       float fU = baseNoise(wPos + vec3(0.0, 0.0, GE));
-      vec2 slope = vec2(fL - fR, fD - fU) / (2.0 * GE);
+      vec2 slope_grad = vec2(fR - fL, fU - fD) / (2.0 * GE);
       noise += applyErosion(
-        wPos.xz * uNoiseScale, noise,
-        uErosionOctaves, uErosionTiles, uErosionStrength,
-        uErosionSlopeStrength, uErosionBranchStrength,
-        uErosionGain, uErosionLacunarity,
-        SEA_LEVEL, slope
+        wPos.xz, noise, slope_grad,
+        uErosionOctaves,
+        uErosionScale,
+        uErosionStrength,
+        uErosionGullyWeight,
+        uErosionDetail,
+        uErosionLacunarity,
+        uErosionGain,
+        uErosionCellScale,
+        uErosionNormalization,
+        uErosionRidgeRounding,
+        uErosionCreaseRounding
       );
       noise = clamp(noise, 0.0, 1.0);
     }
@@ -359,13 +374,17 @@ export class TerrainElevationGL {
     gl.uniform1i(u('uNoiseType'),           p.noiseType);
     gl.uniform1f(u('uGaussSigma'),          p.gaussSigma);
     gl.uniform1f(u('uGaussAmplitude'),      p.gaussAmplitude);
-    gl.uniform1i(u('uErosionEnabled'),      p.erosionEnabled);
-    gl.uniform1i(u('uErosionOctaves'),      p.erosionOctaves);
-    gl.uniform1f(u('uErosionTiles'),        p.erosionTiles);
-    gl.uniform1f(u('uErosionStrength'),     p.erosionStrength);
-    gl.uniform1f(u('uErosionSlopeStrength'),  p.erosionSlopeStrength);
-    gl.uniform1f(u('uErosionBranchStrength'), p.erosionBranchStrength);
-    gl.uniform1f(u('uErosionGain'),         p.erosionGain);
-    gl.uniform1f(u('uErosionLacunarity'),   p.erosionLacunarity);
+    gl.uniform1i(u('uErosionEnabled'),        p.erosionEnabled);
+    gl.uniform1i(u('uErosionOctaves'),        p.erosionOctaves);
+    gl.uniform1f(u('uErosionScale'),          p.erosionScale);
+    gl.uniform1f(u('uErosionStrength'),       p.erosionStrength);
+    gl.uniform1f(u('uErosionGullyWeight'),    p.erosionGullyWeight);
+    gl.uniform1f(u('uErosionDetail'),         p.erosionDetail);
+    gl.uniform1f(u('uErosionGain'),           p.erosionGain);
+    gl.uniform1f(u('uErosionLacunarity'),     p.erosionLacunarity);
+    gl.uniform1f(u('uErosionCellScale'),      p.erosionCellScale);
+    gl.uniform1f(u('uErosionNormalization'),  p.erosionNormalization);
+    gl.uniform1f(u('uErosionRidgeRounding'),  p.erosionRidgeRounding);
+    gl.uniform1f(u('uErosionCreaseRounding'), p.erosionCreaseRounding);
   }
 }

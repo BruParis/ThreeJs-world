@@ -20,18 +20,22 @@ export const LAYER_DESCRIPTORS: readonly LayerDescriptor[] = [
 
 /** Full set of uniforms the overlay panels need to mirror the elevation compute shader. */
 export interface OverlayParams {
-  noiseParams:           NoiseParams;
-  noiseType:             number;
-  gaussSigma:            number;
-  gaussAmplitude:        number;
-  layerMix:              number;
-  patchHalfSize:         number;
-  erosionEnabled:        boolean;
-  erosionOctaves:        number;
-  erosionTiles:          number;
-  erosionStrength:       number;
-  erosionSlopeStrength:  number;
-  erosionBranchStrength: number;
-  erosionGain:           number;
-  erosionLacunarity:     number;
+  noiseParams:            NoiseParams;
+  noiseType:              number;
+  gaussSigma:             number;
+  gaussAmplitude:         number;
+  layerMix:               number;
+  patchHalfSize:          number;
+  erosionEnabled:         boolean;
+  erosionOctaves:         number;
+  erosionScale:           number;
+  erosionStrength:        number;
+  erosionGullyWeight:     number;
+  erosionDetail:          number;
+  erosionGain:            number;
+  erosionLacunarity:      number;
+  erosionCellScale:       number;
+  erosionNormalization:   number;
+  erosionRidgeRounding:   number;
+  erosionCreaseRounding:  number;
 }

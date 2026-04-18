@@ -47,20 +47,24 @@ export function buildShaderDemoGUI(
   const updDisplay = () => terrain.updateUniforms();
 
   const updOverlay = () => overlay.updateUniforms({
-    noiseParams:           terrain.noiseParams,
-    noiseType:             terrain.noiseType,
-    gaussSigma:            terrain.gaussianParams.sigma,
-    gaussAmplitude:        terrain.gaussianParams.amplitude,
-    layerMix:              terrain.layerMix,
-    patchHalfSize:         terrain.patchSize / 2,
-    erosionEnabled:        terrain.erosionEnabled,
-    erosionOctaves:        terrain.erosionOctaves,
-    erosionTiles:          terrain.erosionTiles,
-    erosionStrength:       terrain.erosionStrength,
-    erosionSlopeStrength:  terrain.erosionSlopeStrength,
-    erosionBranchStrength: terrain.erosionBranchStrength,
-    erosionGain:           terrain.erosionGain,
-    erosionLacunarity:     terrain.erosionLacunarity,
+    noiseParams:            terrain.noiseParams,
+    noiseType:              terrain.noiseType,
+    gaussSigma:             terrain.gaussianParams.sigma,
+    gaussAmplitude:         terrain.gaussianParams.amplitude,
+    layerMix:               terrain.layerMix,
+    patchHalfSize:          terrain.patchSize / 2,
+    erosionEnabled:         terrain.erosionEnabled,
+    erosionOctaves:         terrain.erosionOctaves,
+    erosionScale:           terrain.erosionScale,
+    erosionStrength:        terrain.erosionStrength,
+    erosionGullyWeight:     terrain.erosionGullyWeight,
+    erosionDetail:          terrain.erosionDetail,
+    erosionGain:            terrain.erosionGain,
+    erosionLacunarity:      terrain.erosionLacunarity,
+    erosionCellScale:       terrain.erosionCellScale,
+    erosionNormalization:   terrain.erosionNormalization,
+    erosionRidgeRounding:   terrain.erosionRidgeRounding,
+    erosionCreaseRounding:  terrain.erosionCreaseRounding,
   });
 
   function debounce(fn: () => void, ms: number): () => void {
@@ -155,32 +159,46 @@ export function buildShaderDemoGUI(
   // ── Tab: Erosion ──────────────────────────────────────────────────────────
 
   const erosionParams = {
-    enabled:        terrain.erosionEnabled,
-    strength:       terrain.erosionStrength,
-    octaves:        terrain.erosionOctaves,
-    tiles:          terrain.erosionTiles,
-    slopeStrength:  terrain.erosionSlopeStrength,
-    branchStrength: terrain.erosionBranchStrength,
-    gain:           terrain.erosionGain,
-    lacunarity:     terrain.erosionLacunarity,
+    enabled:         terrain.erosionEnabled,
+    scale:           terrain.erosionScale,
+    strength:        terrain.erosionStrength,
+    gullyWeight:     terrain.erosionGullyWeight,
+    detail:          terrain.erosionDetail,
+    octaves:         terrain.erosionOctaves,
+    lacunarity:      terrain.erosionLacunarity,
+    gain:            terrain.erosionGain,
+    cellScale:       terrain.erosionCellScale,
+    normalization:   terrain.erosionNormalization,
+    ridgeRounding:   terrain.erosionRidgeRounding,
+    creaseRounding:  terrain.erosionCreaseRounding,
   };
 
-  erosionPage.addBinding(erosionParams, 'enabled',       { label: 'Enabled' })
+  erosionPage.addBinding(erosionParams, 'enabled',        { label: 'Enabled' })
     .on('change', ({ value }) => { terrain.erosionEnabled = value; updElevation(); });
-  erosionPage.addBinding(erosionParams, 'strength',      { label: 'Strength',      min: 0.0, max: 1.0, step: 0.01 })
+  erosionPage.addBinding(erosionParams, 'scale',          { label: 'Scale',          min: 0.02, max: 0.5,  step: 0.01 })
+    .on('change', ({ value }) => { terrain.erosionScale = value; updElevation(); });
+  erosionPage.addBinding(erosionParams, 'strength',       { label: 'Strength',       min: 0.0,  max: 0.5,  step: 0.01 })
     .on('change', ({ value }) => { terrain.erosionStrength = value; updElevation(); });
-  erosionPage.addBinding(erosionParams, 'octaves',       { label: 'Octaves',       min: 1,   max: 10,  step: 1    })
+  erosionPage.addBinding(erosionParams, 'gullyWeight',    { label: 'Gully Weight',   min: 0.0,  max: 1.0,  step: 0.01 })
+    .on('change', ({ value }) => { terrain.erosionGullyWeight = value; updElevation(); });
+  erosionPage.addBinding(erosionParams, 'detail',         { label: 'Detail',         min: 0.3,  max: 3.0,  step: 0.05 })
+    .on('change', ({ value }) => { terrain.erosionDetail = value; updElevation(); });
+  erosionPage.addBinding(erosionParams, 'octaves',        { label: 'Octaves',        min: 1,    max: 8,    step: 1    })
     .on('change', ({ value }) => { terrain.erosionOctaves = value; updElevation(); });
-  erosionPage.addBinding(erosionParams, 'tiles',         { label: 'Tiles',         min: 0.5, max: 10.0, step: 0.5 })
-    .on('change', ({ value }) => { terrain.erosionTiles = value; updElevation(); });
-  erosionPage.addBinding(erosionParams, 'slopeStrength', { label: 'Slope',         min: 0.0, max: 3.0, step: 0.05 })
-    .on('change', ({ value }) => { terrain.erosionSlopeStrength = value; updElevation(); });
-  erosionPage.addBinding(erosionParams, 'branchStrength',{ label: 'Branch',        min: 0.0, max: 2.0, step: 0.05 })
-    .on('change', ({ value }) => { terrain.erosionBranchStrength = value; updElevation(); });
-  erosionPage.addBinding(erosionParams, 'gain',          { label: 'Gain',          min: 0.1, max: 1.0, step: 0.05 })
-    .on('change', ({ value }) => { terrain.erosionGain = value; updElevation(); });
-  erosionPage.addBinding(erosionParams, 'lacunarity',    { label: 'Lacunarity',    min: 1.0, max: 4.0, step: 0.1  })
+  erosionPage.addBinding(erosionParams, 'lacunarity',     { label: 'Lacunarity',     min: 1.0,  max: 4.0,  step: 0.1  })
     .on('change', ({ value }) => { terrain.erosionLacunarity = value; updElevation(); });
+  erosionPage.addBinding(erosionParams, 'gain',           { label: 'Gain',           min: 0.1,  max: 1.0,  step: 0.05 })
+    .on('change', ({ value }) => { terrain.erosionGain = value; updElevation(); });
+
+  const erosionAdvFolder = erosionPage.addFolder({ title: 'Advanced', expanded: false });
+  erosionAdvFolder.addBinding(erosionParams, 'cellScale',      { label: 'Cell Scale',      min: 0.2, max: 2.0, step: 0.05 })
+    .on('change', ({ value }) => { terrain.erosionCellScale = value; updElevation(); });
+  erosionAdvFolder.addBinding(erosionParams, 'normalization',  { label: 'Normalization',   min: 0.0, max: 1.0, step: 0.05 })
+    .on('change', ({ value }) => { terrain.erosionNormalization = value; updElevation(); });
+  erosionAdvFolder.addBinding(erosionParams, 'ridgeRounding',  { label: 'Ridge Rounding',  min: 0.0, max: 1.0, step: 0.05 })
+    .on('change', ({ value }) => { terrain.erosionRidgeRounding = value; updElevation(); });
+  erosionAdvFolder.addBinding(erosionParams, 'creaseRounding', { label: 'Crease Rounding', min: 0.0, max: 1.0, step: 0.05 })
+    .on('change', ({ value }) => { terrain.erosionCreaseRounding = value; updElevation(); });
 
   // ── Tab: Lighting ─────────────────────────────────────────────────────────
 

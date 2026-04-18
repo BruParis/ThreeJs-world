@@ -12,12 +12,16 @@ import {
 } from './TerrainConstants';
 import {
   DEFAULT_EROSION_OCTAVES,
-  DEFAULT_EROSION_TILES,
+  DEFAULT_EROSION_SCALE,
   DEFAULT_EROSION_STRENGTH,
-  DEFAULT_EROSION_SLOPE_STRENGTH,
-  DEFAULT_EROSION_BRANCH_STRENGTH,
+  DEFAULT_EROSION_GULLY_WEIGHT,
+  DEFAULT_EROSION_DETAIL,
   DEFAULT_EROSION_GAIN,
   DEFAULT_EROSION_LACUNARITY,
+  DEFAULT_EROSION_CELL_SCALE,
+  DEFAULT_EROSION_NORMALIZATION,
+  DEFAULT_EROSION_RIDGE_ROUNDING,
+  DEFAULT_EROSION_CREASE_ROUNDING,
 } from '@core/shaders/erosionGLSL';
 import { TerrainElevationGL } from './TerrainElevationGL';
 import { SuppNoiseGL }        from './SuppNoiseGL';
@@ -46,12 +50,16 @@ export class TerrainMesh {
   // Erosion
   erosionEnabled        = true;
   erosionOctaves        = DEFAULT_EROSION_OCTAVES;
-  erosionTiles          = DEFAULT_EROSION_TILES;
+  erosionScale          = DEFAULT_EROSION_SCALE;
   erosionStrength       = DEFAULT_EROSION_STRENGTH;
-  erosionSlopeStrength  = DEFAULT_EROSION_SLOPE_STRENGTH;
-  erosionBranchStrength = DEFAULT_EROSION_BRANCH_STRENGTH;
+  erosionGullyWeight    = DEFAULT_EROSION_GULLY_WEIGHT;
+  erosionDetail         = DEFAULT_EROSION_DETAIL;
   erosionGain           = DEFAULT_EROSION_GAIN;
   erosionLacunarity     = DEFAULT_EROSION_LACUNARITY;
+  erosionCellScale      = DEFAULT_EROSION_CELL_SCALE;
+  erosionNormalization  = DEFAULT_EROSION_NORMALIZATION;
+  erosionRidgeRounding  = DEFAULT_EROSION_RIDGE_ROUNDING;
+  erosionCreaseRounding = DEFAULT_EROSION_CREASE_ROUNDING;
 
   /**
    * CPU-accessible elevation grid — use for pathfinding, physics, or any non-rendering query.
@@ -116,14 +124,18 @@ export class TerrainMesh {
         noiseType:             this.noiseType,
         gaussSigma:            this.gaussianParams.sigma,
         gaussAmplitude:        this.gaussianParams.amplitude,
-        erosionEnabled:        this.erosionEnabled ? 1 : 0,
-        erosionOctaves:        this.erosionOctaves,
-        erosionTiles:          this.erosionTiles,
-        erosionStrength:       this.erosionStrength,
-        erosionSlopeStrength:  this.erosionSlopeStrength,
-        erosionBranchStrength: this.erosionBranchStrength,
-        erosionGain:           this.erosionGain,
-        erosionLacunarity:     this.erosionLacunarity,
+        erosionEnabled:         this.erosionEnabled ? 1 : 0,
+        erosionOctaves:         this.erosionOctaves,
+        erosionScale:           this.erosionScale,
+        erosionStrength:        this.erosionStrength,
+        erosionGullyWeight:     this.erosionGullyWeight,
+        erosionDetail:          this.erosionDetail,
+        erosionGain:            this.erosionGain,
+        erosionLacunarity:      this.erosionLacunarity,
+        erosionCellScale:       this.erosionCellScale,
+        erosionNormalization:   this.erosionNormalization,
+        erosionRidgeRounding:   this.erosionRidgeRounding,
+        erosionCreaseRounding:  this.erosionCreaseRounding,
       },
       permData,
     );

@@ -41,12 +41,16 @@ uniform float uPatchHalfSize;
 
 uniform int   uErosionEnabled;
 uniform int   uErosionOctaves;
-uniform float uErosionTiles;
+uniform float uErosionScale;
 uniform float uErosionStrength;
-uniform float uErosionSlopeStrength;
-uniform float uErosionBranchStrength;
+uniform float uErosionGullyWeight;
+uniform float uErosionDetail;
 uniform float uErosionGain;
 uniform float uErosionLacunarity;
+uniform float uErosionCellScale;
+uniform float uErosionNormalization;
+uniform float uErosionRidgeRounding;
+uniform float uErosionCreaseRounding;
 
 const float SEA_LEVEL = 0.35;
 
@@ -131,13 +135,20 @@ float computeLayer(vec2 uv) {
     float fR = computeBaseAtWorld(worldX + GE, worldZ);
     float fD = computeBaseAtWorld(worldX, worldZ - GE);
     float fU = computeBaseAtWorld(worldX, worldZ + GE);
-    vec2 slope = vec2(fL - fR, fD - fU) / (2.0 * GE);
+    vec2 slope_grad = vec2(fR - fL, fU - fD) / (2.0 * GE);
     eroded = clamp(base + applyErosion(
-      vec2(worldX, worldZ) * uNoiseScale, base,
-      uErosionOctaves, uErosionTiles, uErosionStrength,
-      uErosionSlopeStrength, uErosionBranchStrength,
-      uErosionGain, uErosionLacunarity,
-      SEA_LEVEL, slope
+      vec2(worldX, worldZ), base, slope_grad,
+      uErosionOctaves,
+      uErosionScale,
+      uErosionStrength,
+      uErosionGullyWeight,
+      uErosionDetail,
+      uErosionLacunarity,
+      uErosionGain,
+      uErosionCellScale,
+      uErosionNormalization,
+      uErosionRidgeRounding,
+      uErosionCreaseRounding
     ), 0.0, 1.0);
   }
   if (uLayerIndex == 3) return eroded;

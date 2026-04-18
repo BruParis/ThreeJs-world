@@ -69,14 +69,18 @@ export class LayerOverlay {
       mat.uniforms.uGaussAmplitude.value    = params.gaussAmplitude;
       mat.uniforms.uLayerMix.value          = params.layerMix;
       mat.uniforms.uPatchHalfSize.value     = params.patchHalfSize;
-      mat.uniforms.uErosionEnabled.value    = params.erosionEnabled ? 1 : 0;
-      mat.uniforms.uErosionOctaves.value    = params.erosionOctaves;
-      mat.uniforms.uErosionTiles.value      = params.erosionTiles;
-      mat.uniforms.uErosionStrength.value   = params.erosionStrength;
-      mat.uniforms.uErosionSlopeStrength.value  = params.erosionSlopeStrength;
-      mat.uniforms.uErosionBranchStrength.value = params.erosionBranchStrength;
-      mat.uniforms.uErosionGain.value       = params.erosionGain;
-      mat.uniforms.uErosionLacunarity.value = params.erosionLacunarity;
+      mat.uniforms.uErosionEnabled.value         = params.erosionEnabled ? 1 : 0;
+      mat.uniforms.uErosionOctaves.value         = params.erosionOctaves;
+      mat.uniforms.uErosionScale.value           = params.erosionScale;
+      mat.uniforms.uErosionStrength.value        = params.erosionStrength;
+      mat.uniforms.uErosionGullyWeight.value     = params.erosionGullyWeight;
+      mat.uniforms.uErosionDetail.value          = params.erosionDetail;
+      mat.uniforms.uErosionGain.value            = params.erosionGain;
+      mat.uniforms.uErosionLacunarity.value      = params.erosionLacunarity;
+      mat.uniforms.uErosionCellScale.value       = params.erosionCellScale;
+      mat.uniforms.uErosionNormalization.value   = params.erosionNormalization;
+      mat.uniforms.uErosionRidgeRounding.value   = params.erosionRidgeRounding;
+      mat.uniforms.uErosionCreaseRounding.value  = params.erosionCreaseRounding;
     }
 
     if (this.noiseLabelEl) {
@@ -168,12 +172,16 @@ export class LayerOverlay {
           uPatchHalfSize:           { value: params.patchHalfSize },
           uErosionEnabled:          { value: params.erosionEnabled ? 1 : 0 },
           uErosionOctaves:          { value: params.erosionOctaves },
-          uErosionTiles:            { value: params.erosionTiles },
+          uErosionScale:            { value: params.erosionScale },
           uErosionStrength:         { value: params.erosionStrength },
-          uErosionSlopeStrength:    { value: params.erosionSlopeStrength },
-          uErosionBranchStrength:   { value: params.erosionBranchStrength },
+          uErosionGullyWeight:      { value: params.erosionGullyWeight },
+          uErosionDetail:           { value: params.erosionDetail },
           uErosionGain:             { value: params.erosionGain },
           uErosionLacunarity:       { value: params.erosionLacunarity },
+          uErosionCellScale:        { value: params.erosionCellScale },
+          uErosionNormalization:    { value: params.erosionNormalization },
+          uErosionRidgeRounding:    { value: params.erosionRidgeRounding },
+          uErosionCreaseRounding:   { value: params.erosionCreaseRounding },
         },
         vertexShader:   layerOverlayVertexShader,
         fragmentShader: layerOverlayFragmentShader,
