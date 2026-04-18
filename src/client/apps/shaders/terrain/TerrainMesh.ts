@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
-import { demoVertexShader }   from '../shaders/demoVert';
-import { demoFragmentShader } from '../shaders/demoFrag';
+import { terrainColorGLSL } from '@core/shaders/terrainColorGLSL';
 import {
   DEFAULT_NOISE_PARAMS,
   DEFAULT_AMPLITUDE,
@@ -25,7 +24,7 @@ import { SuppNoiseGL }        from './SuppNoiseGL';
 export class TerrainMesh {
   // Noise
   noiseParams = { ...DEFAULT_NOISE_PARAMS };
-  noiseType   = 0; // 0 = simplex, 1 = perlin
+  noiseType   = 0; // 0 = simplex, 1 = perlin, 2 = heightmap
 
   // Geometry / rendering
   amplitude    = DEFAULT_AMPLITUDE;
@@ -34,6 +33,7 @@ export class TerrainMesh {
   numPatches   = DEFAULT_NUM_PATCHES;
   wireframe    = false;
   layerMix     = DEFAULT_LAYER_MIX;
+  roughness    = 0.85;
 
   // Supplemental noise
   suppNoiseEnabled  = false;
@@ -61,6 +61,9 @@ export class TerrainMesh {
   private elevationTexture: THREE.DataTexture | null = null;
   private elevationGL:      TerrainElevationGL | null = null;
   private suppNoiseGL:      SuppNoiseGL | null = null;
+
+  // Per-patch uniform objects kept in sync with onBeforeCompile shader refs.
+  private _patchUniforms: Record<string, THREE.IUniform>[] = [];
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -138,13 +141,16 @@ export class TerrainMesh {
     this.syncElevationTexture();
   }
 
-  /** Update display-only uniforms (amplitude, wireframe) without recomputing elevation. */
+  /** Update display-only uniforms (amplitude, wireframe, roughness) without recomputing elevation. */
   updateUniforms(): void {
+    for (const uniforms of this._patchUniforms) {
+      uniforms.uAmplitude.value     = this.amplitude;
+      uniforms.uPatchHalfSize.value = this.patchSize / 2;
+    }
     for (const mesh of this._meshes) {
-      const mat = mesh.material as THREE.ShaderMaterial;
-      mat.uniforms.uAmplitude.value     = this.amplitude;
-      mat.uniforms.uPatchHalfSize.value = this.patchSize / 2;
+      const mat   = mesh.material as THREE.MeshStandardMaterial;
       mat.wireframe = this.wireframe;
+      mat.roughness = this.roughness;
     }
   }
 
@@ -165,13 +171,20 @@ export class TerrainMesh {
     this.syncSuppNoiseUniforms();
   }
 
+  /** Set surface roughness (PBR) and apply to all patch materials immediately. */
+  setRoughness(v: number): void {
+    this.roughness = v;
+    for (const mesh of this._meshes) {
+      (mesh.material as THREE.MeshStandardMaterial).roughness = v;
+    }
+  }
+
   /** Sync supp noise uniforms (enabled, strength, texture) to all patch materials. */
   syncSuppNoiseUniforms(): void {
-    for (const mesh of this._meshes) {
-      const mat = mesh.material as THREE.ShaderMaterial;
-      mat.uniforms.uSuppNoiseTex.value      = this.suppNoiseGL?.texture ?? null;
-      mat.uniforms.uSuppNoiseEnabled.value  = this.suppNoiseEnabled ? 1 : 0;
-      mat.uniforms.uSuppNoiseStrength.value = this.suppNoiseStrength;
+    for (const uniforms of this._patchUniforms) {
+      uniforms.uSuppNoiseTex.value      = this.suppNoiseGL?.texture ?? null;
+      uniforms.uSuppNoiseEnabled.value  = this.suppNoiseEnabled ? 1 : 0;
+      uniforms.uSuppNoiseStrength.value = this.suppNoiseStrength;
     }
   }
 
@@ -202,9 +215,8 @@ export class TerrainMesh {
   // ── private ──────────────────────────────────────────────────────────────────
 
   private syncElevationTexture(): void {
-    for (const mesh of this._meshes) {
-      const mat = mesh.material as THREE.ShaderMaterial;
-      mat.uniforms.uElevationTex.value = this.elevationTexture;
+    for (const uniforms of this._patchUniforms) {
+      uniforms.uElevationTex.value = this.elevationTexture;
     }
   }
 
@@ -212,9 +224,10 @@ export class TerrainMesh {
     for (const mesh of this._meshes) {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
-      (mesh.material as THREE.ShaderMaterial).dispose();
+      (mesh.material as THREE.MeshStandardMaterial).dispose();
     }
     this._meshes = [];
+    this._patchUniforms = [];
   }
 
   private rebuildMeshes(): void {
@@ -262,21 +275,119 @@ export class TerrainMesh {
     return geo;
   }
 
-  private buildMaterial(): THREE.ShaderMaterial {
-    return new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: {
-        uElevationTex:     { value: this.elevationTexture },
-        uAmplitude:        { value: this.amplitude },
-        uPatchHalfSize:    { value: this.patchSize / 2 },
-        uSuppNoiseTex:     { value: this.suppNoiseGL?.texture ?? null },
-        uSuppNoiseEnabled: { value: this.suppNoiseEnabled ? 1 : 0 },
-        uSuppNoiseStrength:{ value: this.suppNoiseStrength },
-      },
-      vertexShader:   demoVertexShader,
-      fragmentShader: demoFragmentShader,
+  private buildMaterial(): THREE.MeshStandardMaterial {
+    const mat = new THREE.MeshStandardMaterial({
+      roughness: this.roughness,
+      metalness: 0.0,
       side:      THREE.DoubleSide,
       wireframe: this.wireframe,
     });
+
+    mat.onBeforeCompile = (shader) => {
+      // Register custom uniforms — stored for later sync calls.
+      shader.uniforms.uElevationTex      = { value: this.elevationTexture };
+      shader.uniforms.uAmplitude         = { value: this.amplitude };
+      shader.uniforms.uPatchHalfSize     = { value: this.patchSize / 2 };
+      shader.uniforms.uSuppNoiseTex      = { value: this.suppNoiseGL?.texture ?? null };
+      shader.uniforms.uSuppNoiseEnabled  = { value: this.suppNoiseEnabled ? 1 : 0 };
+      shader.uniforms.uSuppNoiseStrength = { value: this.suppNoiseStrength };
+      this._patchUniforms.push(shader.uniforms);
+
+      // ── Vertex shader ────────────────────────────────────────────────────
+      // Prepend helper functions and custom varyings.
+      shader.vertexShader = /* glsl */`
+uniform sampler2D uElevationTex;
+uniform float uAmplitude;
+uniform float uPatchHalfSize;
+
+varying float vTerrainElev;
+varying vec3  vTerrainWorldPos;
+varying vec3  vTerrainWorldNormal;
+
+const float TERRAIN_SEA = 0.35;
+
+float terrain_sampleElev(vec2 worldXZ) {
+  vec2 uv = (worldXZ + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+  return texture2D(uElevationTex, uv).r;
+}
+float terrain_displY(float noise) {
+  return max(0.0, (noise - TERRAIN_SEA) / (1.0 - TERRAIN_SEA) * uAmplitude);
+}
+` + shader.vertexShader;
+
+      // Replace normal setup chunk: compute elevation + finite-difference normal.
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <beginnormal_vertex>',
+        /* glsl */`
+        vec3 wPos = (modelMatrix * vec4(position, 1.0)).xyz;
+        float terrain_noise = terrain_sampleElev(wPos.xz);
+        float terrain_dispY = terrain_displY(terrain_noise);
+
+        vTerrainElev     = terrain_noise;
+        vTerrainWorldPos = vec3(wPos.x, terrain_dispY, wPos.z);
+
+        vec2 texelSz = (uPatchHalfSize * 2.0) / vec2(textureSize(uElevationTex, 0));
+        float hL = terrain_displY(terrain_sampleElev(wPos.xz + vec2(-texelSz.x,  0.0)));
+        float hR = terrain_displY(terrain_sampleElev(wPos.xz + vec2( texelSz.x,  0.0)));
+        float hD = terrain_displY(terrain_sampleElev(wPos.xz + vec2( 0.0, -texelSz.y)));
+        float hU = terrain_displY(terrain_sampleElev(wPos.xz + vec2( 0.0,  texelSz.y)));
+        float dhdx = (hR - hL) / (2.0 * texelSz.x);
+        float dhdz = (hU - hD) / (2.0 * texelSz.y);
+        vTerrainWorldNormal = normalize(vec3(-dhdx, 1.0, -dhdz));
+
+        vec3 objectNormal = vTerrainWorldNormal;
+        `,
+      );
+
+      // Replace position setup chunk: apply Y displacement.
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        /* glsl */`vec3 transformed = vec3(position.x, terrain_dispY, position.z);`,
+      );
+
+      // ── Fragment shader ──────────────────────────────────────────────────
+      // Prepend terrain color function and custom varyings.
+      shader.fragmentShader = /* glsl */`
+${terrainColorGLSL}
+
+uniform sampler2D uSuppNoiseTex;
+uniform int       uSuppNoiseEnabled;
+uniform float     uSuppNoiseStrength;
+uniform float     uPatchHalfSize;
+
+varying float vTerrainElev;
+varying vec3  vTerrainWorldPos;
+varying vec3  vTerrainWorldNormal;
+` + shader.fragmentShader;
+
+      // Replace the texture-map chunk with our terrain color.
+      // terrainNorWorld is defined here for reuse in normal_fragment_begin below.
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <map_fragment>',
+        /* glsl */`
+        vec3 terrainNorWorld = vTerrainWorldNormal;
+        if (uSuppNoiseEnabled == 1) {
+          vec2 suppUV   = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+          vec3 suppData = texture2D(uSuppNoiseTex, suppUV).xyz;
+          terrainNorWorld = normalize(terrainNorWorld + vec3(suppData.y, 0.0, suppData.z) * uSuppNoiseStrength);
+        }
+        diffuseColor.rgb = terrainColor(vTerrainElev, vTerrainWorldPos, terrainNorWorld);
+        `,
+      );
+
+      // Override normal setup to use our world-space terrain normal (→ view space).
+      // viewMatrix is orthogonal, so mat3(viewMatrix) correctly rotates world→view.
+      // terrainNorWorld was defined in map_fragment above (chunks share the same scope).
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <normal_fragment_begin>',
+        /* glsl */`
+        float faceDirection = gl_FrontFacing ? 1.0 : -1.0;
+        vec3 normal = normalize(mat3(viewMatrix) * terrainNorWorld) * faceDirection;
+        vec3 nonPerturbedNormal = normal;
+        `,
+      );
+    };
+
+    return mat;
   }
 }

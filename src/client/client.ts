@@ -4,6 +4,6 @@ import { TabManager, WorldApplication, QuadTreeApplication, ShaderDemoApplicatio
 const tabManager = new TabManager();
 
 // Register applications
+tabManager.register('shaders', 'Shaders', new ShaderDemoApplication());
 tabManager.register('world', 'World', new WorldApplication());
 tabManager.register('quadtree', 'QuadTree', new QuadTreeApplication());
-tabManager.register('shaders', 'Shaders', new ShaderDemoApplication());

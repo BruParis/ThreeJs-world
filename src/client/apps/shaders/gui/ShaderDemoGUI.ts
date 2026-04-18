@@ -1,4 +1,5 @@
 import { GUI } from 'dat.gui';
+import { DirectionalLight, AmbientLight } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from '../terrain/TerrainMesh';
@@ -11,6 +12,8 @@ export function buildShaderDemoGUI(
   overlay: LayerOverlay,
   controls: OrbitControls,
   flyCam: FlyCam,
+  sunLight: DirectionalLight,
+  ambientLight: AmbientLight,
 ): GUI {
   const gui = new GUI({ autoPlace: false });
   contentArea.appendChild(gui.domElement);
@@ -153,6 +156,45 @@ export function buildShaderDemoGUI(
     .onChange((v: number) => { terrain.erosionGain = v; updElevation(); });
   erosionGui.add(erosionParams, 'lacunarity', 1.0, 4.0).step(0.1).name('Lacunarity')
     .onChange((v: number) => { terrain.erosionLacunarity = v; updElevation(); });
+
+  // ── Lighting ──────────────────────────────────────────────────────────────
+  // MeshStandardMaterial always responds to scene lights — no "enabled" toggle needed.
+  // Just control the actual Three.js light objects and PBR roughness.
+  const lightingParams = {
+    sunAzimuth:       45,
+    sunElevation:     45,
+    sunIntensity:     sunLight.intensity,
+    sunColor:         '#' + sunLight.color.getHexString(),
+    ambientIntensity: ambientLight.intensity,
+    ambientColor:     '#' + ambientLight.color.getHexString(),
+    roughness:        terrain.roughness,
+  };
+
+  const updateSunDir = () => {
+    const az = lightingParams.sunAzimuth  * Math.PI / 180;
+    const el = lightingParams.sunElevation * Math.PI / 180;
+    sunLight.position.set(
+      Math.cos(el) * Math.sin(az),
+      Math.sin(el),
+      Math.cos(el) * Math.cos(az),
+    );
+  };
+
+  const lightingGui = gui.addFolder('Lighting');
+  lightingGui.add(lightingParams, 'sunAzimuth',   0, 360).step(1).name('Sun Azimuth')
+    .onChange(updateSunDir);
+  lightingGui.add(lightingParams, 'sunElevation', 0,  90).step(1).name('Sun Elevation')
+    .onChange(updateSunDir);
+  lightingGui.addColor(lightingParams, 'sunColor').name('Sun Color')
+    .onChange((v: string) => sunLight.color.set(v));
+  lightingGui.add(lightingParams, 'sunIntensity', 0, 8).step(0.1).name('Sun Intensity')
+    .onChange((v: number) => { sunLight.intensity = v; });
+  lightingGui.addColor(lightingParams, 'ambientColor').name('Ambient Color')
+    .onChange((v: string) => ambientLight.color.set(v));
+  lightingGui.add(lightingParams, 'ambientIntensity', 0, 2).step(0.05).name('Ambient Intensity')
+    .onChange((v: number) => { ambientLight.intensity = v; });
+  lightingGui.add(lightingParams, 'roughness', 0, 1).step(0.01).name('Roughness')
+    .onChange((v: number) => terrain.setRoughness(v));
 
   return gui;
 }
