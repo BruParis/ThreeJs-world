@@ -51,6 +51,15 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 
 // Each fragment corresponds to one grid vertex.
 // gl_FragCoord.xy gives the (col, row) via (x-0.5, y-0.5).
+//
+// Output layout (RGBA32F):
+//   R = elevation in [0, 1]
+//   G = dDisplNorm/dX  (finite-difference gradient, amplitude=1)
+//   B = dDisplNorm/dZ
+//   A = 1.0
+//
+// Baking the gradient here (once on param change) means the vertex shader
+// only needs a single texture read per vertex instead of 5.
 const FRAG_SRC = /* glsl */`#version 300 es
 precision highp float;
 precision highp int;
@@ -97,22 +106,16 @@ float baseNoise(vec3 wPos) {
   return mix(l1, l2, uLayerMix);
 }
 
-void main() {
-  // Exact vertex world position from fragment coordinates.
-  float worldX = uOriginX + (gl_FragCoord.x - 0.5) * uStepX;
-  float worldZ = uOriginZ + (gl_FragCoord.y - 0.5) * uStepZ;
-  vec3 wPos = vec3(worldX, 0.0, worldZ);
-
+// Returns raw elevation in [0, 1] at an arbitrary world position.
+// Used both for the center fragment and for gradient neighbours.
+float computeElevation(vec3 wPos) {
   float noise;
-
   if (uNoiseType == 2) {
-    // Heightmap: value-noise FBM with slope-derived erosion built in.
     float l1 = clamp((wPos.x + wPos.z) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
     float hm = clamp(heightmapElevation(wPos.xz).x, 0.0, 1.0);
     noise = mix(l1, hm, uLayerMix);
   } else {
     noise = baseNoise(wPos);
-
     if (uErosionEnabled == 1) {
       float GE = 0.5 / max(uNoiseScale, 0.5);
       float fL = baseNoise(wPos - vec3(GE, 0.0, 0.0));
@@ -120,7 +123,6 @@ void main() {
       float fD = baseNoise(wPos - vec3(0.0, 0.0, GE));
       float fU = baseNoise(wPos + vec3(0.0, 0.0, GE));
       vec2 slope = vec2(fL - fR, fD - fU) / (2.0 * GE);
-
       noise += applyErosion(
         wPos.xz * uNoiseScale, noise,
         uErosionOctaves, uErosionTiles, uErosionStrength,
@@ -131,9 +133,34 @@ void main() {
       noise = clamp(noise, 0.0, 1.0);
     }
   }
+  return noise;
+}
 
-  // Store elevation in R; GBA unused.
-  fragColor = vec4(noise, 0.0, 0.0, 1.0);
+// Normalized displacement (amplitude = 1): max(0, (elev - sea) / (1 - sea)).
+float displNorm(vec3 wPos) {
+  return max(0.0, (computeElevation(wPos) - SEA_LEVEL) / (1.0 - SEA_LEVEL));
+}
+
+void main() {
+  // Exact vertex world position from fragment coordinates.
+  float worldX = uOriginX + (gl_FragCoord.x - 0.5) * uStepX;
+  float worldZ = uOriginZ + (gl_FragCoord.y - 0.5) * uStepZ;
+  vec3 wPos = vec3(worldX, 0.0, worldZ);
+
+  float noise = computeElevation(wPos);
+
+  // Bake finite-difference gradient of the normalised displacement.
+  // The vertex shader multiplies by uAmplitude at runtime, so no amplitude
+  // dependency is baked in — amplitude changes are free (no recompute needed).
+  float dL = displNorm(wPos - vec3(uStepX, 0.0, 0.0));
+  float dR = displNorm(wPos + vec3(uStepX, 0.0, 0.0));
+  float dD = displNorm(wPos - vec3(0.0, 0.0, uStepZ));
+  float dU = displNorm(wPos + vec3(0.0, 0.0, uStepZ));
+  float gradX = (dR - dL) / (2.0 * uStepX);
+  float gradZ = (dU - dD) / (2.0 * uStepZ);
+
+  // R = elevation, G = dH/dX (norm), B = dH/dZ (norm), A = 1.
+  fragColor = vec4(noise, gradX, gradZ, 1.0);
 }
 `;
 
@@ -229,11 +256,14 @@ export class TerrainElevationGL {
    *
    * @param params    Grid dimensions, noise, and erosion parameters.
    * @param permData  256-entry Perlin permutation table from PerlinNoise3D.getPermutation256().
-   * @returns         Float32Array of length gridWidth × gridHeight, elevation in [0, 1].
-   *                  Index: row * gridWidth + col  (row 0 = bottom of the grid in GL coords,
-   *                  but this is consistent with the UV mapping used in the vertex shader).
+   * @returns
+   *   elevations  Float32Array (length w×h) — R channel only, for CPU use (pathfinding, physics).
+   *   packed      Float32Array (length w×h×4) — full RGBA readback:
+   *                 R = elevation [0,1],  G = dH/dX (norm),  B = dH/dZ (norm),  A = 1.
+   *               Upload this directly as a THREE.RGBAFormat DataTexture so the vertex shader
+   *               can reconstruct the normal with a single texture read.
    */
-  compute(params: ElevationComputeParams, permData: number[]): Float32Array {
+  compute(params: ElevationComputeParams, permData: number[]): { elevations: Float32Array; packed: Float32Array } {
     const { gl, program, fbo, outTex, vao } = this;
     const { gridWidth: w, gridHeight: h } = params;
 
@@ -267,15 +297,15 @@ export class TerrainElevationGL {
     gl.bindVertexArray(null);
 
     // ── Readback ───────────────────────────────────────────────────────────
-    const raw = new Float32Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, raw);
+    const packed = new Float32Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, packed);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    // Extract R channel (elevation stored in R, GBA unused).
+    // Extract R channel (elevation) for CPU use.
     const elevations = new Float32Array(w * h);
-    for (let i = 0; i < w * h; i++) elevations[i] = raw[i * 4];
+    for (let i = 0; i < w * h; i++) elevations[i] = packed[i * 4];
 
-    return elevations;
+    return { elevations, packed };
   }
 
   dispose(): void {

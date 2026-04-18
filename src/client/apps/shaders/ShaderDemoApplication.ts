@@ -10,12 +10,11 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { GUI } from 'dat.gui';
 import { TabApplication } from '../../tabs/TabManager';
 import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from './terrain/TerrainMesh';
 import { LayerOverlay } from './terrain/LayerOverlay';
-import { buildShaderDemoGUI } from './gui/ShaderDemoGUI';
+import { buildShaderDemoGUI, ShaderDemoGUIHandle } from './gui/ShaderDemoGUI';
 
 export class ShaderDemoApplication implements TabApplication {
   private renderer:    THREE.WebGLRenderer | null = null;
@@ -23,7 +22,7 @@ export class ShaderDemoApplication implements TabApplication {
   private scene:       THREE.Scene | null = null;
   private controls:    OrbitControls | null = null;
   private flyCam:      FlyCam | null = null;
-  private gui:         GUI | null = null;
+  private gui:         ShaderDemoGUIHandle | null = null;
 
   private terrain:      TerrainMesh | null = null;
   private overlay:      LayerOverlay | null = null;
@@ -48,7 +47,7 @@ export class ShaderDemoApplication implements TabApplication {
       this.initTerrain();
     }
     if (this.renderer) this.renderer.domElement.style.display = 'block';
-    if (this.gui)      this.gui.domElement.style.display = 'block';
+    this.gui?.show();
     this.overlay?.showLabel();
     window.addEventListener('resize', this.boundOnResize);
     this.clock.start();
@@ -58,7 +57,7 @@ export class ShaderDemoApplication implements TabApplication {
   public deactivate(): void {
     if (this.flyCam?.isEnabled()) this.flyCam.disable();
     if (this.renderer) this.renderer.domElement.style.display = 'none';
-    if (this.gui)      this.gui.domElement.style.display = 'none';
+    this.gui?.hide();
     this.overlay?.hideLabel();
     window.removeEventListener('resize', this.boundOnResize);
     this.clock.stop();
@@ -150,6 +149,7 @@ export class ShaderDemoApplication implements TabApplication {
 
     this.controls = new OrbitControls(this.orbitCamera, this.renderer.domElement);
     this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.2;
     this.controls.target.set(0, 0, 0);
 
     this.flyCam = new FlyCam(this.scene, this.renderer.domElement, w / h, {
@@ -199,7 +199,7 @@ export class ShaderDemoApplication implements TabApplication {
       this.sunLight!,
       this.ambientLight!,
     );
-    if (this.active) this.gui.domElement.style.display = 'block';
+    if (this.active) this.gui!.show();
 
     this.terrainReady = true;
   }

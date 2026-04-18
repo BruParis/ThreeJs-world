@@ -95,7 +95,7 @@ export class TerrainMesh {
     const halfSize       = this.patchSize / 2;
     const permData       = new PerlinNoise3D(this.noiseParams.seed).getPermutation256();
 
-    const elevations = this.elevationGL.compute(
+    const { elevations, packed } = this.elevationGL.compute(
       {
         gridWidth:             totalVerts,
         gridHeight:            totalVerts,
@@ -127,11 +127,11 @@ export class TerrainMesh {
     this.elevationGridWidth  = totalVerts;
     this.elevationGridHeight = totalVerts;
 
-    // ── GPU texture (vertex shader reads this for displacement + normals) ──
+    // ── GPU texture (R=elevation, G=dH/dX, B=dH/dZ — vertex shader reads once) ──
     this.elevationTexture?.dispose();
     this.elevationTexture = new THREE.DataTexture(
-      elevations, totalVerts, totalVerts,
-      THREE.RedFormat, THREE.FloatType,
+      packed, totalVerts, totalVerts,
+      THREE.RGBAFormat, THREE.FloatType,
     );
     this.elevationTexture.minFilter      = THREE.LinearFilter;
     this.elevationTexture.magFilter      = THREE.LinearFilter;
@@ -306,33 +306,29 @@ varying vec3  vTerrainWorldNormal;
 
 const float TERRAIN_SEA = 0.35;
 
-float terrain_sampleElev(vec2 worldXZ) {
-  vec2 uv = (worldXZ + uPatchHalfSize) / (uPatchHalfSize * 2.0);
-  return texture2D(uElevationTex, uv).r;
-}
 float terrain_displY(float noise) {
   return max(0.0, (noise - TERRAIN_SEA) / (1.0 - TERRAIN_SEA) * uAmplitude);
 }
 ` + shader.vertexShader;
 
-      // Replace normal setup chunk: compute elevation + finite-difference normal.
+      // Replace normal setup chunk: single texture read — elevation in R,
+      // baked gradient (amplitude=1) in G (dH/dX) and B (dH/dZ).
       shader.vertexShader = shader.vertexShader.replace(
         '#include <beginnormal_vertex>',
         /* glsl */`
         vec3 wPos = (modelMatrix * vec4(position, 1.0)).xyz;
-        float terrain_noise = terrain_sampleElev(wPos.xz);
+        vec2 elevUV = (wPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+        vec4 elevData = texture2D(uElevationTex, elevUV);
+
+        float terrain_noise = elevData.r;
         float terrain_dispY = terrain_displY(terrain_noise);
 
         vTerrainElev     = terrain_noise;
         vTerrainWorldPos = vec3(wPos.x, terrain_dispY, wPos.z);
 
-        vec2 texelSz = (uPatchHalfSize * 2.0) / vec2(textureSize(uElevationTex, 0));
-        float hL = terrain_displY(terrain_sampleElev(wPos.xz + vec2(-texelSz.x,  0.0)));
-        float hR = terrain_displY(terrain_sampleElev(wPos.xz + vec2( texelSz.x,  0.0)));
-        float hD = terrain_displY(terrain_sampleElev(wPos.xz + vec2( 0.0, -texelSz.y)));
-        float hU = terrain_displY(terrain_sampleElev(wPos.xz + vec2( 0.0,  texelSz.y)));
-        float dhdx = (hR - hL) / (2.0 * texelSz.x);
-        float dhdz = (hU - hD) / (2.0 * texelSz.y);
+        // Gradient stored amplitude-normalised; scale by uAmplitude to get world-space slope.
+        float dhdx = elevData.g * uAmplitude;
+        float dhdz = elevData.b * uAmplitude;
         vTerrainWorldNormal = normalize(vec3(-dhdx, 1.0, -dhdz));
 
         vec3 objectNormal = vTerrainWorldNormal;

@@ -28,6 +28,7 @@
     "webpack-dev-server": "^5.1.0"
   },
   "dependencies": {
+    "@tweakpane/core": "^2.0.5",
     "bidirectional-map": "^1.1.1",
     "dat.gui": "^0.7.9",
     "delaunator": "^5.0.1",
@@ -36,6 +37,7 @@
     "lodash": "^4.17.21",
     "three-css2drender": "^1.0.0",
     "three-mesh-halfedge": "^1.0.3",
-    "three-subdivide": "^1.1.5"
+    "three-subdivide": "^1.1.5",
+    "tweakpane": "^4.0.5"
   }
 }
