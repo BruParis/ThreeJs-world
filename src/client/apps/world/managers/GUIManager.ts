@@ -7,7 +7,6 @@ import { PlateDisplayMode, PLATE_VISUALIZATION_LEGEND, rgbToHex } from '../visua
 import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
 import { LODTileRenderer } from '../lod/LODTileRenderer';
 import { TileShaderPatchOperation, LODColorMode } from '../lod/TileShaderPatchOperation';
-import { apparentElevKmToReal } from '../../../shared/world/World';
 import { FlyCam } from '@core/FlyCam';
 
 const MIN_DEGREE = 0;
@@ -82,11 +81,21 @@ export class GUIManager {
     const colorModeState = { mode: LODColorMode.PLATE };
     this.pane.addBinding(colorModeState, 'mode', {
       label: 'Color Mode',
-      options: { Plate: LODColorMode.PLATE, Geology: LODColorMode.GEOLOGY, Elevation: LODColorMode.ELEVATION },
+      options: {
+        Plate:     LODColorMode.PLATE,
+        Geology:   LODColorMode.GEOLOGY,
+        Elevation: LODColorMode.ELEVATION,
+        Terrain:   LODColorMode.TERRAIN,
+      },
     }).on('change', ({ value }) => {
       const isGeology = value === LODColorMode.GEOLOGY;
+      const isTerrain = value === LODColorMode.TERRAIN;
       this.tectonicManager.setGeologyDisplayEnabled(isGeology);
-      this.tectonicManager.setPlateDisplayMode(isGeology ? PlateDisplayMode.NONE : PlateDisplayMode.CATEGORY);
+      // In terrain mode suppress the plate overlay (dual mesh is hidden anyway in LOD,
+      // but keeping the state consistent avoids surprises when toggling modes).
+      this.tectonicManager.setPlateDisplayMode(
+        (isGeology || isTerrain) ? PlateDisplayMode.NONE : PlateDisplayMode.CATEGORY,
+      );
       this.patchOperation?.setColorMode(value);
       this.lodRenderer?.invalidate();
     });
@@ -112,11 +121,6 @@ export class GUIManager {
     const noiseParams = { seed: 42, scale: 2.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
     const noiseFolder = this.pane.addFolder({ title: 'Perlin Noise', expanded: false });
 
-    const elevParams = {
-      apparentKm: this.patchOperation?.getElevationAmplitudeApparentKm() ?? 100,
-      realKm:     apparentElevKmToReal(this.patchOperation?.getElevationAmplitudeApparentKm() ?? 100),
-    };
-
     const regenerateNoise = debounce(() => {
       this.noiseManager.generatePerlinNoise(
         noiseParams.seed,
@@ -125,14 +129,6 @@ export class GUIManager {
         noiseParams.persistence,
         noiseParams.lacunarity
       );
-      this.patchOperation?.setNoiseParams(
-        noiseParams.seed,
-        noiseParams.scale,
-        noiseParams.octaves,
-        noiseParams.persistence,
-        noiseParams.lacunarity
-      );
-      this.lodRenderer?.invalidate();
     }, 150);
 
     const noiseVisState    = { visible:  this.noiseManager.isNoiseDisplayEnabled() };
@@ -146,18 +142,6 @@ export class GUIManager {
     noiseFolder.addBinding(noiseParams, 'octaves',     { label: 'Octaves',     min: 1,   max: 8,    step: 1    }).on('change', regenerateNoise);
     noiseFolder.addBinding(noiseParams, 'persistence', { label: 'Persist.',    min: 0.1, max: 1.0,  step: 0.05 }).on('change', regenerateNoise);
     noiseFolder.addBinding(noiseParams, 'lacunarity',  { label: 'Lacunar.',    min: 1.0, max: 4.0,  step: 0.1  }).on('change', regenerateNoise);
-
-    const elevRealBinding = noiseFolder.addBinding(elevParams, 'realKm', {
-      label: 'Elev. real (km)', readonly: true,
-    });
-    noiseFolder.addBinding(elevParams, 'apparentKm', {
-      label: 'Elev. apparent (km)', min: 10, max: 500, step: 5,
-    }).on('change', ({ value }) => {
-      elevParams.realKm = apparentElevKmToReal(value);
-      elevRealBinding.refresh();
-      this.patchOperation?.setElevationAmplitudeApparentKm(value);
-      this.lodRenderer?.invalidate();
-    });
 
     // ── Tectonic ──────────────────────────────────────────────────────────────
 

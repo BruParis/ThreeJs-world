@@ -6,9 +6,10 @@
  *      overlapping the patch — O(tiles), not O(vertices).
  *   2. Packs those tiles' polygon vertices and colors into a per-patch
  *      DataTexture that is uploaded to the GPU once.
- *   3. Creates a ShaderMaterial whose vertex shader applies Perlin-noise
- *      elevation and whose fragment shader resolves tile membership via exact
- *      spherical polygon containment — all per-fragment work on the GPU.
+ *   3. Creates a ShaderMaterial whose vertex shader applies simplex-noise
+ *      elevation (via the same terrainGLSL pipeline as the flat Shaders tab)
+ *      and whose fragment shader resolves tile membership via exact spherical
+ *      polygon containment — all per-fragment work on the GPU.
  *
  * DataTexture layout  (width = numTiles, height = 1 + MAX_VERTS, RGBA Float32)
  *   Row 0 :  (r, g, b, numVertices)
@@ -27,6 +28,19 @@ import { tileVertexShader } from './shaders/tileVert';
 import { tileFragmentShader } from './shaders/tileFrag';
 import { realElevKmToApparent, apparentElevKmToDistance } from '../../../shared/world/World';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
+import {
+  DEFAULT_EROSION_OCTAVES,
+  DEFAULT_EROSION_SCALE,
+  DEFAULT_EROSION_STRENGTH,
+  DEFAULT_EROSION_GULLY_WEIGHT,
+  DEFAULT_EROSION_DETAIL,
+  DEFAULT_EROSION_LACUNARITY,
+  DEFAULT_EROSION_GAIN,
+  DEFAULT_EROSION_CELL_SCALE,
+  DEFAULT_EROSION_NORMALIZATION,
+  DEFAULT_EROSION_RIDGE_ROUNDING,
+  DEFAULT_EROSION_CREASE_ROUNDING,
+} from '@core/shaders/erosionGLSL';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -34,6 +48,7 @@ export enum LODColorMode {
   PLATE      = 'plate',
   GEOLOGY    = 'geology',
   ELEVATION  = 'elevation',
+  TERRAIN    = 'terrain',
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -47,48 +62,57 @@ const MAX_VERTS = 8;
 /** Radial offset above the dual mesh to prevent z-fighting. */
 export const SURFACE_OFFSET = 1.003;
 
-// ── TileShaderPatchOperation ──────────────────────────────────────────────────
+// ── Default terrain noise parameters ─────────────────────────────────────────
 
-// Default noise parameters — match the GUI initial values
-const DEFAULT_NOISE = { seed: 42, scale: 2.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
+const DEFAULT_TERRAIN_NOISE = { scale: 2.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
+
+// ── TileShaderPatchOperation ──────────────────────────────────────────────────
 
 export class TileShaderPatchOperation implements IPatchOperation {
   private tileTree: TileQuadTree | null = null;
   private colorMode: LODColorMode = LODColorMode.PLATE;
   private subdivisionFactor = 8;
 
-  // ── Noise state ────────────────────────────────────────────────────────────
-  private noiseScale       = DEFAULT_NOISE.scale;
-  private noiseOctaves     = DEFAULT_NOISE.octaves;
-  private noisePersistence = DEFAULT_NOISE.persistence;
-  private noiseLacunarity  = DEFAULT_NOISE.lacunarity;
+  // ── Terrain noise state ────────────────────────────────────────────────────
+  private noiseScale       = DEFAULT_TERRAIN_NOISE.scale;
+  private noiseOctaves     = DEFAULT_TERRAIN_NOISE.octaves;
+  private noisePersistence = DEFAULT_TERRAIN_NOISE.persistence;
+  private noiseLacunarity  = DEFAULT_TERRAIN_NOISE.lacunarity;
 
   // ── Elevation amplitude ────────────────────────────────────────────────────
   /** Apparent (visually exaggerated) elevation amplitude in km. */
   private elevationAmplitudeApparentKm = realElevKmToApparent(10); // default: 10 km real → 100 km apparent
 
-  // Shared 256×1 R32F texture: texel i holds perm[i] as an exact float.
-  // All patches reference this single object; updating needsUpdate re-uploads it.
-  private permTexture: THREE.DataTexture;
-  // CPU-side noise instance kept in sync with the GPU permutation texture.
-  // new PerlinNoise3D(seed) produces the same output as the seeded GPU shader.
-  private cpuNoise: PerlinNoise3D;
+  // ── Elevation offset ───────────────────────────────────────────────────────
+  /** Uniform shift applied to elevation [0,1] before the sea-level test. */
+  private elevOffset = 0.0;
 
-  constructor() {
-    this.permTexture = this.buildPermTexture(DEFAULT_NOISE.seed);
-    this.cpuNoise    = new PerlinNoise3D(DEFAULT_NOISE.seed);
-  }
+  // ── Erosion parameters ─────────────────────────────────────────────────────
+  private erosionEnabled        = 0;
+  private erosionOctaves        = DEFAULT_EROSION_OCTAVES;
+  private erosionScale          = DEFAULT_EROSION_SCALE;
+  private erosionStrength       = DEFAULT_EROSION_STRENGTH;
+  private erosionGullyWeight    = DEFAULT_EROSION_GULLY_WEIGHT;
+  private erosionDetail         = DEFAULT_EROSION_DETAIL;
+  private erosionLacunarity     = DEFAULT_EROSION_LACUNARITY;
+  private erosionGain           = DEFAULT_EROSION_GAIN;
+  private erosionCellScale      = DEFAULT_EROSION_CELL_SCALE;
+  private erosionNormalization  = DEFAULT_EROSION_NORMALIZATION;
+  private erosionRidgeRounding  = DEFAULT_EROSION_RIDGE_ROUNDING;
+  private erosionCreaseRounding = DEFAULT_EROSION_CREASE_ROUNDING;
 
-  // ── Noise API ──────────────────────────────────────────────────────────────
+  // CPU-side Perlin noise for approximate terrain floor queries (sampleSurfaceRadiusAt).
+  // Uses a fixed seed — the visual uses simplex noise but this approximation is
+  // close enough to floor the fly camera above the terrain.
+  private readonly cpuNoise = new PerlinNoise3D(42);
+
+  // ── Terrain noise API ──────────────────────────────────────────────────────
 
   /**
-   * Update Perlin noise parameters used by the LOD elevation shader.
-   * Rebuilds the permutation texture from the new seed and stores the other
-   * params so they are included in every subsequent createPatch() call.
+   * Update terrain simplex noise parameters used by the LOD elevation shader.
    * The caller is responsible for invalidating the LOD renderer afterwards.
    */
-  setNoiseParams(
-    seed: number,
+  setTerrainNoiseParams(
     scale: number,
     octaves: number,
     persistence: number,
@@ -98,9 +122,6 @@ export class TileShaderPatchOperation implements IPatchOperation {
     this.noiseOctaves     = octaves;
     this.noisePersistence = persistence;
     this.noiseLacunarity  = lacunarity;
-    this.permTexture.dispose();
-    this.permTexture = this.buildPermTexture(seed);
-    this.cpuNoise    = new PerlinNoise3D(seed);
   }
 
   // ── Elevation amplitude API ────────────────────────────────────────────────
@@ -117,10 +138,58 @@ export class TileShaderPatchOperation implements IPatchOperation {
     return this.elevationAmplitudeApparentKm;
   }
 
+  /** Set the elevation offset (uniform shift before sea-level test). */
+  setElevOffset(v: number): void {
+    this.elevOffset = v;
+  }
+
+  getElevOffset(): number {
+    return this.elevOffset;
+  }
+
+  // ── Erosion API ────────────────────────────────────────────────────────────
+
+  /**
+   * Update erosion parameters used by the LOD elevation shader.
+   * The caller is responsible for invalidating the LOD renderer afterwards.
+   */
+  setErosionParams(
+    enabled: boolean,
+    octaves: number,
+    scale: number,
+    strength: number,
+    gullyWeight: number,
+    detail: number,
+    lacunarity: number,
+    gain: number,
+    cellScale: number,
+    normalization: number,
+    ridgeRounding: number,
+    creaseRounding: number,
+  ): void {
+    this.erosionEnabled        = enabled ? 1 : 0;
+    this.erosionOctaves        = octaves;
+    this.erosionScale          = scale;
+    this.erosionStrength       = strength;
+    this.erosionGullyWeight    = gullyWeight;
+    this.erosionDetail         = detail;
+    this.erosionLacunarity     = lacunarity;
+    this.erosionGain           = gain;
+    this.erosionCellScale      = cellScale;
+    this.erosionNormalization  = normalization;
+    this.erosionRidgeRounding  = ridgeRounding;
+    this.erosionCreaseRounding = creaseRounding;
+  }
+
+  getErosionEnabled(): boolean { return this.erosionEnabled === 1; }
+
   /**
    * Returns the terrain surface radius (distance from world origin) at the
-   * given unit-sphere direction, matching what the GPU vertex shader displaces
-   * to.  Use this to dynamically floor the fly camera above the terrain.
+   * given unit-sphere direction, matching approximately what the GPU vertex
+   * shader displaces to.  Used to floor the fly camera above the terrain.
+   *
+   * Note: uses CPU Perlin noise as an approximation of the GPU simplex noise —
+   * sufficient for camera-floor queries.
    *
    * @param normalizedDir - Unit-length direction vector pointing at the surface.
    */
@@ -129,7 +198,6 @@ export class TileShaderPatchOperation implements IPatchOperation {
     let elevWeight = 1.0; // conservative default: assume raised terrain
     const candidates = this.tileTree?.queryPoint(normalizedDir) ?? [];
     if (candidates.length > 0) {
-      // Pick the candidate whose centroid is closest to the query direction
       let best = candidates[0];
       let bestDot = best.centroid.dot(normalizedDir);
       for (let i = 1; i < candidates.length; i++) {
@@ -139,36 +207,34 @@ export class TileShaderPatchOperation implements IPatchOperation {
       elevWeight = this.tileElevWeight(best);
     }
 
-    // Mirror the vertex shader: fbm output is in [-1, 1], remapped to [0, 1]
-    const sx = normalizedDir.x * this.noiseScale;
-    const sy = normalizedDir.y * this.noiseScale;
-    const sz = normalizedDir.z * this.noiseScale;
-    const fbmVal = this.cpuNoise.fbm(sx, sy, sz,
+    // Mirror the vertex shader: project to cube-face UV, sample 2D noise
+    const ax = Math.abs(normalizedDir.x);
+    const ay = Math.abs(normalizedDir.y);
+    const az = Math.abs(normalizedDir.z);
+    let pu: number, pv: number;
+    if (ax >= ay && ax >= az) {
+      pu = normalizedDir.y / ax * this.noiseScale;
+      pv = normalizedDir.z / ax * this.noiseScale;
+    } else if (ay >= ax && ay >= az) {
+      pu = normalizedDir.x / ay * this.noiseScale;
+      pv = normalizedDir.z / ay * this.noiseScale;
+    } else {
+      pu = normalizedDir.x / az * this.noiseScale;
+      pv = normalizedDir.y / az * this.noiseScale;
+    }
+    const fbmVal = this.cpuNoise.fbm(pu, 0, pv,
       this.noiseOctaves, this.noisePersistence, this.noiseLacunarity);
-    const elev = (fbmVal * 0.5 + 0.5)
-      * apparentElevKmToDistance(this.elevationAmplitudeApparentKm)
-      * elevWeight;
+    const elevation = fbmVal * 0.5 + 0.5;
+    const shiftedElev = Math.min(1, Math.max(0, elevation + this.elevOffset));
+    const TERRAIN_SEA = 0.35;
+    const displH = Math.max(0, (shiftedElev - TERRAIN_SEA) / (1 - TERRAIN_SEA));
+    const elev = displH * apparentElevKmToDistance(this.elevationAmplitudeApparentKm) * elevWeight;
 
     return SURFACE_OFFSET + elev;
   }
 
   dispose(): void {
-    this.permTexture.dispose();
-  }
-
-  // Builds a 256×1 R32F DataTexture whose texel i holds perm[i] as a float.
-  private buildPermTexture(seed: number): THREE.DataTexture {
-    const perm = new PerlinNoise3D(seed).getPermutation256();
-    const data = new Float32Array(256);
-    for (let i = 0; i < 256; i++) {
-      data[i] = perm[i]; // exact integer stored as float32
-    }
-    const tex = new THREE.DataTexture(data, 256, 1, THREE.RedFormat, THREE.FloatType);
-    tex.minFilter     = THREE.NearestFilter;
-    tex.magFilter     = THREE.NearestFilter;
-    tex.generateMipmaps = false;
-    tex.needsUpdate   = true;
-    return tex;
+    // nothing to dispose (no GPU textures owned here)
   }
 
   // ── Configuration ──────────────────────────────────────────────────────────
@@ -198,16 +264,9 @@ export class TileShaderPatchOperation implements IPatchOperation {
     if (n <= 0) return null;
 
     // ── 1. Collect all tiles overlapping this patch ────────────────────────────
-    //
-    // Enumerate every cell at tileTree.level whose UV rectangle intersects the
-    // patch bounds, then union their tiles.  Scale-invariant: fine patches hit
-    // 1–4 cells, coarse patches hit more — always exact, no sampling gaps.
-    // A 1-cell outward margin catches tiles whose polygon only partially overlaps
-    // the patch boundary.
     const tileLevel = this.tileTree.level;
-    const gridSize  = 1 << tileLevel; // cells per face edge at index level
+    const gridSize  = 1 << tileLevel;
 
-    // UV → cell index: u = -1 + 2*x/gridSize  →  x = (u+1)*gridSize/2
     const xMin = Math.max(0,            Math.floor((spec.u0 + 1) * gridSize / 2) - 1);
     const xMax = Math.min(gridSize - 1, Math.floor((spec.u1 + 1) * gridSize / 2));
     const yMin = Math.max(0,            Math.floor((spec.v0 + 1) * gridSize / 2) - 1);
@@ -231,7 +290,7 @@ export class TileShaderPatchOperation implements IPatchOperation {
     if (tiles.length === 0) return null;
 
     // ── 2. Build per-patch DataTexture ─────────────────────────────────────────
-    const numTiles = Math.min(tiles.length, MAX_TILES);
+    const numTiles  = Math.min(tiles.length, MAX_TILES);
     const texWidth  = numTiles;
     const texHeight = 1 + MAX_VERTS;
     const texData   = new Float32Array(texWidth * texHeight * 4);
@@ -241,7 +300,6 @@ export class TileShaderPatchOperation implements IPatchOperation {
       const [r, g, b] = this.tileColor(tile);
       const ownWeight = this.tileElevWeight(tile);
 
-      // Collect polygon vertices from the halfedge loop
       const verts: THREE.Vector3[] = [];
       for (const he of tile.loop()) {
         verts.push(he.vertex.position);
@@ -250,15 +308,12 @@ export class TileShaderPatchOperation implements IPatchOperation {
       const nv = verts.length;
 
       // Row 0: (r, g, b, nv + ownWeight * 0.1)
-      //   Fragment decode: int(a + 0.5) still gives nv correctly.
-      //   Vertex decode:   fract(a) * 10.0 gives ownWeight (0.0 or 1.0).
       const r0 = (0 * texWidth + i) * 4;
       texData[r0 + 0] = r;
       texData[r0 + 1] = g;
       texData[r0 + 2] = b;
       texData[r0 + 3] = nv + ownWeight * 0.1;
 
-      // Rows 1..MAX_VERTS: (vx, vy, vz, unused_w)
       for (let j = 0; j < MAX_VERTS; j++) {
         const rj = ((1 + j) * texWidth + i) * 4;
         if (j < nv) {
@@ -267,10 +322,7 @@ export class TileShaderPatchOperation implements IPatchOperation {
           texData[rj + 2] = verts[j].z;
           texData[rj + 3] = 0;
         } else {
-          texData[rj + 0] = 0;
-          texData[rj + 1] = 0;
-          texData[rj + 2] = 0;
-          texData[rj + 3] = 0;
+          texData[rj + 0] = 0; texData[rj + 1] = 0; texData[rj + 2] = 0; texData[rj + 3] = 0;
         }
       }
     }
@@ -284,7 +336,7 @@ export class TileShaderPatchOperation implements IPatchOperation {
     tileData.generateMipmaps = false;
     tileData.needsUpdate   = true;
 
-    // ── 3. Build sphere grid geometry (positions only — no CPU color lookup) ──
+    // ── 3. Build sphere grid geometry ─────────────────────────────────────────
     const positions: number[] = [];
 
     for (let i = 0; i <= n; i++) {
@@ -296,7 +348,6 @@ export class TileShaderPatchOperation implements IPatchOperation {
       }
     }
 
-    // Faces PLUS_Y (2) and MINUS_Y (3) have opposite UV handedness
     const reverseWinding = spec.face === 2 || spec.face === 3;
     const indices: number[] = [];
     for (let i = 0; i < n; i++) {
@@ -321,16 +372,30 @@ export class TileShaderPatchOperation implements IPatchOperation {
     const mat = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: {
-        uTileData:           { value: tileData },
-        uNumTiles:           { value: numTiles },
-        uPermTex:            { value: this.permTexture },
-        uNoiseScale:         { value: this.noiseScale },
-        uNoiseOctaves:       { value: this.noiseOctaves },
-        uNoisePersistence:   { value: this.noisePersistence },
-        uNoiseLacunarity:    { value: this.noiseLacunarity },
-        uElevationAmplitude: { value: apparentElevKmToDistance(this.elevationAmplitudeApparentKm) },
-        uSphereOffset:       { value: SURFACE_OFFSET },
-        uColorMode:          { value: this.colorMode === LODColorMode.ELEVATION ? 1 : 0 },
+        uTileData:             { value: tileData },
+        uNumTiles:             { value: numTiles },
+        uNoiseScale:           { value: this.noiseScale },
+        uNoiseOctaves:         { value: this.noiseOctaves },
+        uNoisePersistence:     { value: this.noisePersistence },
+        uNoiseLacunarity:      { value: this.noiseLacunarity },
+        uElevationAmplitude:   { value: apparentElevKmToDistance(this.elevationAmplitudeApparentKm) },
+        uSphereOffset:         { value: SURFACE_OFFSET },
+        uElevOffset:           { value: this.elevOffset },
+        uColorMode:            { value: this.colorMode === LODColorMode.ELEVATION ? 1
+                                         : this.colorMode === LODColorMode.TERRAIN   ? 2
+                                         : 0 },
+        uErosionEnabled:       { value: this.erosionEnabled },
+        uErosionOctaves:       { value: this.erosionOctaves },
+        uErosionScale:         { value: this.erosionScale },
+        uErosionStrength:      { value: this.erosionStrength },
+        uErosionGullyWeight:   { value: this.erosionGullyWeight },
+        uErosionDetail:        { value: this.erosionDetail },
+        uErosionLacunarity:    { value: this.erosionLacunarity },
+        uErosionGain:          { value: this.erosionGain },
+        uErosionCellScale:     { value: this.erosionCellScale },
+        uErosionNormalization: { value: this.erosionNormalization },
+        uErosionRidgeRounding: { value: this.erosionRidgeRounding },
+        uErosionCreaseRounding:{ value: this.erosionCreaseRounding },
       },
       vertexShader:   tileVertexShader,
       fragmentShader: tileFragmentShader,

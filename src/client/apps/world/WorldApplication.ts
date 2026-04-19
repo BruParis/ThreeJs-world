@@ -5,6 +5,7 @@ import { VisualizationManager } from './managers/VisualizationManager';
 import { TectonicManager } from './managers/TectonicManager';
 import { NoiseManager } from './managers/NoiseManager';
 import { GUIManager } from './managers/GUIManager';
+import { TerrainGUIManager } from './managers/TerrainGUIManager';
 import { InteractionHandler } from './handlers/InteractionHandler';
 import { GeometryBuilder } from './builders/GeometryBuilder';
 import { FlyCam } from '@core/FlyCam';
@@ -30,6 +31,7 @@ export class WorldApplication implements TabApplication {
   private noiseManager: NoiseManager;
   private interactionHandler: InteractionHandler;
   private guiManager: GUIManager | null = null;
+  private terrainGUIManager: TerrainGUIManager | null = null;
 
   private flyCam: FlyCam | null = null;
   private patchOperation: TileShaderPatchOperation | null = null;
@@ -170,6 +172,13 @@ export class WorldApplication implements TabApplication {
         (enabled) => this.onFlyCamToggle(enabled)
       );
 
+      // Terrain shader GUI (separate pane for per-patch noise/erosion controls)
+      this.terrainGUIManager = new TerrainGUIManager(
+        this.patchOperation,
+        this.lodTileRenderer,
+        contentArea,
+      );
+
       this.initialized = true;
     }
 
@@ -182,6 +191,7 @@ export class WorldApplication implements TabApplication {
     this.sceneManager.getLabelRenderer().domElement.style.display = 'block';
 
     this.guiManager?.show();
+    this.terrainGUIManager?.show();
 
     this.clock.start();
     this.active = true;
@@ -202,6 +212,7 @@ export class WorldApplication implements TabApplication {
     this.sceneManager.getLabelRenderer().domElement.style.display = 'none';
 
     this.guiManager?.hide();
+    this.terrainGUIManager?.hide();
 
     this.clock.stop();
     this.active = false;

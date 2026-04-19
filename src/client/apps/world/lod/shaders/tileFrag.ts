@@ -1,31 +1,47 @@
 /**
  * Fragment shader for tectonic tile LOD patches.
  *
- * Determines which tectonic tile polygon the fragment belongs to by testing
- * exact spherical polygon containment for each tile supplied via uTileData.
- * Uses the undisplaced sphere normal (vSphereNormal) so elevation does not
- * distort plate boundaries.
+ * Supports three color modes via uColorMode:
+ *   0 = tile color  (plate category or geology — from per-patch DataTexture)
+ *   1 = elevation   (grayscale — black → white)
+ *   2 = terrain     (biome coloring from terrainColorGLSL: ocean/grass/snow/cliff)
  *
- * Data texture layout  (width = numTiles, height = 1 + MAX_VERTS, RGBA Float)
- *   Row 0 :  (r, g, b, numVertices)   — tile color and polygon vertex count
- *   Row 1+j: (vx, vy, vz, 0)          — j-th polygon vertex (unit sphere)
+ * Modes 0 and 1 use the polygon containment test to resolve which tile a fragment
+ * belongs to, then sample the tile's color/elevation.
  *
- * Containment test (CW winding from outside sphere — dual graph built via loopCW)
+ * Mode 2 skips the polygon loop entirely — the varyings computed in tileVert.ts
+ * (vElevation, vTerrainWorldPos, vTerrainLocalNormal, vTerrainRidgeMap) encode
+ * all information needed for the color function.  The DataTexture is still used
+ * by the vertex shader for the elevWeight lookup.
+ *
+ * Containment test (modes 0/1 only):
  *   For each directed edge va→vb in CW order:  dot(cross(va, vb), p) <= 0
  *   A point p is inside iff it passes all edge tests.
  *
- * Output: declare `out vec4 fragColor` explicitly.
- * Three.js ShaderMaterial + GLSL3 does NOT inject pc_fragColor for custom
- * shaders — the user owns the output declaration entirely.
+ * Notes
+ *   – simplexNoiseGLSL lives only in this fragment program (embedded by
+ *     terrainColorGLSL).  Never add it to the vertex shader to avoid redundant
+ *     compilation.
+ *   – The vertex shader uses perlinNoiseGLSL + uPermTex; those are not referenced
+ *     here.
  */
+
+import { terrainColorGLSL } from '@core/shaders/terrainColorGLSL';
+
 export const tileFragmentShader = /* glsl */`
+
+${terrainColorGLSL}
 
 uniform highp sampler2D uTileData;
 uniform int uNumTiles;
-uniform int uColorMode;  // 0 = tile color (plate/geology), 1 = elevation (black→white)
+uniform int uColorMode;  // 0 = tile color, 1 = elevation, 2 = terrain
 
 in vec3  vSphereNormal;
 in float vElevation;
+
+in vec3  vTerrainWorldPos;
+in vec3  vTerrainLocalNormal;
+in float vTerrainRidgeMap;
 
 out vec4 fragColor;
 
@@ -33,6 +49,24 @@ const int MAX_TILES = 256;
 const int MAX_VERTS = 8;
 
 void main() {
+
+  // ── Terrain color mode: bypass polygon test ──────────────────────────────────
+  //
+  // vElevation encodes continental vs oceanic from the vertex shader:
+  //   0.0        → oceanic (elevWeight = 0) → renders as ocean floor / water
+  //   [0, 1]     → continental              → renders as land biomes
+  //
+  // WATER_HEIGHT = 0.35 (defined inside terrainColorGLSL) is the sea-level
+  // threshold, so roughly the lowest 35 % of continental noise values show as
+  // coastal water / sandy beach.
+
+  if (uColorMode == 2) {
+    fragColor = vec4(terrainColor(vElevation, vTerrainWorldPos, vTerrainLocalNormal, 1.0, vTerrainRidgeMap), 1.0);
+    return;
+  }
+
+  // ── Polygon containment test (modes 0 and 1) ─────────────────────────────────
+
   vec3 p = normalize(vSphereNormal);
 
   for (int i = 0; i < MAX_TILES; i++) {
