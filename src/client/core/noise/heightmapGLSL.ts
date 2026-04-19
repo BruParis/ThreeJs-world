@@ -25,16 +25,9 @@
 
 export const heightmapGLSL = /* glsl */`
 
-// Scalar hash: maps a 2D lattice point to a pseudo-random float in [-1, 1].
-// Uses a bitwise integer hash to avoid the sin()-based float precision artifacts
-// that cause isolated spikes at specific lattice coordinates.
 float hm_hash(vec2 p) {
-  uvec2 q = uvec2(ivec2(p));
-  uint h = q.x * 1664525u + q.y * 22695477u + 1013904223u;
-  h ^= h >> 16;
-  h *= 0x45d9f3bu;
-  h ^= h >> 16;
-  return float(h) / float(0xffffffffu) * 2.0 - 1.0;
+  float h = dot(p, vec2(127.1, 311.7));
+  return -1.0 + 2.0 * fract(sin(h) * 43758.5453123);
 }
 
 // 2D value noise with analytical derivatives.

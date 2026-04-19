@@ -48,11 +48,13 @@ export function buildShaderDemoGUI(
 
   const updOverlay = () => overlay.updateUniforms({
     noiseParams:            terrain.noiseParams,
+    fractalNoiseParams:     terrain.fractalNoiseParams,
     noiseType:              terrain.noiseType,
     gaussSigma:             terrain.gaussianParams.sigma,
     gaussAmplitude:         terrain.gaussianParams.amplitude,
     layerMix:               terrain.layerMix,
     patchHalfSize:          terrain.patchSize / 2,
+    elevationOffset:        terrain.elevationOffset,
     erosionEnabled:         terrain.erosionEnabled,
     erosionOctaves:         terrain.erosionOctaves,
     erosionScale:           terrain.erosionScale,
@@ -98,10 +100,11 @@ export function buildShaderDemoGUI(
   // ── Tab: Terrain ──────────────────────────────────────────────────────────
 
   const terrainParams = {
-    size:        terrain.patchSize,
-    numPatches:  terrain.numPatches,
-    subdivision: terrain.subdivisions,
-    amplitude:   terrain.amplitude,
+    size:            terrain.patchSize,
+    numPatches:      terrain.numPatches,
+    subdivision:     terrain.subdivisions,
+    amplitude:       terrain.amplitude,
+    elevationOffset: terrain.elevationOffset,
   };
 
   terrainPage.addBinding(terrainParams, 'size', { label: 'Size', min: 0.5, max: 8.0, step: 0.5 })
@@ -112,19 +115,24 @@ export function buildShaderDemoGUI(
     .on('change', ({ value }) => { terrain.subdivisions = Number(value); updGeometry(); });
   terrainPage.addBinding(terrainParams, 'amplitude', { label: 'Amplitude', min: 0.0, max: 2.0, step: 0.05 })
     .on('change', ({ value }) => { terrain.amplitude = value; updDisplay(); });
+  terrainPage.addBinding(terrainParams, 'elevationOffset', { label: 'Elev. Offset', min: -0.5, max: 0.5, step: 0.01 })
+    .on('change', ({ value }) => { terrain.elevationOffset = value; updDisplay(); updOverlay(); });
 
   // ── Tab: Elevation ───────────────────────────────────────────────────────
 
+  const isFractal  = () => terrain.noiseType === 4;
   const isGaussian = () => terrain.noiseType === 3;
+  const isStdNoise = () => terrain.noiseType !== 3 && terrain.noiseType !== 4;
 
   const noiseTypeParams = { type: terrain.noiseType };
   elevationPage.addBinding(noiseTypeParams, 'type', {
     label: 'Type',
-    options: { Simplex: 0, Perlin: 1, Heightmap: 2, Gaussian: 3 },
+    options: { Simplex: 0, Perlin: 1, Heightmap: 2, Gaussian: 3, FractalNoise: 4 },
   }).on('change', ({ value }) => {
     terrain.noiseType = Number(value);
-    noiseFolder.hidden  = isGaussian();
-    gaussFolder.hidden  = !isGaussian();
+    noiseFolder.hidden        = !isStdNoise();
+    gaussFolder.hidden        = !isGaussian();
+    fractalNoiseFolder.hidden = !isFractal();
     updElevation();
   });
 
@@ -141,9 +149,16 @@ export function buildShaderDemoGUI(
   gaussFolder.addBinding(gaussParams, 'amplitude', { label: 'Amplitude', min: 0.0,  max: 1.0, step: 0.01 })
     .on('change', ({ value }) => { terrain.gaussianParams.amplitude = value; updElevation(); });
 
+  const fractalNoiseFolder = elevationPage.addFolder({ title: 'FractalNoise', expanded: true });
+  fractalNoiseFolder.addBinding(terrain.fractalNoiseParams, 'freq',       { label: 'Frequency',  min: 0.1, max: 10.0, step: 0.1  }).on('change', updElevation);
+  fractalNoiseFolder.addBinding(terrain.fractalNoiseParams, 'octaves',    { label: 'Octaves',    min: 1,   max: 8,    step: 1    }).on('change', updElevation);
+  fractalNoiseFolder.addBinding(terrain.fractalNoiseParams, 'lacunarity', { label: 'Lacunarity', min: 1.0, max: 4.0,  step: 0.1  }).on('change', updElevation);
+  fractalNoiseFolder.addBinding(terrain.fractalNoiseParams, 'gain',       { label: 'Gain',       min: 0.01, max: 1.0, step: 0.01 }).on('change', updElevation);
+
   // Initial visibility
-  noiseFolder.hidden = isGaussian();
-  gaussFolder.hidden = !isGaussian();
+  noiseFolder.hidden        = !isStdNoise();
+  gaussFolder.hidden        = !isGaussian();
+  fractalNoiseFolder.hidden = !isFractal();
 
   const layerParams = { mix: terrain.layerMix };
   elevationPage.addBinding(layerParams, 'mix', { label: 'Layer Mix', min: 0.0, max: 1.0, step: 0.01 })

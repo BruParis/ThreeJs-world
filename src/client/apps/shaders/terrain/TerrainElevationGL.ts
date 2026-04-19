@@ -16,7 +16,9 @@
 import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
 import { perlinNoiseGLSL }  from '@core/noise/perlinGLSL';
 import { erosionGLSL }      from '@core/shaders/erosionGLSL';
+import { terrainGLSL }      from '@core/shaders/terrainGLSL';
 import { heightmapGLSL }    from '@core/noise/heightmapGLSL';
+import { fractalNoiseGLSL } from '@core/noise/fractalNoiseGLSL';
 
 export interface ElevationComputeParams {
   gridWidth:              number;
@@ -34,6 +36,10 @@ export interface ElevationComputeParams {
   noiseType:              number;
   gaussSigma:             number;
   gaussAmplitude:         number;
+  fractalFreq:            number;
+  fractalOctaves:         number;
+  fractalLacunarity:      number;
+  fractalGain:            number;
   erosionEnabled:         number;
   erosionOctaves:         number;
   erosionScale:           number;
@@ -74,6 +80,7 @@ precision highp sampler2D;
 ${simplexNoiseGLSL}
 ${perlinNoiseGLSL}
 ${erosionGLSL}
+${terrainGLSL}
 
 uniform float uOriginX;
 uniform float uOriginZ;
@@ -88,6 +95,10 @@ uniform float uLayerMix;
 uniform int   uNoiseType;
 uniform float uGaussSigma;
 uniform float uGaussAmplitude;
+uniform float uFractalFreq;
+uniform int   uFractalOctaves;
+uniform float uFractalLacunarity;
+uniform float uFractalGain;
 uniform int   uErosionEnabled;
 uniform int   uErosionOctaves;
 uniform float uErosionScale;
@@ -106,6 +117,7 @@ out vec4 fragColor;
 const float SEA_LEVEL = 0.35;
 
 ${heightmapGLSL}
+${fractalNoiseGLSL}
 
 float noiseFbm(vec3 p) {
   if (uNoiseType == 1) return perlinFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity);
@@ -117,54 +129,54 @@ float gaussian2D(vec3 wPos) {
   return uGaussAmplitude * exp(-(wPos.x * wPos.x + wPos.z * wPos.z) / (2.0 * sigma * sigma));
 }
 
+// Returns the blended raw noise in [-1, 1].
+// Normalisation and erosion are handled downstream by applyTerrain().
 float baseNoise(vec3 wPos) {
-  float l1 = clamp((wPos.x + wPos.z) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
-  float l2 = (uNoiseType == 3)
-    ? gaussian2D(wPos)
-    : noiseFbm(wPos * uNoiseScale) * 0.5 + 0.5;
+  float l1 = clamp((wPos.x + wPos.z) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0) * 2.0 - 1.0;
+  float l2;
+  if (uNoiseType == 3) {
+    l2 = gaussian2D(wPos) * 2.0 - 1.0;
+  } else if (uNoiseType == 4) {
+    l2 = FractalNoise(wPos.xz, uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x;
+  } else {
+    l2 = noiseFbm(wPos * uNoiseScale);
+  }
   return mix(l1, l2, uLayerMix);
 }
 
-// Returns raw elevation in [0, 1] at an arbitrary world position.
-// Used both for the center fragment and for gradient neighbours.
+// Returns elevation in [0, 1] at an arbitrary world position.
+// Used both for the center fragment and for the finite-difference gradient.
 float computeElevation(vec3 wPos) {
-  float noise;
   if (uNoiseType == 2) {
     float l1 = clamp((wPos.x + wPos.z) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
     float hm = clamp(heightmapElevation(wPos.xz).x, 0.0, 1.0);
-    noise = mix(l1, hm, uLayerMix);
-  } else {
-    noise = baseNoise(wPos);
-    if (uErosionEnabled == 1) {
-      float GE = 0.5 / max(uNoiseScale, 0.5);
-      float fL = baseNoise(wPos - vec3(GE, 0.0, 0.0));
-      float fR = baseNoise(wPos + vec3(GE, 0.0, 0.0));
-      float fD = baseNoise(wPos - vec3(0.0, 0.0, GE));
-      float fU = baseNoise(wPos + vec3(0.0, 0.0, GE));
-      vec2 slope_grad = vec2(fR - fL, fU - fD) / (2.0 * GE);
-      noise += applyErosion(
-        wPos.xz, noise, slope_grad,
-        uErosionOctaves,
-        uErosionScale,
-        uErosionStrength,
-        uErosionGullyWeight,
-        uErosionDetail,
-        uErosionLacunarity,
-        uErosionGain,
-        uErosionCellScale,
-        uErosionNormalization,
-        uErosionRidgeRounding,
-        uErosionCreaseRounding
-      );
-      noise = clamp(noise, 0.0, 1.0);
-    }
+    return mix(l1, hm, uLayerMix);
   }
-  return noise;
+
+  float rawN = baseNoise(wPos);
+  vec2  rawSlope = vec2(0.0);
+  if (uErosionEnabled == 1) {
+    float GE = 0.5 / max(uNoiseScale, 0.5);
+    float fL = baseNoise(wPos - vec3(GE, 0.0, 0.0));
+    float fR = baseNoise(wPos + vec3(GE, 0.0, 0.0));
+    float fD = baseNoise(wPos - vec3(0.0, 0.0, GE));
+    float fU = baseNoise(wPos + vec3(0.0, 0.0, GE));
+    rawSlope = vec2(fR - fL, fU - fD) / (2.0 * GE);
+  }
+  return applyTerrain(
+    wPos.xz, rawN, rawSlope, uErosionEnabled,
+    uErosionOctaves, uErosionScale, uErosionStrength,
+    uErosionGullyWeight, uErosionDetail, uErosionLacunarity,
+    uErosionGain, uErosionCellScale, uErosionNormalization,
+    uErosionRidgeRounding, uErosionCreaseRounding
+  );
 }
 
-// Normalized displacement (amplitude = 1): max(0, (elev - sea) / (1 - sea)).
+// Normalised elevation for gradient baking — no sea-level clamp so that
+// underwater slopes are preserved and remain correct after an elevation offset.
+// (The vertex shader still clamps the actual Y displacement via max(0,...).)
 float displNorm(vec3 wPos) {
-  return max(0.0, (computeElevation(wPos) - SEA_LEVEL) / (1.0 - SEA_LEVEL));
+  return (computeElevation(wPos) - SEA_LEVEL) / (1.0 - SEA_LEVEL);
 }
 
 void main() {
@@ -374,6 +386,10 @@ export class TerrainElevationGL {
     gl.uniform1i(u('uNoiseType'),           p.noiseType);
     gl.uniform1f(u('uGaussSigma'),          p.gaussSigma);
     gl.uniform1f(u('uGaussAmplitude'),      p.gaussAmplitude);
+    gl.uniform1f(u('uFractalFreq'),         p.fractalFreq);
+    gl.uniform1i(u('uFractalOctaves'),      p.fractalOctaves);
+    gl.uniform1f(u('uFractalLacunarity'),   p.fractalLacunarity);
+    gl.uniform1f(u('uFractalGain'),         p.fractalGain);
     gl.uniform1i(u('uErosionEnabled'),        p.erosionEnabled);
     gl.uniform1i(u('uErosionOctaves'),        p.erosionOctaves);
     gl.uniform1f(u('uErosionScale'),          p.erosionScale);

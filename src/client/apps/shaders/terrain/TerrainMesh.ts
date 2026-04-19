@@ -4,11 +4,13 @@ import { terrainColorGLSL } from '@core/shaders/terrainColorGLSL';
 import {
   DEFAULT_NOISE_PARAMS,
   DEFAULT_GAUSSIAN_PARAMS,
+  DEFAULT_FRACTAL_NOISE_PARAMS,
   DEFAULT_AMPLITUDE,
   DEFAULT_PATCH_SIZE,
   DEFAULT_SUBDIVISION,
   DEFAULT_NUM_PATCHES,
   DEFAULT_LAYER_MIX,
+  DEFAULT_ELEV_OFFSET,
 } from './TerrainConstants';
 import {
   DEFAULT_EROSION_OCTAVES,
@@ -31,11 +33,13 @@ export class TerrainMesh {
   gaussianParams = { ...DEFAULT_GAUSSIAN_PARAMS };
 
   // Noise
-  noiseParams = { ...DEFAULT_NOISE_PARAMS };
-  noiseType   = 0; // 0 = simplex, 1 = perlin, 2 = heightmap
+  noiseParams        = { ...DEFAULT_NOISE_PARAMS };
+  fractalNoiseParams = { ...DEFAULT_FRACTAL_NOISE_PARAMS };
+  noiseType          = 0; // 0 = simplex, 1 = perlin, 2 = heightmap, 3 = gaussian, 4 = fractalNoise
 
   // Geometry / rendering
-  amplitude    = DEFAULT_AMPLITUDE;
+  elevationOffset = DEFAULT_ELEV_OFFSET;
+  amplitude       = DEFAULT_AMPLITUDE;
   patchSize    = DEFAULT_PATCH_SIZE;
   subdivisions = DEFAULT_SUBDIVISION;
   numPatches   = DEFAULT_NUM_PATCHES;
@@ -124,6 +128,10 @@ export class TerrainMesh {
         noiseType:             this.noiseType,
         gaussSigma:            this.gaussianParams.sigma,
         gaussAmplitude:        this.gaussianParams.amplitude,
+        fractalFreq:           this.fractalNoiseParams.freq,
+        fractalOctaves:        this.fractalNoiseParams.octaves,
+        fractalLacunarity:     this.fractalNoiseParams.lacunarity,
+        fractalGain:           this.fractalNoiseParams.gain,
         erosionEnabled:         this.erosionEnabled ? 1 : 0,
         erosionOctaves:         this.erosionOctaves,
         erosionScale:           this.erosionScale,
@@ -164,6 +172,7 @@ export class TerrainMesh {
     for (const uniforms of this._patchUniforms) {
       uniforms.uAmplitude.value     = this.amplitude;
       uniforms.uPatchHalfSize.value = this.patchSize / 2;
+      uniforms.uElevOffset.value    = this.elevationOffset;
     }
     for (const mesh of this._meshes) {
       const mat   = mesh.material as THREE.MeshStandardMaterial;
@@ -306,6 +315,7 @@ export class TerrainMesh {
       shader.uniforms.uElevationTex      = { value: this.elevationTexture };
       shader.uniforms.uAmplitude         = { value: this.amplitude };
       shader.uniforms.uPatchHalfSize     = { value: this.patchSize / 2 };
+      shader.uniforms.uElevOffset        = { value: this.elevationOffset };
       shader.uniforms.uSuppNoiseTex      = { value: this.suppNoiseGL?.texture ?? null };
       shader.uniforms.uSuppNoiseEnabled  = { value: this.suppNoiseEnabled ? 1 : 0 };
       shader.uniforms.uSuppNoiseStrength = { value: this.suppNoiseStrength };
@@ -317,6 +327,7 @@ export class TerrainMesh {
 uniform sampler2D uElevationTex;
 uniform float uAmplitude;
 uniform float uPatchHalfSize;
+uniform float uElevOffset;
 
 varying float vTerrainElev;
 varying vec3  vTerrainWorldPos;
@@ -325,7 +336,7 @@ varying vec3  vTerrainWorldNormal;
 const float TERRAIN_SEA = 0.35;
 
 float terrain_displY(float noise) {
-  return max(0.0, (noise - TERRAIN_SEA) / (1.0 - TERRAIN_SEA) * uAmplitude);
+  return max(0.0, (noise + uElevOffset - TERRAIN_SEA) / (1.0 - TERRAIN_SEA) * uAmplitude);
 }
 ` + shader.vertexShader;
 
@@ -347,7 +358,10 @@ float terrain_displY(float noise) {
         // Gradient stored amplitude-normalised; scale by uAmplitude to get world-space slope.
         float dhdx = elevData.g * uAmplitude;
         float dhdz = elevData.b * uAmplitude;
-        vTerrainWorldNormal = normalize(vec3(-dhdx, 1.0, -dhdz));
+        // Below water the mesh is flat (dispY == 0); use an upward normal so the
+        // baked gradient (which ignores uElevOffset) does not leak through as lighting artefacts.
+        bool underwater = (terrain_noise + uElevOffset) < TERRAIN_SEA;
+        vTerrainWorldNormal = underwater ? vec3(0.0, 1.0, 0.0) : normalize(vec3(-dhdx, 1.0, -dhdz));
 
         vec3 objectNormal = vTerrainWorldNormal;
         `,
@@ -368,6 +382,7 @@ uniform sampler2D uSuppNoiseTex;
 uniform int       uSuppNoiseEnabled;
 uniform float     uSuppNoiseStrength;
 uniform float     uPatchHalfSize;
+uniform float     uElevOffset;
 
 varying float vTerrainElev;
 varying vec3  vTerrainWorldPos;
@@ -385,8 +400,9 @@ varying vec3  vTerrainWorldNormal;
           vec3 suppData = texture2D(uSuppNoiseTex, suppUV).xyz;
           terrainNorWorld = normalize(terrainNorWorld + vec3(suppData.y, 0.0, suppData.z) * uSuppNoiseStrength);
         }
-        vec3 colorNormal = vTerrainElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
-        diffuseColor.rgb = terrainColor(vTerrainElev, vTerrainWorldPos, colorNormal);
+        float shiftedElev = vTerrainElev + uElevOffset;
+        vec3 colorNormal = shiftedElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
+        diffuseColor.rgb = terrainColor(shiftedElev, vTerrainWorldPos, colorNormal);
         `,
       );
 

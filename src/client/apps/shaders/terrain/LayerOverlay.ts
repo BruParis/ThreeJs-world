@@ -67,6 +67,10 @@ export class LayerOverlay {
       mat.uniforms.uPermTex.value           = this.permTex;
       mat.uniforms.uGaussSigma.value        = params.gaussSigma;
       mat.uniforms.uGaussAmplitude.value    = params.gaussAmplitude;
+      mat.uniforms.uFractalFreq.value       = params.fractalNoiseParams.freq;
+      mat.uniforms.uFractalOctaves.value    = params.fractalNoiseParams.octaves;
+      mat.uniforms.uFractalLacunarity.value = params.fractalNoiseParams.lacunarity;
+      mat.uniforms.uFractalGain.value       = params.fractalNoiseParams.gain;
       mat.uniforms.uLayerMix.value          = params.layerMix;
       mat.uniforms.uPatchHalfSize.value     = params.patchHalfSize;
       mat.uniforms.uErosionEnabled.value         = params.erosionEnabled ? 1 : 0;
@@ -81,11 +85,14 @@ export class LayerOverlay {
       mat.uniforms.uErosionNormalization.value   = params.erosionNormalization;
       mat.uniforms.uErosionRidgeRounding.value   = params.erosionRidgeRounding;
       mat.uniforms.uErosionCreaseRounding.value  = params.erosionCreaseRounding;
+      mat.uniforms.uElevOffset.value             = params.elevationOffset;
     }
 
     if (this.noiseLabelEl) {
       const name = params.noiseType === 1 ? 'Perlin'
                  : params.noiseType === 2 ? 'Heightmap'
+                 : params.noiseType === 3 ? 'Gaussian'
+                 : params.noiseType === 4 ? 'FractalNoise'
                  : 'Simplex';
       this.noiseLabelEl.textContent = `Noise: ${name}`;
     }
@@ -168,6 +175,10 @@ export class LayerOverlay {
           uNoiseLacunarity:         { value: params.noiseParams.lacunarity },
           uGaussSigma:              { value: params.gaussSigma },
           uGaussAmplitude:          { value: params.gaussAmplitude },
+          uFractalFreq:             { value: params.fractalNoiseParams.freq },
+          uFractalOctaves:          { value: params.fractalNoiseParams.octaves },
+          uFractalLacunarity:       { value: params.fractalNoiseParams.lacunarity },
+          uFractalGain:             { value: params.fractalNoiseParams.gain },
           uLayerMix:                { value: params.layerMix },
           uPatchHalfSize:           { value: params.patchHalfSize },
           uErosionEnabled:          { value: params.erosionEnabled ? 1 : 0 },
@@ -182,6 +193,7 @@ export class LayerOverlay {
           uErosionNormalization:    { value: params.erosionNormalization },
           uErosionRidgeRounding:    { value: params.erosionRidgeRounding },
           uErosionCreaseRounding:   { value: params.erosionCreaseRounding },
+          uElevOffset:              { value: params.elevationOffset },
         },
         vertexShader:   layerOverlayVertexShader,
         fragmentShader: layerOverlayFragmentShader,

@@ -15,7 +15,7 @@
  * (i.e. snoise and simplexFbm) available in scope.
  *
  * Constant WATER_HEIGHT (0.35) is the sea-level threshold and must match the
- * value used in the vertex shader.
+ * value used in the vertex shader (TERRAIN_SEA).
  */
 
 import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
@@ -26,6 +26,8 @@ export const terrainColorGLSL = /* glsl */`
 
 ${simplexNoiseGLSL}
 
+#define WATER_HEIGHT       ${(0.35).toFixed(2)}
+
 #define CLIFF_COLOR        vec3(0.22, 0.20, 0.20)
 #define DIRT_COLOR         vec3(0.60, 0.50, 0.40)
 #define GRASS_COLOR1       vec3(0.15, 0.30, 0.10)
@@ -33,7 +35,6 @@ ${simplexNoiseGLSL}
 #define SAND_COLOR         vec3(0.80, 0.70, 0.60)
 #define WATER_COLOR        vec3(0.05, 0.10, 0.40)
 #define WATER_SHORE_COLOR  vec3(0.15, 0.55, 0.80)
-#define WATER_HEIGHT       ${TERRAIN_WATER_HEIGHT.toFixed(2)}
 
 vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal) {
   float e = clamp(elevation, 0.0, 1.0);
@@ -57,7 +58,8 @@ vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal) {
   landColor = mix(landColor, DIRT_COLOR, smoothstep(0.45, 0.20, e));
 
   // Grass — flat surfaces just above sea level
-  vec3 grassMix = mix(GRASS_COLOR1, GRASS_COLOR2, smoothstep(0.4, 0.6, e * 0.3));
+  // noise drives colour variety so even low-elevation terrain isn't a flat tint.
+  vec3 grassMix = mix(GRASS_COLOR1, GRASS_COLOR2, smoothstep(0.3, 0.7, noise));
   landColor = mix(landColor, grassMix,
     smoothstep(WATER_HEIGHT + 0.15, WATER_HEIGHT + 0.01, e) *
     smoothstep(0.55, 0.75, normal.y));
@@ -74,10 +76,9 @@ vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal) {
   float slopeFlatness = smoothstep(0.5, 0.80, normal.y);
   slopeFlatness *= slopeFlatness;
 
-  // Sand — narrow band at sea level, fully suppressed on cliffs
-  float sandWidth = mix(0.0005, 0.005, slopeFlatness);
+  // Sand — narrow band at sea level
   landColor = mix(landColor, SAND_COLOR,
-    smoothstep(WATER_HEIGHT + sandWidth, WATER_HEIGHT, e) * slopeFlatness);
+    smoothstep(WATER_HEIGHT + 0.005, WATER_HEIGHT, e + breakup * 0.03));
 
   // waterFactor: 1 = fully water, 0 = fully land.
   // Blend width shrinks from 0.01 (flat) to 0.001 (cliff).

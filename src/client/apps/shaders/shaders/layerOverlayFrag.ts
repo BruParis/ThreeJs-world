@@ -12,18 +12,22 @@
  *   3 = erosion   — blended + hydraulic erosion pass
  *                   (falls back to blended when noiseType == 2 or erosion disabled)
  *
- * uNoiseType selects the noise algorithm (0=simplex, 1=perlin, 2=heightmap).
+ * uNoiseType selects the noise algorithm (0=simplex, 1=perlin, 2=heightmap, 3=gaussian, 4=fractalNoise).
  */
 
 import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
 import { perlinNoiseGLSL }  from '@core/noise/perlinGLSL';
 import { erosionGLSL }      from '@core/shaders/erosionGLSL';
+import { terrainGLSL }      from '@core/shaders/terrainGLSL';
+import { heightmapGLSL }    from '@core/noise/heightmapGLSL';
+import { fractalNoiseGLSL } from '@core/noise/fractalNoiseGLSL';
 
 export const layerOverlayFragmentShader = /* glsl */`
 
 ${simplexNoiseGLSL}
 ${perlinNoiseGLSL}
 ${erosionGLSL}
+${terrainGLSL}
 
 in vec2 vUv;
 out vec4 fragColor;
@@ -36,6 +40,10 @@ uniform float uNoisePersistence;
 uniform float uNoiseLacunarity;
 uniform float uGaussSigma;
 uniform float uGaussAmplitude;
+uniform float uFractalFreq;
+uniform int   uFractalOctaves;
+uniform float uFractalLacunarity;
+uniform float uFractalGain;
 uniform float uLayerMix;
 uniform float uPatchHalfSize;
 
@@ -51,8 +59,12 @@ uniform float uErosionCellScale;
 uniform float uErosionNormalization;
 uniform float uErosionRidgeRounding;
 uniform float uErosionCreaseRounding;
+uniform float uElevOffset;
 
 const float SEA_LEVEL = 0.35;
+
+${heightmapGLSL}
+${fractalNoiseGLSL}
 
 // Value-noise FBM for heightmap preview (2D, no erosion uniforms needed).
 float hmHash(vec2 p) {
@@ -97,6 +109,8 @@ float computeNoiseAtWorld(float worldX, float worldZ) {
     return perlinFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
   else if (uNoiseType == 2)
     return valueFbm(vec2(worldX, worldZ) * uNoiseScale);
+  else if (uNoiseType == 4)
+    return FractalNoise(vec2(worldX, worldZ), uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x * 0.5 + 0.5;
   else
     return simplexFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
 }
@@ -126,8 +140,10 @@ float computeLayer(vec2 uv) {
   float base = mix(l1, l2, uLayerMix);
   if (uLayerIndex == 2) return base;
 
-  // Step 3: hydraulic erosion pass
+  // Step 3: hydraulic erosion pass via applyTerrain.
   // Heightmap mode has erosion built in — show blended as fallback.
+  // base is [0,1]; applyTerrain expects [-1,1] raw input, so convert: raw = base*2-1,
+  // rawSlope = slope_grad*2 (gradient in [-1,1] space = gradient in [0,1] space * 2).
   float eroded = base;
   if (uNoiseType != 2 && uErosionEnabled != 0) {
     float GE = 0.5 / max(uNoiseScale, 0.5);
@@ -136,25 +152,18 @@ float computeLayer(vec2 uv) {
     float fD = computeBaseAtWorld(worldX, worldZ - GE);
     float fU = computeBaseAtWorld(worldX, worldZ + GE);
     vec2 slope_grad = vec2(fR - fL, fU - fD) / (2.0 * GE);
-    eroded = clamp(base + applyErosion(
-      vec2(worldX, worldZ), base, slope_grad,
-      uErosionOctaves,
-      uErosionScale,
-      uErosionStrength,
-      uErosionGullyWeight,
-      uErosionDetail,
-      uErosionLacunarity,
-      uErosionGain,
-      uErosionCellScale,
-      uErosionNormalization,
-      uErosionRidgeRounding,
-      uErosionCreaseRounding
-    ), 0.0, 1.0);
+    eroded = applyTerrain(
+      vec2(worldX, worldZ), base * 2.0 - 1.0, slope_grad * 2.0, 1,
+      uErosionOctaves, uErosionScale, uErosionStrength,
+      uErosionGullyWeight, uErosionDetail, uErosionLacunarity,
+      uErosionGain, uErosionCellScale, uErosionNormalization,
+      uErosionRidgeRounding, uErosionCreaseRounding
+    );
   }
   if (uLayerIndex == 3) return eroded;
 
   // Step 4: water-level clamping — mirrors elevToDisplY() in the vertex shader.
-  return max(0.0, (eroded - SEA_LEVEL) / (1.0 - SEA_LEVEL));
+  return max(0.0, (eroded + uElevOffset - SEA_LEVEL) / (1.0 - SEA_LEVEL));
 }
 
 void main() {

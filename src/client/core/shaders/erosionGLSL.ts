@@ -186,6 +186,7 @@ float applyErosion(
   float creaseRounding
 ) {
   vec3 heightAndSlope = vec3(noise, slope);
+
   float fadeTarget    = clamp(noise * 2.0 - 1.0, -1.0, 1.0);
 
   vec4 rounding     = vec4(ridgeRounding, creaseRounding, 0.1, 2.0);

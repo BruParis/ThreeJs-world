@@ -177,11 +177,13 @@ export class ShaderDemoApplication implements TabApplication {
 
     this.overlay = new LayerOverlay(w, h, contentArea, {
       noiseParams:           this.terrain.noiseParams,
+      fractalNoiseParams:    this.terrain.fractalNoiseParams,
       noiseType:             this.terrain.noiseType,
       gaussSigma:            this.terrain.gaussianParams.sigma,
       gaussAmplitude:        this.terrain.gaussianParams.amplitude,
       layerMix:              this.terrain.layerMix,
       patchHalfSize:         this.terrain.patchSize / 2,
+      elevationOffset:       this.terrain.elevationOffset,
       erosionEnabled:         this.terrain.erosionEnabled,
       erosionOctaves:         this.terrain.erosionOctaves,
       erosionScale:           this.terrain.erosionScale,

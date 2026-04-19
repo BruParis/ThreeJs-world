@@ -8,6 +8,13 @@ export interface NoiseParams {
   lacunarity:  number;
 }
 
+export interface FractalNoiseParams {
+  freq:       number;
+  octaves:    number;
+  lacunarity: number;
+  gain:       number;
+}
+
 export interface GaussianParams {
   sigma:     number;  // [0.05, 2.0] normalized to patchHalfSize
   amplitude: number;  // [0.0, 1.0] peak value
@@ -28,6 +35,14 @@ export const DEFAULT_GAUSSIAN_PARAMS: GaussianParams = {
   amplitude: 1.0,
 };
 
+export const DEFAULT_FRACTAL_NOISE_PARAMS: FractalNoiseParams = {
+  freq:       3.0,
+  octaves:    3,
+  lacunarity: 2.0,
+  gain:       0.1,
+};
+
+export const DEFAULT_ELEV_OFFSET = 0.0;   // uniform shift applied to elevation before sea-level test
 export const DEFAULT_AMPLITUDE   = 0.4;   // world units — max Y displacement
 export const DEFAULT_PATCH_SIZE  = 2.0;   // world units — XZ extent of the whole grid
 export const DEFAULT_SUBDIVISION = 256;    // grid cells per side (power of 2)

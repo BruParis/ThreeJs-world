@@ -1,4 +1,4 @@
-import { NoiseParams } from './TerrainConstants';
+import { NoiseParams, FractalNoiseParams } from './TerrainConstants';
 
 export interface LayerDescriptor {
   readonly index: number;
@@ -21,11 +21,13 @@ export const LAYER_DESCRIPTORS: readonly LayerDescriptor[] = [
 /** Full set of uniforms the overlay panels need to mirror the elevation compute shader. */
 export interface OverlayParams {
   noiseParams:            NoiseParams;
+  fractalNoiseParams:     FractalNoiseParams;
   noiseType:              number;
   gaussSigma:             number;
   gaussAmplitude:         number;
   layerMix:               number;
   patchHalfSize:          number;
+  elevationOffset:        number;
   erosionEnabled:         boolean;
   erosionOctaves:         number;
   erosionScale:           number;
