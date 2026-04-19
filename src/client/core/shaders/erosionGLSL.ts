@@ -1,113 +1,210 @@
 /**
- * Hydraulic erosion — reusable GLSL fragment.
+ * Advanced Terrain Erosion — reusable GLSL fragment.
+ *
+ * Based on the ErosionFilter by Rune Skovbo Johansen (MPL 2.0).
+ * Uses PhacelleNoise to produce directional gullies.
  *
  * Exposes:
- *   vec3 Erosion(vec2 p, vec2 dir)
+ *   float applyErosion(p, noise, slope, octaves, scale, strength,
+ *                      gullyWeight, detail, lacunarity, gain,
+ *                      cellScale, normalization, ridgeRounding, creaseRounding)
  *
- * Returns vec3(erosionHeight, dErosion/dx, dErosion/dy).
- * `erosionHeight` is centred around 0 — add (erosionHeight - 0.5) * strength
- * to a base elevation value to see the effect.
- *
+ * Returns the height delta to add to the base elevation.
  * Requires no other GLSL dependencies.
- *
- * Uniforms consumed (declare in host shader):
- *   int   uErosionOctaves
- *   float uErosionTiles          – frequency scale applied before calling Erosion
- *   float uErosionStrength        – height contribution of the erosion layer
- *   float uErosionSlopeStrength   – how strongly terrain slope steers erosion
- *   float uErosionBranchStrength  – how much erosion derivatives feed back into direction
- *   float uErosionGain            – amplitude decay per octave
- *   float uErosionLacunarity      – frequency growth per octave
- *
- * Reference: hydraulic erosion by Shane / Inigo Quilez-style directional noise.
  */
 
-// ── TypeScript defaults (mirror the #defines used in host shaders) ─────────────
+// ── TypeScript defaults ────────────────────────────────────────────────────────
 
 export const DEFAULT_EROSION_OCTAVES          = 5;
-export const DEFAULT_EROSION_TILES            = 3.0;
-export const DEFAULT_EROSION_STRENGTH         = 0.15;
-export const DEFAULT_EROSION_SLOPE_STRENGTH   = 1.0;
-export const DEFAULT_EROSION_BRANCH_STRENGTH  = 0.3;
-export const DEFAULT_EROSION_GAIN             = 0.5;
+export const DEFAULT_EROSION_SCALE            = 0.15;
+export const DEFAULT_EROSION_STRENGTH         = 0.22;
+export const DEFAULT_EROSION_GULLY_WEIGHT     = 0.5;
+export const DEFAULT_EROSION_DETAIL           = 1.5;
 export const DEFAULT_EROSION_LACUNARITY       = 2.0;
+export const DEFAULT_EROSION_GAIN             = 0.5;
+export const DEFAULT_EROSION_CELL_SCALE       = 0.7;
+export const DEFAULT_EROSION_NORMALIZATION    = 0.5;
+export const DEFAULT_EROSION_RIDGE_ROUNDING   = 0.1;
+export const DEFAULT_EROSION_CREASE_ROUNDING  = 0.0;
 
 // ── GLSL source ───────────────────────────────────────────────────────────────
 
 export const erosionGLSL = /* glsl */`
 
-#ifndef PI
-#define PI 3.14159265358979323846
+#ifndef TAU
+#define TAU 6.28318530717959
 #endif
 
-// 2D hash — returns a pseudo-random unit-ish vec2 for a given grid cell.
-vec2 erosionHash(vec2 p) {
-  p = vec2(dot(p, vec2(127.1, 311.7)),
-           dot(p, vec2(269.5, 183.3)));
-  return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+#ifndef clamp01
+#define clamp01(t) clamp(t, 0.0, 1.0)
+#endif
+
+// 2D hash used by PhacelleNoise.
+vec2 erosion_hash(in vec2 x) {
+  const vec2 k = vec2(0.3183099, 0.3678794);
+  x = x * k + k.yx;
+  return -1.0 + 2.0 * fract(16.0 * k * fract(x.x * x.y * (x.x + x.y)));
 }
 
-// Directional erosion noise.
-// p   – 2D position in erosion-tile space
-// dir – slope direction (gradient of the underlying height field)
-// Returns vec3(erosionValue, dValue/dx, dValue/dy).
-vec3 Erosion(in vec2 p, vec2 dir) {
-  vec2 ip = floor(p);
-  vec2 fp = fract(p);
-  float f  = 2.0 * PI;
-  vec3  va = vec3(0.0);
-  float wt = 0.0;
+// Phacelle Noise — produces a stripe pattern aligned with normDir.
+// Returns vec4(cosWave, sinWave, dSin/dx, dSin/dy).
+// Copyright (c) 2025 Rune Skovbo Johansen — MPL 2.0
+vec4 erosion_PhacelleNoise(in vec2 p, vec2 normDir, float freq, float offset, float normalization) {
+  vec2 sideDir = normDir.yx * vec2(-1.0, 1.0) * freq * TAU;
+  offset *= TAU;
 
-  for (int i = -2; i <= 1; i++) {
-    for (int j = -2; j <= 1; j++) {
-      vec2 o  = vec2(i, j);
-      vec2 h  = erosionHash(ip - o) * 0.5;
-      vec2 pp = fp + o - h;
-      float d   = dot(pp, pp);
-      float w   = exp(-d * 2.0);
-      wt += w;
-      float mag = dot(pp, dir);
-      va += vec3(cos(mag * f), -sin(mag * f) * dir) * w;
+  vec2 pInt = floor(p);
+  vec2 pFrac = fract(p);
+  vec2 phaseDir = vec2(0.0);
+  float weightSum = 0.0;
+
+  for (int i = -1; i <= 2; i++) {
+    for (int j = -1; j <= 2; j++) {
+      vec2 gridOffset = vec2(i, j);
+      vec2 gridPoint  = pInt + gridOffset;
+      vec2 randomOffset = erosion_hash(gridPoint) * 0.5;
+      vec2 vectorFromCellPoint = pFrac - gridOffset - randomOffset;
+
+      float sqrDist = dot(vectorFromCellPoint, vectorFromCellPoint);
+      float weight  = max(0.0, exp(-sqrDist * 2.0) - 0.01111);
+      weightSum += weight;
+
+      float waveInput = dot(vectorFromCellPoint, sideDir) + offset;
+      phaseDir += vec2(cos(waveInput), sin(waveInput)) * weight;
     }
   }
-  return va / wt;
+
+  vec2 interpolated = phaseDir / weightSum;
+  float magnitude   = sqrt(dot(interpolated, interpolated));
+  magnitude = max(1.0 - normalization, magnitude);
+  return vec4(interpolated / magnitude, sideDir);
 }
 
-// Apply erosion FBM on top of a base noise value.
-// p         – 2D world-space position (typically worldPos.xz * noiseScale)
-// baseNoise – base elevation in [0, 1] (used for slope and water mask)
-// Returns the erosion height contribution (add to baseNoise).
-float applyErosion(
-  vec2  p,
-  float baseNoise,
-  int   octaves,
-  float tiles,
-  float strength,
-  float slopeStrength,
-  float branchStrength,
-  float gain,
-  float lacunarity,
-  float waterHeight,
-  vec2  slopeDir
+// ── Utility functions ────────────────────────────────────────────────────────
+
+float erosion_pow_inv(float t, float power) {
+  return 1.0 - pow(1.0 - clamp01(t), power);
+}
+
+float erosion_ease_out(float t) {
+  float v = 1.0 - clamp01(t);
+  return 1.0 - v * v;
+}
+
+float erosion_smooth_start(float t, float smoothing) {
+  if (t >= smoothing) return t - 0.5 * smoothing;
+  return 0.5 * t * t / smoothing;
+}
+
+vec2 erosion_safe_normalize(vec2 n) {
+  float l = length(n);
+  return (abs(l) > 1e-10) ? (n / l) : n;
+}
+
+// ── ErosionFilter ─────────────────────────────────────────────────────────────
+// Advanced Terrain Erosion Filter copyright (c) 2025 Rune Skovbo Johansen — MPL 2.0
+
+vec4 erosion_ErosionFilter(
+  in vec2 p, vec3 heightAndSlope, float fadeTarget,
+  float strength, float gullyWeight, float detail, vec4 rounding, vec4 onset, vec2 assumedSlope,
+  float scale, int octaves, float lacunarity,
+  float gain, float cellScale, float normalization,
+  out float ridgeMap, out float debug
 ) {
-  if (baseNoise <= waterHeight) return 0.0;
-  float waterMask = smoothstep(waterHeight, waterHeight + 0.1, baseNoise);
+  strength *= scale;
+  fadeTarget = clamp(fadeTarget, -1.0, 1.0);
 
-  // Initial slope direction scaled by slopeStrength.
-  vec2 dir = slopeDir * slopeStrength;
+  vec3 inputHeightAndSlope = heightAndSlope;
+  float freq        = 1.0 / (scale * cellScale);
+  float slopeLength = max(length(heightAndSlope.yz), 1e-10);
+  float magnitude   = 0.0;
+  float roundingMult = 1.0;
 
-  vec3  h  = vec3(0.0);
-  float ea = 0.5;
-  float ef = 1.0;
-  vec2  ep = p * tiles;
+  float roundingForInput = mix(rounding.y, rounding.x, clamp01(fadeTarget + 0.5)) * rounding.z;
+  float combiMask = erosion_ease_out(erosion_smooth_start(slopeLength * onset.x, roundingForInput * onset.x));
+
+  float ridgeMapCombiMask  = erosion_ease_out(slopeLength * onset.z);
+  float ridgeMapFadeTarget = fadeTarget;
+
+  vec2 gullySlope = mix(heightAndSlope.yz,
+                        heightAndSlope.yz / slopeLength * assumedSlope.x,
+                        assumedSlope.y);
 
   for (int i = 0; i < octaves; i++) {
-    h  += Erosion(ep * ef, dir + h.zy * vec2(1.0, -1.0) * branchStrength) * ea * vec3(1.0, ef, ef);
-    ea *= gain;
-    ef *= lacunarity;
+    vec4 phacelle = erosion_PhacelleNoise(p * freq, erosion_safe_normalize(gullySlope), cellScale, 0.25, normalization);
+    phacelle.zw *= -freq;
+
+    float sloping = abs(phacelle.y);
+    gullySlope += sign(phacelle.y) * phacelle.zw * strength * gullyWeight;
+
+    vec3 gullies     = vec3(phacelle.x, phacelle.y * phacelle.zw);
+    vec3 fadedGullies = mix(vec3(fadeTarget, 0.0, 0.0), gullies * gullyWeight, combiMask);
+    heightAndSlope  += fadedGullies * strength;
+    magnitude       += strength;
+
+    fadeTarget = fadedGullies.x;
+
+    float roundingForOctave = mix(rounding.y, rounding.x, clamp01(phacelle.x + 0.5)) * roundingMult;
+    float newMask = erosion_ease_out(erosion_smooth_start(sloping * onset.y, roundingForOctave * onset.y));
+    combiMask = erosion_pow_inv(combiMask, detail) * newMask;
+
+    ridgeMapFadeTarget = mix(ridgeMapFadeTarget, gullies.x, ridgeMapCombiMask);
+    float newRidgeMapMask = erosion_ease_out(sloping * onset.w);
+    ridgeMapCombiMask = ridgeMapCombiMask * newRidgeMapMask;
+
+    strength  *= gain;
+    freq      *= lacunarity;
+    roundingMult *= rounding.w;
   }
 
-  return (h.x - 0.5) * strength * waterMask;
+  ridgeMap = ridgeMapFadeTarget * (1.0 - ridgeMapCombiMask);
+  debug    = fadeTarget;
+
+  return vec4(heightAndSlope - inputHeightAndSlope, magnitude);
+}
+
+// ── applyErosion wrapper ─────────────────────────────────────────────────────
+// p              – 2D world-space XZ position
+// noise          – base elevation in [0, 1]
+// slope          – gradient vec2(dh/dx, dh/dz) in world space
+// Returns the height delta to add to noise (before clamping).
+
+float applyErosion(
+  vec2  p,
+  float noise,
+  vec2  slope,
+  int   octaves,
+  float scale,
+  float strength,
+  float gullyWeight,
+  float detail,
+  float lacunarity,
+  float gain,
+  float cellScale,
+  float normalization,
+  float ridgeRounding,
+  float creaseRounding
+) {
+  vec3 heightAndSlope = vec3(noise, slope);
+  float fadeTarget    = clamp(noise * 2.0 - 1.0, -1.0, 1.0);
+
+  vec4 rounding     = vec4(ridgeRounding, creaseRounding, 0.1, 2.0);
+  vec4 onset        = vec4(1.25, 1.25, 2.8, 1.5);
+  vec2 assumedSlope = vec2(0.7, 1.0);
+
+  float ridgeMap, dbg;
+  vec4 h = erosion_ErosionFilter(
+    p, heightAndSlope, fadeTarget,
+    strength, gullyWeight, detail,
+    rounding, onset, assumedSlope,
+    scale, octaves, lacunarity,
+    gain, cellScale, normalization,
+    ridgeMap, dbg
+  );
+
+  // Height offset: pull terrain down slightly (TERRAIN_HEIGHT_OFFSET.x = -0.65).
+  float offset = -0.65 * h.w;
+  return h.x + offset;
 }
 
 `;

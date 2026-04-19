@@ -150,7 +150,8 @@ export class FlyCam {
 
     this.boundCanvasClick = () => {
       if (this.flyEnabled && !this.isPointerLocked) {
-        this.domElement.requestPointerLock();
+        const result = this.domElement.requestPointerLock();
+        if (result instanceof Promise) result.catch(() => {});
       }
     };
 

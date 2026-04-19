@@ -297,7 +297,7 @@ export class TerrainMesh {
     const mat = new THREE.MeshStandardMaterial({
       roughness: this.roughness,
       metalness: 0.0,
-      side:      THREE.DoubleSide,
+      side:      THREE.FrontSide,
       wireframe: this.wireframe,
     });
 
@@ -398,8 +398,7 @@ varying vec3  vTerrainWorldNormal;
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <normal_fragment_begin>',
         /* glsl */`
-        float faceDirection = gl_FrontFacing ? 1.0 : -1.0;
-        vec3 normal = normalize(mat3(viewMatrix) * colorNormal) * faceDirection;
+        vec3 normal = normalize(mat3(viewMatrix) * colorNormal);
         vec3 nonPerturbedNormal = normal;
         `,
       );

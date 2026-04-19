@@ -102,6 +102,9 @@ export class WorldApplication implements TabApplication {
     // 5. Push new tile data to the patch operation, then invalidate cached meshes
     this.patchOperation?.setTileTree(this.tectonicManager.getTileQuadTree());
     this.lodTileRenderer?.invalidate();
+
+    // 6. Refresh stats display in the GUI
+    this.guiManager?.refresh();
   }
 
   private onFlyCamToggle(enabled: boolean): void {
@@ -178,9 +181,7 @@ export class WorldApplication implements TabApplication {
     this.sceneManager.getRenderer().domElement.style.display = 'block';
     this.sceneManager.getLabelRenderer().domElement.style.display = 'block';
 
-    if (this.guiManager) {
-      this.guiManager.getGUI().domElement.style.display = 'block';
-    }
+    this.guiManager?.show();
 
     this.clock.start();
     this.active = true;
@@ -200,9 +201,7 @@ export class WorldApplication implements TabApplication {
     this.sceneManager.getRenderer().domElement.style.display = 'none';
     this.sceneManager.getLabelRenderer().domElement.style.display = 'none';
 
-    if (this.guiManager) {
-      this.guiManager.getGUI().domElement.style.display = 'none';
-    }
+    this.guiManager?.hide();
 
     this.clock.stop();
     this.active = false;

@@ -29,12 +29,16 @@ export class TabManager {
   private tabBar: HTMLDivElement;
   private contentArea: HTMLDivElement;
   private animationFrameId: number | null = null;
+  private fpsDisplay: HTMLSpanElement;
+  private fpsFrameCount = 0;
+  private fpsLastTime = performance.now();
 
   constructor() {
-    const { appContainer, tabBar, contentArea } = this.createLayout();
+    const { appContainer, tabBar, contentArea, fpsDisplay } = this.createLayout();
     this.appContainer = appContainer;
     this.tabBar = tabBar;
     this.contentArea = contentArea;
+    this.fpsDisplay = fpsDisplay;
     this.startAnimationLoop();
   }
 
@@ -45,6 +49,7 @@ export class TabManager {
     appContainer: HTMLDivElement;
     tabBar: HTMLDivElement;
     contentArea: HTMLDivElement;
+    fpsDisplay: HTMLSpanElement;
   } {
     // Main container that holds everything
     const appContainer = document.createElement('div');
@@ -84,6 +89,17 @@ export class TabManager {
       overflow: hidden;
     `;
 
+    const fpsDisplay = document.createElement('span');
+    fpsDisplay.style.cssText = `
+      margin-left: auto;
+      color: #666;
+      font-size: 12px;
+      font-family: monospace;
+      user-select: none;
+    `;
+    fpsDisplay.textContent = '-- fps';
+    tabBar.appendChild(fpsDisplay);
+
     appContainer.appendChild(tabBar);
     appContainer.appendChild(contentArea);
     document.body.appendChild(appContainer);
@@ -93,7 +109,7 @@ export class TabManager {
     document.body.style.padding = '0';
     document.body.style.overflow = 'hidden';
 
-    return { appContainer, tabBar, contentArea };
+    return { appContainer, tabBar, contentArea, fpsDisplay };
   }
 
   /**
@@ -168,7 +184,7 @@ export class TabManager {
   public register(id: string, label: string, app: TabApplication): void {
     this.tabs.set(id, app);
     const button = this.createTabButton(id, label);
-    this.tabBar.appendChild(button);
+    this.tabBar.insertBefore(button, this.fpsDisplay);
 
     // If this is the first tab, activate it
     if (this.tabs.size === 1) {
@@ -219,6 +235,16 @@ export class TabManager {
   private startAnimationLoop(): void {
     const animate = () => {
       this.animationFrameId = requestAnimationFrame(animate);
+
+      this.fpsFrameCount++;
+      const now = performance.now();
+      const elapsed = now - this.fpsLastTime;
+      if (elapsed >= 500) {
+        const fps = (this.fpsFrameCount * 1000) / elapsed;
+        this.fpsDisplay.textContent = `${Math.round(fps)} fps`;
+        this.fpsFrameCount = 0;
+        this.fpsLastTime = now;
+      }
 
       if (this.activeTabId) {
         const app = this.tabs.get(this.activeTabId);

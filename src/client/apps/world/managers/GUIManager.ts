@@ -1,5 +1,4 @@
-import { GUI } from 'dat.gui';
-import { debounce } from 'lodash';
+import { Pane } from 'tweakpane';
 import { VisualizationManager } from './VisualizationManager';
 import { TectonicManager } from './TectonicManager';
 import { NoiseManager } from './NoiseManager';
@@ -14,11 +13,19 @@ import { FlyCam } from '@core/FlyCam';
 const MIN_DEGREE = 0;
 const MAX_DEGREE = 7;
 
+function debounce(fn: (...args: unknown[]) => void, ms: number): (...args: unknown[]) => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return (...args) => {
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
 /**
- * Manages the dat.GUI interface and coordinates user input with other managers.
+ * Manages the Tweakpane interface and coordinates user input with other managers.
  */
 export class GUIManager {
-  private gui: GUI;
+  private pane: Pane;
   private visualizationManager: VisualizationManager;
   private tectonicManager: TectonicManager;
   private noiseManager: NoiseManager;
@@ -41,81 +48,74 @@ export class GUIManager {
     this.interactionHandler = interactionHandler;
     this.onResetCallback = onResetCallback;
 
-    this.gui = new GUI({ autoPlace: false });
-    // Append GUI to content area
+    this.pane = new Pane({ title: 'Controls' });
     const contentArea = document.getElementById('content-area') || document.body;
-    contentArea.appendChild(this.gui.domElement);
-    this.gui.domElement.style.position = 'absolute';
-    this.gui.domElement.style.top = '0';
-    this.gui.domElement.style.right = '0';
+    this.pane.element.style.position = 'absolute';
+    this.pane.element.style.top      = '0';
+    this.pane.element.style.right    = '0';
+    this.pane.element.style.width    = '280px';
+    contentArea.appendChild(this.pane.element);
+
     this.setupGUI();
   }
 
-  /**
-   * Sets up all GUI folders and controls.
-   */
   private setupGUI(): void {
     const icoParams = this.visualizationManager.getIcoParams();
     const icosahedronMaterial = this.visualizationManager.getIcosahedronMaterial();
-    const dualMaterial = this.visualizationManager.getDualMaterial();
-    const graphLinesMaterial = this.visualizationManager.getGraphLinesMaterial();
-    const motionVecLinesMaterial = this.visualizationManager.getMotionVecLinesMaterial();
+    const dualMaterial        = this.visualizationManager.getDualMaterial();
+    const graphLinesMaterial  = this.visualizationManager.getGraphLinesMaterial();
+    const motionVecLinesMaterial    = this.visualizationManager.getMotionVecLinesMaterial();
     const neighborTilesLinesMaterial = this.visualizationManager.getNeighborTilesLinesMaterial();
 
-    // Top-level controls
-    this.gui
-      .add(icoParams, 'degree', MIN_DEGREE, MAX_DEGREE)
-      .step(1)
-      .name('Subdivision')
-      .onChange(debounce((value: number) => this.onResetCallback(value), 300));
+    // ── Top-level controls ────────────────────────────────────────────────────
 
-    this.gui
-      .add({ selectionMode: this.interactionHandler.getSelectionMode() }, 'selectionMode')
-      .name('Selection')
-      .onChange((value: boolean) => this.interactionHandler.setSelectionMode(value));
+    const degreeState = { degree: icoParams.degree };
+    const onDegreeChange = debounce((value: unknown) => this.onResetCallback(value as number), 300);
+    this.pane.addBinding(degreeState, 'degree', {
+      label: 'Subdivision', min: MIN_DEGREE, max: MAX_DEGREE, step: 1,
+    }).on('change', ({ value }) => onDegreeChange(value));
 
-    // Color mode — top-level since it is the primary view toggle
-    const colorModeParams = { mode: LODColorMode.PLATE };
-    this.gui
-      .add(colorModeParams, 'mode', { 'Plate': LODColorMode.PLATE, 'Geology': LODColorMode.GEOLOGY, 'Elevation': LODColorMode.ELEVATION })
-      .name('Color Mode')
-      .onChange((value: LODColorMode) => {
-        const isGeology = value === LODColorMode.GEOLOGY;
-        this.tectonicManager.setGeologyDisplayEnabled(isGeology);
-        this.tectonicManager.setPlateDisplayMode(isGeology ? PlateDisplayMode.NONE : PlateDisplayMode.CATEGORY);
-        this.patchOperation?.setColorMode(value);
-        this.lodRenderer?.invalidate();
+    const selectionState = { selectionMode: this.interactionHandler.getSelectionMode() };
+    this.pane.addBinding(selectionState, 'selectionMode', { label: 'Selection' })
+      .on('change', ({ value }) => this.interactionHandler.setSelectionMode(value));
+
+    const colorModeState = { mode: LODColorMode.PLATE };
+    this.pane.addBinding(colorModeState, 'mode', {
+      label: 'Color Mode',
+      options: { Plate: LODColorMode.PLATE, Geology: LODColorMode.GEOLOGY, Elevation: LODColorMode.ELEVATION },
+    }).on('change', ({ value }) => {
+      const isGeology = value === LODColorMode.GEOLOGY;
+      this.tectonicManager.setGeologyDisplayEnabled(isGeology);
+      this.tectonicManager.setPlateDisplayMode(isGeology ? PlateDisplayMode.NONE : PlateDisplayMode.CATEGORY);
+      this.patchOperation?.setColorMode(value);
+      this.lodRenderer?.invalidate();
+    });
+
+    // ── View ──────────────────────────────────────────────────────────────────
+
+    const viewFolder = this.pane.addFolder({ title: 'View', expanded: false });
+    viewFolder.addBinding(dualMaterial,        'visible',   { label: 'Dual Mesh'    });
+    viewFolder.addBinding(dualMaterial,        'wireframe', { label: 'Wireframe'    });
+    viewFolder.addBinding(icosahedronMaterial, 'visible',   { label: 'Icosahedron'  });
+    viewFolder.addBinding(graphLinesMaterial,  'visible',   { label: 'Graph Lines'  })
+      .on('change', ({ value }) => {
+        if (value) this.visualizationManager.computeHalfedgeGraphLines();
       });
-
-    // View - consolidated visibility toggles
-    // Some elements are lazy-loaded when first enabled
-    const viewGui = this.gui.addFolder('View');
-    viewGui.add(dualMaterial, 'visible').name('Dual Mesh');
-    viewGui.add(dualMaterial, 'wireframe').name('Wireframe');
-    viewGui.add(icosahedronMaterial, 'visible').name('Icosahedron');
-    viewGui
-      .add(graphLinesMaterial, 'visible')
-      .name('Graph Lines')
-      .onChange((value: boolean) => {
-        if (value) {
-          // Lazy load graph lines when first enabled
-          this.visualizationManager.computeHalfedgeGraphLines();
-        }
+    viewFolder.addBinding(motionVecLinesMaterial, 'visible', { label: 'Motion Vectors' })
+      .on('change', ({ value }) => {
+        if (value) this.tectonicManager.computeMotionVecLines();
       });
-    viewGui
-      .add(motionVecLinesMaterial, 'visible')
-      .name('Motion Vectors')
-      .onChange((value: boolean) => {
-        if (value) {
-          // Lazy load motion vectors when first enabled
-          this.tectonicManager.computeMotionVecLines();
-        }
-      });
-    viewGui.add(neighborTilesLinesMaterial, 'visible').name('Neighbor Tiles');
+    viewFolder.addBinding(neighborTilesLinesMaterial, 'visible', { label: 'Neighbor Tiles' });
 
-    // Perlin Noise
+    // ── Perlin Noise ──────────────────────────────────────────────────────────
+
     const noiseParams = { seed: 42, scale: 2.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
-    const noiseGui = this.gui.addFolder('Perlin Noise');
+    const noiseFolder = this.pane.addFolder({ title: 'Perlin Noise', expanded: false });
+
+    const elevParams = {
+      apparentKm: this.patchOperation?.getElevationAmplitudeApparentKm() ?? 100,
+      realKm:     apparentElevKmToReal(this.patchOperation?.getElevationAmplitudeApparentKm() ?? 100),
+    };
 
     const regenerateNoise = debounce(() => {
       this.noiseManager.generatePerlinNoise(
@@ -135,108 +135,96 @@ export class GUIManager {
       this.lodRenderer?.invalidate();
     }, 150);
 
-    noiseGui
-      .add({ visible: this.noiseManager.isNoiseDisplayEnabled() }, 'visible')
-      .name('Show')
-      .onChange((value: boolean) => this.noiseManager.setNoiseDisplayEnabled(value));
-    noiseGui
-      .add({ gradient: this.noiseManager.isGradientDisplayEnabled() }, 'gradient')
-      .name('Gradient')
-      .onChange((value: boolean) => this.noiseManager.setGradientDisplayEnabled(value));
-    noiseGui.add(noiseParams, 'seed', 0, 1000).step(1).name('Seed').onChange(regenerateNoise);
-    noiseGui.add(noiseParams, 'scale', 0.5, 10.0).step(0.1).name('Scale').onChange(regenerateNoise);
-    noiseGui.add(noiseParams, 'octaves', 1, 8).step(1).name('Octaves').onChange(regenerateNoise);
-    noiseGui.add(noiseParams, 'persistence', 0.1, 1.0).step(0.05).name('Persist.').onChange(regenerateNoise);
-    noiseGui.add(noiseParams, 'lacunarity', 1.0, 4.0).step(0.1).name('Lacunar.').onChange(regenerateNoise);
+    const noiseVisState    = { visible:  this.noiseManager.isNoiseDisplayEnabled() };
+    const noiseGradState   = { gradient: this.noiseManager.isGradientDisplayEnabled() };
+    noiseFolder.addBinding(noiseVisState,  'visible',  { label: 'Show'     })
+      .on('change', ({ value }) => this.noiseManager.setNoiseDisplayEnabled(value));
+    noiseFolder.addBinding(noiseGradState, 'gradient', { label: 'Gradient' })
+      .on('change', ({ value }) => this.noiseManager.setGradientDisplayEnabled(value));
+    noiseFolder.addBinding(noiseParams, 'seed',        { label: 'Seed',        min: 0,   max: 1000, step: 1    }).on('change', regenerateNoise);
+    noiseFolder.addBinding(noiseParams, 'scale',       { label: 'Scale',       min: 0.5, max: 10.0, step: 0.1  }).on('change', regenerateNoise);
+    noiseFolder.addBinding(noiseParams, 'octaves',     { label: 'Octaves',     min: 1,   max: 8,    step: 1    }).on('change', regenerateNoise);
+    noiseFolder.addBinding(noiseParams, 'persistence', { label: 'Persist.',    min: 0.1, max: 1.0,  step: 0.05 }).on('change', regenerateNoise);
+    noiseFolder.addBinding(noiseParams, 'lacunarity',  { label: 'Lacunar.',    min: 1.0, max: 4.0,  step: 0.1  }).on('change', regenerateNoise);
 
-    // Elevation amplitude — apparent (visual) vs real (physical) unit conversion
-    const elevParams = {
-      apparentKm: this.patchOperation?.getElevationAmplitudeApparentKm() ?? 100,
-      realKm: apparentElevKmToReal(this.patchOperation?.getElevationAmplitudeApparentKm() ?? 100),
-    };
-    noiseGui
-      .add(elevParams, 'apparentKm', 10, 500)
-      .step(5)
-      .name('Elev. apparent (km)')
-      .onChange((value: number) => {
-        elevParams.realKm = apparentElevKmToReal(value);
-        this.patchOperation?.setElevationAmplitudeApparentKm(value);
-        this.lodRenderer?.invalidate();
-      });
-    noiseGui
-      .add(elevParams, 'realKm')
-      .name('Elev. real (km)')
-      .listen();
+    const elevRealBinding = noiseFolder.addBinding(elevParams, 'realKm', {
+      label: 'Elev. real (km)', readonly: true,
+    });
+    noiseFolder.addBinding(elevParams, 'apparentKm', {
+      label: 'Elev. apparent (km)', min: 10, max: 500, step: 5,
+    }).on('change', ({ value }) => {
+      elevParams.realKm = apparentElevKmToReal(value);
+      elevRealBinding.refresh();
+      this.patchOperation?.setElevationAmplitudeApparentKm(value);
+      this.lodRenderer?.invalidate();
+    });
 
-    // Tectonic
-    const tectonicGui = this.gui.addFolder('Tectonic');
-    tectonicGui
-      .add({ rebuild: () => { this.tectonicManager.rebuildTectonicPlates(); this.updateNetRotationDisplay(); } }, 'rebuild')
-      .name('Rebuild');
-    tectonicGui
-      .add({ boundaryDisplay: this.interactionHandler.getBoundaryDisplayMode() }, 'boundaryDisplay',
-        { 'Raw': BoundaryDisplayMode.RAW_TYPE, 'Refined': BoundaryDisplayMode.REFINED_TYPE, 'Edge Order': BoundaryDisplayMode.EDGE_ORDER })
-      .name('Boundary')
-      .onChange((value: BoundaryDisplayMode) => {
-        this.interactionHandler.setBoundaryDisplayMode(value);
-        this.tectonicManager.refreshAllBoundariesDisplay(value);
-        this.visualizationManager.refreshBoundaryDisplay(value);
-      });
-    tectonicGui
-      .add({ showBorder: false }, 'showBorder')
-      .name('Border Tiles')
-      .onChange((value: boolean) => {
+    // ── Tectonic ──────────────────────────────────────────────────────────────
+
+    const tectonicFolder = this.pane.addFolder({ title: 'Tectonic', expanded: true });
+    tectonicFolder.addButton({ title: 'Rebuild' }).on('click', () => {
+      this.tectonicManager.rebuildTectonicPlates();
+      this.updateNetRotationDisplay();
+    });
+
+    const boundaryState = { mode: this.interactionHandler.getBoundaryDisplayMode() };
+    tectonicFolder.addBinding(boundaryState, 'mode', {
+      label: 'Boundary',
+      options: {
+        'Raw':        BoundaryDisplayMode.RAW_TYPE,
+        'Refined':    BoundaryDisplayMode.REFINED_TYPE,
+        'Edge Order': BoundaryDisplayMode.EDGE_ORDER,
+      },
+    }).on('change', ({ value }) => {
+      this.interactionHandler.setBoundaryDisplayMode(value as BoundaryDisplayMode);
+      this.tectonicManager.refreshAllBoundariesDisplay(value as BoundaryDisplayMode);
+      this.visualizationManager.refreshBoundaryDisplay(value as BoundaryDisplayMode);
+    });
+
+    const borderState = { showBorder: false };
+    tectonicFolder.addBinding(borderState, 'showBorder', { label: 'Border Tiles' })
+      .on('change', ({ value }) => {
         if (value) this.tectonicManager.showBorderTiles();
-        else this.tectonicManager.colorTectonicSystem(false);
+        else       this.tectonicManager.colorTectonicSystem(false);
       });
 
-    // Plate visualization color legend subfolder (includes categories + microplate)
-    const tectonicLegendGui = tectonicGui.addFolder('Legend');
+    const tectonicLegendFolder = tectonicFolder.addFolder({ title: 'Legend', expanded: false });
     for (const entry of PLATE_VISUALIZATION_LEGEND) {
-      const colorHex = rgbToHex(entry.color);
-      const colorObj = { color: colorHex };
-      tectonicLegendGui.addColor(colorObj, 'color').name(entry.label).listen();
+      const colorObj = { color: rgbToHex(entry.color) };
+      tectonicLegendFolder.addBinding(colorObj, 'color', { label: entry.label });
     }
 
-    tectonicGui.open();
+    // ── Geology ───────────────────────────────────────────────────────────────
 
-    // Geology
-    const geologyGui = this.gui.addFolder('Geology');
-    geologyGui
-      .add({ reset: this.tectonicManager.isRecomputeOrogenyMode() }, 'reset')
-      .name('Reset Orogeny')
-      .onChange((value: boolean) => this.tectonicManager.setRecomputeOrogenyMode(value));
+    const geologyFolder = this.pane.addFolder({ title: 'Geology', expanded: false });
+    const orogenyState = { reset: this.tectonicManager.isRecomputeOrogenyMode() };
+    geologyFolder.addBinding(orogenyState, 'reset', { label: 'Reset Orogeny' })
+      .on('change', ({ value }) => this.tectonicManager.setRecomputeOrogenyMode(value));
 
-    // Color legend subfolder
-    const legendGui = geologyGui.addFolder('Legend');
+    const geologyLegendFolder = geologyFolder.addFolder({ title: 'Legend', expanded: false });
     for (const entry of GEOLOGY_TYPE_LEGEND) {
-      const colorHex = geologyTypeColorToHex(entry.type);
-      const colorObj = { color: colorHex };
-      legendGui.addColor(colorObj, 'color').name(entry.label).listen();
+      const colorObj = { color: geologyTypeColorToHex(entry.type) };
+      geologyLegendFolder.addBinding(colorObj, 'color', { label: entry.label });
     }
 
-    // Debug/Stats (collapsed by default)
-    const statsGui = this.gui.addFolder('Stats');
-    statsGui.add(icoParams, 'numVertices').name('Vertices').listen();
-    statsGui.add(icoParams, 'numFaces').name('Primal Faces').listen();
-    statsGui.add(this.netRotationParams, 'magnitude').name('Net Rotation').listen();
+    // ── Stats ─────────────────────────────────────────────────────────────────
 
-    // Face distribution subfolder
-    const icoDualParams = this.visualizationManager.getIcoDualParams();
-    const faceDistGui = statsGui.addFolder('Face distribution');
-    faceDistGui.add(icoDualParams, 'dualFaces').name('Dual Faces').listen();
-    faceDistGui.add(icoDualParams, 'pentagons').name('Pentagons').listen();
-    faceDistGui.add(icoDualParams, 'hexagons').name('Hexagons').listen();
-    faceDistGui.add(icoDualParams, 'heptagons').name('Heptagons').listen();
+    const statsFolder = this.pane.addFolder({ title: 'Stats', expanded: false });
+    statsFolder.addBinding(icoParams,             'numVertices',  { label: 'Vertices',     readonly: true });
+    statsFolder.addBinding(icoParams,             'numFaces',     { label: 'Primal Faces', readonly: true });
+    statsFolder.addBinding(this.netRotationParams, 'magnitude',   { label: 'Net Rotation', readonly: true });
+
+    const icoDualParams   = this.visualizationManager.getIcoDualParams();
+    const faceDistFolder  = statsFolder.addFolder({ title: 'Face distribution', expanded: false });
+    faceDistFolder.addBinding(icoDualParams, 'dualFaces',  { label: 'Dual Faces', readonly: true });
+    faceDistFolder.addBinding(icoDualParams, 'pentagons',  { label: 'Pentagons',  readonly: true });
+    faceDistFolder.addBinding(icoDualParams, 'hexagons',   { label: 'Hexagons',   readonly: true });
+    faceDistFolder.addBinding(icoDualParams, 'heptagons',  { label: 'Heptagons',  readonly: true });
   }
 
   /**
-   * Adds an "LOD View" folder to the GUI.
+   * Adds an "LOD View" folder to the pane.
    * Call once after constructing both the FlyCam and LODTileRenderer.
-   *
-   * @param flyCam        - fly camera instance
-   * @param lodRenderer   - tile-colored LOD renderer
-   * @param onFlyCamToggle - callback to enable/disable fly camera on the scene
    */
   public setupLODFolder(
     flyCam: FlyCam,
@@ -244,11 +232,11 @@ export class GUIManager {
     patchOperation: TileShaderPatchOperation,
     onFlyCamToggle: (enabled: boolean) => void
   ): void {
-    this.lodRenderer = lodRenderer;
+    this.lodRenderer   = lodRenderer;
     this.patchOperation = patchOperation;
-    const lodGui = this.gui.addFolder('LOD View');
 
-    // Grab legacy-view materials so we can hide/show them when LOD is toggled
+    const lodFolder = this.pane.addFolder({ title: 'LOD View', expanded: true });
+
     const legacyMaterials = [
       this.visualizationManager.getDualMaterial(),
       this.visualizationManager.getIcosahedronMaterial(),
@@ -263,23 +251,15 @@ export class GUIManager {
       this.visualizationManager.getNeighborTilesLinesMaterial(),
       this.visualizationManager.getNoiseGradientLinesMaterial(),
     ];
-
-    // Saved state so we can restore when LOD is disabled
     let savedVisible: boolean[] = legacyMaterials.map(m => m.visible);
 
-    // Fly Camera toggle
     const flyParams = { enabled: flyCam.isEnabled() };
-    lodGui
-      .add(flyParams, 'enabled')
-      .name('Fly Camera')
-      .onChange((value: boolean) => onFlyCamToggle(value));
+    lodFolder.addBinding(flyParams, 'enabled', { label: 'Fly Camera' })
+      .on('change', ({ value }) => onFlyCamToggle(value));
 
-    // Frustum LOD toggle — hides legacy view while active
     const lodParams = { enabled: lodRenderer.isEnabled() };
-    lodGui
-      .add(lodParams, 'enabled')
-      .name('Frustum LOD')
-      .onChange((value: boolean) => {
+    lodFolder.addBinding(lodParams, 'enabled', { label: 'Frustum LOD' })
+      .on('change', ({ value }) => {
         if (value) {
           savedVisible = legacyMaterials.map(m => m.visible);
           for (const m of legacyMaterials) m.visible = false;
@@ -289,46 +269,39 @@ export class GUIManager {
         lodRenderer.setEnabled(value);
       });
 
-    // Wireframe toggle
     const wireframeParams = { enabled: lodRenderer.isWireframe() };
-    lodGui
-      .add(wireframeParams, 'enabled')
-      .name('Wireframe')
-      .onChange((value: boolean) => lodRenderer.setWireframe(value));
+    lodFolder.addBinding(wireframeParams, 'enabled', { label: 'Wireframe' })
+      .on('change', ({ value }) => lodRenderer.setWireframe(value));
 
-    // Screen-space error slider (lower = more detail)
     const errorParams = { error: lodRenderer.getTargetScreenSpaceError() };
-    lodGui
-      .add(errorParams, 'error', 8, 256)
-      .step(8)
-      .name('Screen Error')
-      .onChange((value: number) => lodRenderer.setTargetScreenSpaceError(value));
-
-    lodGui.open();
+    lodFolder.addBinding(errorParams, 'error', {
+      label: 'Screen Error', min: 8, max: 256, step: 8,
+    }).on('change', ({ value }) => lodRenderer.setTargetScreenSpaceError(value));
   }
 
-  /**
-   * Updates the net rotation display from the tectonic manager.
-   */
+  /** Refreshes all read-only stat bindings from their source objects. */
+  public refresh(): void {
+    this.pane.refresh();
+  }
+
   private updateNetRotationDisplay(): void {
     const netRotation = this.tectonicManager.getNetRotation();
-    this.netRotationParams.x = netRotation.x;
-    this.netRotationParams.y = netRotation.y;
-    this.netRotationParams.z = netRotation.z;
+    this.netRotationParams.x         = netRotation.x;
+    this.netRotationParams.y         = netRotation.y;
+    this.netRotationParams.z         = netRotation.z;
     this.netRotationParams.magnitude = netRotation.length();
   }
 
-  /**
-   * Disposes of the GUI.
-   */
-  public dispose(): void {
-    this.gui.destroy();
+  public show(): void {
+    this.pane.element.style.display = 'block';
   }
 
-  /**
-   * Gets the GUI instance.
-   */
-  public getGUI(): GUI {
-    return this.gui;
+  public hide(): void {
+    this.pane.element.style.display = 'none';
+  }
+
+  public dispose(): void {
+    this.pane.dispose();
+    this.pane.element.remove();
   }
 }
