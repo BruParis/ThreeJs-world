@@ -145,6 +145,7 @@ float computeLayer(vec2 uv) {
   // base is [0,1]; applyTerrain expects [-1,1] raw input, so convert: raw = base*2-1,
   // rawSlope = slope_grad*2 (gradient in [-1,1] space = gradient in [0,1] space * 2).
   float eroded = base;
+  float ridge  = 0.0;
   if (uNoiseType != 2 && uErosionEnabled != 0) {
     float GE = 0.5 / max(uNoiseScale, 0.5);
     float fL = computeBaseAtWorld(worldX - GE, worldZ);
@@ -157,10 +158,16 @@ float computeLayer(vec2 uv) {
       uErosionOctaves, uErosionScale, uErosionStrength,
       uErosionGullyWeight, uErosionDetail, uErosionLacunarity,
       uErosionGain, uErosionCellScale, uErosionNormalization,
-      uErosionRidgeRounding, uErosionCreaseRounding
+      uErosionRidgeRounding, uErosionCreaseRounding,
+      ridge
     );
   }
   if (uLayerIndex == 3) return eroded;
+
+  // Step 5: ridgemap — erosion gully signal.
+  // Negative values = ridge / gully carved by erosion → shown bright.
+  // Positive / flat areas → dark. Nonlinear mapping to maximise contrast.
+  if (uLayerIndex == 5) return pow(clamp(-ridge, 0.0, 1.0), 0.5);
 
   // Step 4: water-level clamping — mirrors elevToDisplY() in the vertex shader.
   return max(0.0, (eroded + uElevOffset - SEA_LEVEL) / (1.0 - SEA_LEVEL));

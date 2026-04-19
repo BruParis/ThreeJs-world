@@ -146,7 +146,8 @@ float baseNoise(vec3 wPos) {
 
 // Returns elevation in [0, 1] at an arbitrary world position.
 // Used both for the center fragment and for the finite-difference gradient.
-float computeElevation(vec3 wPos) {
+float computeElevation(vec3 wPos, out float ridgeOut) {
+  ridgeOut = 0.0;
   if (uNoiseType == 2) {
     float l1 = clamp((wPos.x + wPos.z) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
     float hm = clamp(heightmapElevation(wPos.xz).x, 0.0, 1.0);
@@ -163,20 +164,23 @@ float computeElevation(vec3 wPos) {
     float fU = baseNoise(wPos + vec3(0.0, 0.0, GE));
     rawSlope = vec2(fR - fL, fU - fD) / (2.0 * GE);
   }
-  return applyTerrain(
+  float elev = applyTerrain(
     wPos.xz, rawN, rawSlope, uErosionEnabled,
     uErosionOctaves, uErosionScale, uErosionStrength,
     uErosionGullyWeight, uErosionDetail, uErosionLacunarity,
     uErosionGain, uErosionCellScale, uErosionNormalization,
-    uErosionRidgeRounding, uErosionCreaseRounding
+    uErosionRidgeRounding, uErosionCreaseRounding,
+    ridgeOut
   );
+  return elev;
 }
 
 // Normalised elevation for gradient baking — no sea-level clamp so that
 // underwater slopes are preserved and remain correct after an elevation offset.
 // (The vertex shader still clamps the actual Y displacement via max(0,...).)
 float displNorm(vec3 wPos) {
-  return (computeElevation(wPos) - SEA_LEVEL) / (1.0 - SEA_LEVEL);
+  float _r;
+  return (computeElevation(wPos, _r) - SEA_LEVEL) / (1.0 - SEA_LEVEL);
 }
 
 void main() {
@@ -185,7 +189,8 @@ void main() {
   float worldZ = uOriginZ + (gl_FragCoord.y - 0.5) * uStepZ;
   vec3 wPos = vec3(worldX, 0.0, worldZ);
 
-  float noise = computeElevation(wPos);
+  float ridgeOut;
+  float noise = computeElevation(wPos, ridgeOut);
 
   // Bake finite-difference gradient of the normalised displacement.
   // The vertex shader multiplies by uAmplitude at runtime, so no amplitude
@@ -197,8 +202,8 @@ void main() {
   float gradX = (dR - dL) / (2.0 * uStepX);
   float gradZ = (dU - dD) / (2.0 * uStepZ);
 
-  // R = elevation, G = dH/dX (norm), B = dH/dZ (norm), A = 1.
-  fragColor = vec4(noise, gradX, gradZ, 1.0);
+  // R = elevation, G = dH/dX (norm), B = dH/dZ (norm), A = ridgeMap.
+  fragColor = vec4(noise, gradX, gradZ, ridgeOut);
 }
 `;
 

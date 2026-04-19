@@ -183,7 +183,8 @@ float applyErosion(
   float cellScale,
   float normalization,
   float ridgeRounding,
-  float creaseRounding
+  float creaseRounding,
+  out float ridgeOut
 ) {
   vec3 heightAndSlope = vec3(noise, slope);
 
@@ -203,6 +204,7 @@ float applyErosion(
     ridgeMap, dbg
   );
 
+  ridgeOut = ridgeMap;
   // Height offset: pull terrain down slightly (TERRAIN_HEIGHT_OFFSET.x = -0.65).
   float offset = -0.65 * h.w;
   return h.x + offset;

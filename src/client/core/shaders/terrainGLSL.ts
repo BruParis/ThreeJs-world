@@ -34,8 +34,11 @@ float applyTerrain(
   float erosionCellScale,
   float erosionNormalization,
   float erosionRidgeRounding,
-  float erosionCreaseRounding
+  float erosionCreaseRounding,
+  out float ridgeOut
 ) {
+  ridgeOut = 0.0;
+
   // Step 1: normalise [-1, 1] → [0, 1].
   float elev = rawNoise * 0.5 + 0.5;
 
@@ -47,7 +50,8 @@ float applyTerrain(
       erosionOctaves, erosionScale, erosionStrength,
       erosionGullyWeight, erosionDetail, erosionLacunarity,
       erosionGain, erosionCellScale, erosionNormalization,
-      erosionRidgeRounding, erosionCreaseRounding
+      erosionRidgeRounding, erosionCreaseRounding,
+      ridgeOut
     );
     elev = clamp(elev, 0.0, 1.0);
   }

@@ -226,7 +226,7 @@ export class TerrainMesh {
     const col   = Math.max(0, Math.min(w - 1, Math.floor(u * (w - 1))));
     const row   = Math.max(0, Math.min(h - 1, Math.floor(v * (h - 1))));
     const noise = this.elevationData[row * w + col];
-    return Math.max(0, (noise - 0.35) / (1 - 0.35) * this.amplitude);
+    return Math.max(0, (noise + this.elevationOffset - 0.35) / (1 - 0.35) * this.amplitude);
   }
 
   dispose(): void {
@@ -330,6 +330,7 @@ uniform float uPatchHalfSize;
 uniform float uElevOffset;
 
 varying float vTerrainElev;
+varying float vTerrainRidge;
 varying vec3  vTerrainWorldPos;
 varying vec3  vTerrainWorldNormal;
 
@@ -353,6 +354,7 @@ float terrain_displY(float noise) {
         float terrain_dispY = terrain_displY(terrain_noise);
 
         vTerrainElev     = terrain_noise;
+        vTerrainRidge    = elevData.a;
         vTerrainWorldPos = vec3(wPos.x, terrain_dispY, wPos.z);
 
         // Gradient stored amplitude-normalised; scale by uAmplitude to get world-space slope.
@@ -385,6 +387,7 @@ uniform float     uPatchHalfSize;
 uniform float     uElevOffset;
 
 varying float vTerrainElev;
+varying float vTerrainRidge;
 varying vec3  vTerrainWorldPos;
 varying vec3  vTerrainWorldNormal;
 ` + shader.fragmentShader;
@@ -402,7 +405,9 @@ varying vec3  vTerrainWorldNormal;
         }
         float shiftedElev = vTerrainElev + uElevOffset;
         vec3 colorNormal = shiftedElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
-        diffuseColor.rgb = terrainColor(shiftedElev, vTerrainWorldPos, colorNormal);
+        // occlusion: open sky by default; wire to a real AO source when available.
+        float treeOcclusion = 1.0;
+        diffuseColor.rgb = terrainColor(shiftedElev, vTerrainWorldPos, colorNormal, treeOcclusion, vTerrainRidge);
         `,
       );
 

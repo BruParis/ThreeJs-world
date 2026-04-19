@@ -16,6 +16,7 @@ export const LAYER_DESCRIPTORS: readonly LayerDescriptor[] = [
   { index: 2, label: 'Blended' },
   { index: 3, label: 'Erosion' },
   { index: 4, label: 'Water Clamp' },
+  { index: 5, label: 'RidgeMap' },
 ];
 
 /** Full set of uniforms the overlay panels need to mirror the elevation compute shader. */
