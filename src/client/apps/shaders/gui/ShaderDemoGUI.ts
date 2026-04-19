@@ -245,7 +245,7 @@ export function buildShaderDemoGUI(
     .on('change', ({ value }) => { sunLight.intensity = value; });
   lightingPage.addBinding(lightingParams, 'ambientColor', { label: 'Ambient Color' })
     .on('change', ({ value }) => ambientLight.color.setRGB(value.r / 255, value.g / 255, value.b / 255));
-  lightingPage.addBinding(lightingParams, 'ambientIntensity', { label: 'Ambient Intensity', min: 0, max: 2, step: 0.05 })
+  lightingPage.addBinding(lightingParams, 'ambientIntensity', { label: 'Ambient Intensity', min: 0, max: 5, step: 0.05 })
     .on('change', ({ value }) => { ambientLight.intensity = value; });
   lightingPage.addBinding(lightingParams, 'roughness', { label: 'Roughness', min: 0, max: 1, step: 0.01 })
     .on('change', ({ value }) => terrain.setRoughness(value));

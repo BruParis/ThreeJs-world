@@ -128,11 +128,11 @@ export class ShaderDemoApplication implements TabApplication {
     this.scene.add(new THREE.AxesHelper(1.2));
 
     // Lights — off by default; the Lighting GUI folder enables/configures them.
-    this.sunLight = new THREE.DirectionalLight(0xfff5e6, 3.0);
+    this.sunLight = new THREE.DirectionalLight(0xfff5e6, 2.0);
     this.sunLight.position.set(1.0, 1.4, 0.8); // azimuth≈52°, elevation≈45°
     this.scene.add(this.sunLight);
 
-    this.ambientLight = new THREE.AmbientLight(0x334d80, 0.5);
+    this.ambientLight = new THREE.AmbientLight(0x334d80, 1.0);
     this.scene.add(this.ambientLight);
 
     this.orbitCamera = new THREE.PerspectiveCamera(60, w / h, 0.01, 200);
