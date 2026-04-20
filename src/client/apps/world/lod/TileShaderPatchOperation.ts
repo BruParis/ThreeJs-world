@@ -49,6 +49,7 @@ export enum LODColorMode {
   GEOLOGY    = 'geology',
   ELEVATION  = 'elevation',
   TERRAIN    = 'terrain',
+  LOD        = 'lod',
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -383,7 +384,9 @@ export class TileShaderPatchOperation implements IPatchOperation {
         uElevOffset:           { value: this.elevOffset },
         uColorMode:            { value: this.colorMode === LODColorMode.ELEVATION ? 1
                                          : this.colorMode === LODColorMode.TERRAIN   ? 2
+                                         : this.colorMode === LODColorMode.LOD       ? 3
                                          : 0 },
+        uLodColor:             { value: this.levelColor(spec.level) },
         uErosionEnabled:       { value: this.erosionEnabled },
         uErosionOctaves:       { value: this.erosionOctaves },
         uErosionScale:         { value: this.erosionScale },
@@ -415,6 +418,25 @@ export class TileShaderPatchOperation implements IPatchOperation {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  private static readonly LEVEL_COLORS: readonly number[] = [
+    0xff0000, 0xff8800, 0xffff00, 0x88ff00, 0x00ff00,
+    0x00ff88, 0x00ffff, 0x0088ff, 0x0000ff, 0x8800ff,
+    0xff00ff, 0xff0088, 0xff4444, 0xffaa44, 0xffff88,
+    0xaaffaa, 0x88ffff, 0xaaaaff, 0xffaaff, 0xffffff,
+    0xcccccc,
+  ];
+
+  private levelColor(level: number): THREE.Vector3 {
+    const hex = TileShaderPatchOperation.LEVEL_COLORS[
+      Math.min(level, TileShaderPatchOperation.LEVEL_COLORS.length - 1)
+    ];
+    return new THREE.Vector3(
+      ((hex >> 16) & 0xff) / 255,
+      ((hex >>  8) & 0xff) / 255,
+       (hex        & 0xff) / 255,
+    );
+  }
 
   private tileElevWeight(tile: Tile): number {
     if (!tile.hasPlate) return 1.0;

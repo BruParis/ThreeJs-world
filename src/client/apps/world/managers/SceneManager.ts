@@ -30,7 +30,7 @@ export class SceneManager {
     this.camera = new THREE.PerspectiveCamera(
       75,
       window.innerWidth / (window.innerHeight - 40), // Account for tab bar
-      0.1,
+      0.001,
       1000
     );
     this.camera.position.z = 2;
@@ -55,6 +55,7 @@ export class SceneManager {
 
     // Initialize orbit controls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.minDistance = 1.01; // just above the unit sphere surface
 
     // Initialize raycaster and mouse vector
     this.raycaster = new THREE.Raycaster();

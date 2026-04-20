@@ -40,7 +40,8 @@ ${simplexNoiseGLSL}
 #define DIRT_COLOR2        vec3(0.46, 0.36, 0.26)
 #define GRASS_COLOR1       vec3(0.15, 0.30, 0.10)
 #define GRASS_COLOR2       vec3(0.40, 0.50, 0.20)
-#define TREE_COLOR         vec3(0.12, 0.46, 0.10)
+#define TREE_COLOR1        vec3(0.12, 0.46, 0.10)
+#define TREE_COLOR2        vec3(0.06, 0.28, 0.08)
 #define SAND_COLOR         vec3(0.80, 0.70, 0.60)
 #define WATER_COLOR        vec3(0.05, 0.10, 0.40)
 #define WATER_SHORE_COLOR  vec3(0.15, 0.55, 0.80)
@@ -122,7 +123,11 @@ vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal, float occlusion, 
 
   // ── Tree coverage ──────────────────────────────────────────────────────────
   float trees = GetTreesAmount(e, normal.y, occlusion, ridgeMap);
-  landColor = mix(landColor, TREE_COLOR * pow(trees, 8.0), clamp(trees * 2.2 - 0.8, 0.0, 1.0) * 0.9);
+  // Use high-frequency noise to vary the tree color between two values,
+  // giving a natural variation in canopy tone.
+  float treeNoise = noised_tree((worldPos.xz + 0.5) * 200.0).x * 0.5 + 0.5;
+  vec3 treeColor = mix(TREE_COLOR1, TREE_COLOR2, treeNoise);
+  landColor = mix(landColor, treeColor * pow(trees, 8.0), clamp(trees * 2.2 - 0.8, 0.0, 1.0) * 0.9);
   landColor *= 1.0 + breakup * 0.5;
 
   // ── Shoreline blend: smooth gradient between water and land ────────────────

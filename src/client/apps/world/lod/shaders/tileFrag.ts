@@ -1,10 +1,11 @@
 /**
  * Fragment shader for tectonic tile LOD patches.
  *
- * Supports three color modes via uColorMode:
+ * Supports four color modes via uColorMode:
  *   0 = tile color  (plate category or geology — from per-patch DataTexture)
  *   1 = elevation   (grayscale — black → white)
  *   2 = terrain     (biome coloring from terrainColorGLSL: ocean/grass/snow/cliff)
+ *   3 = LOD level   (flat color per LOD level — skips polygon test, uses uLodColor)
  *
  * Modes 0 and 1 use the polygon containment test to resolve which tile a fragment
  * belongs to, then sample the tile's color/elevation.
@@ -34,7 +35,8 @@ ${terrainColorGLSL}
 
 uniform highp sampler2D uTileData;
 uniform int uNumTiles;
-uniform int uColorMode;  // 0 = tile color, 1 = elevation, 2 = terrain
+uniform int uColorMode;  // 0 = tile color, 1 = elevation, 2 = terrain, 3 = LOD level
+uniform vec3 uLodColor;
 
 in vec3  vSphereNormal;
 in float vElevation;
@@ -62,6 +64,12 @@ void main() {
 
   if (uColorMode == 2) {
     fragColor = vec4(terrainColor(vElevation, vTerrainWorldPos, vTerrainLocalNormal, 1.0, vTerrainRidgeMap), 1.0);
+    return;
+  }
+
+  // ── LOD level color mode: skip polygon test, output flat level color ──────────
+  if (uColorMode == 3) {
+    fragColor = vec4(uLodColor, 1.0);
     return;
   }
 

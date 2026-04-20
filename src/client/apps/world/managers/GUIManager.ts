@@ -86,6 +86,7 @@ export class GUIManager {
         Geology:   LODColorMode.GEOLOGY,
         Elevation: LODColorMode.ELEVATION,
         Terrain:   LODColorMode.TERRAIN,
+        LOD:       LODColorMode.LOD,
       },
     }).on('change', ({ value }) => {
       const isGeology = value === LODColorMode.GEOLOGY;
@@ -259,7 +260,7 @@ export class GUIManager {
 
     const errorParams = { error: lodRenderer.getTargetScreenSpaceError() };
     lodFolder.addBinding(errorParams, 'error', {
-      label: 'Screen Error', min: 8, max: 256, step: 8,
+      label: 'Screen Error', min: 4, max: 256, step: 4,
     }).on('change', ({ value }) => lodRenderer.setTargetScreenSpaceError(value));
   }
 

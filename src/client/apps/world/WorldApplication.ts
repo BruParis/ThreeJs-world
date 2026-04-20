@@ -23,7 +23,7 @@ export class WorldApplication implements TabApplication {
    * Must be > near_clip (1 km) so the near plane cannot intersect the terrain
    * at shallow viewing angles — the classical "pilot eye height" constraint.
    */
-  private static readonly GROUND_CLEARANCE_KM = 100;
+  private static readonly GROUND_CLEARANCE_KM = 2;
   private sceneManager: SceneManager;
   private geometryBuilder: GeometryBuilder;
   private visualizationManager: VisualizationManager;
