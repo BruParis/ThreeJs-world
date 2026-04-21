@@ -154,6 +154,7 @@ export function buildShaderDemoGUI(
   fractalNoiseFolder.addBinding(terrain.fractalNoiseParams, 'octaves',    { label: 'Octaves',    min: 1,   max: 8,    step: 1    }).on('change', updElevation);
   fractalNoiseFolder.addBinding(terrain.fractalNoiseParams, 'lacunarity', { label: 'Lacunarity', min: 1.0, max: 4.0,  step: 0.1  }).on('change', updElevation);
   fractalNoiseFolder.addBinding(terrain.fractalNoiseParams, 'gain',       { label: 'Gain',       min: 0.01, max: 1.0, step: 0.01 }).on('change', updElevation);
+  fractalNoiseFolder.addBinding(terrain.fractalNoiseParams, 'amp',        { label: 'Amp',        min: 0.001, max: 0.6, step: 0.01 }).on('change', updElevation);
 
   // Initial visibility
   noiseFolder.hidden        = !isStdNoise();

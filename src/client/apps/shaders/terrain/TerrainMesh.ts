@@ -132,6 +132,7 @@ export class TerrainMesh {
         fractalOctaves:        this.fractalNoiseParams.octaves,
         fractalLacunarity:     this.fractalNoiseParams.lacunarity,
         fractalGain:           this.fractalNoiseParams.gain,
+        fractalAmp:            this.fractalNoiseParams.amp,
         erosionEnabled:         this.erosionEnabled ? 1 : 0,
         erosionOctaves:         this.erosionOctaves,
         erosionScale:           this.erosionScale,

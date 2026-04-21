@@ -35,7 +35,7 @@ float hm_hash(vec2 p) {
 // quintic smoothstep, and derives the partial derivatives analytically via the
 // chain rule — no finite differences needed.
 // Returns vec3(value [-1,1], dvalue/dx, dvalue/dy).
-vec3 noised(vec2 x) {
+vec3 hm_noised(vec2 x) {
   vec2 i  = floor(x);
   vec2 f  = fract(x);
 
@@ -73,7 +73,7 @@ vec2 heightmapElevation(vec2 p) {
   float nf = 1.0;
   float na = 0.5;
   for (int i = 0; i < uNoiseOctaves; i++) {
-    n  += noised(p * nf) * na * vec3(1.0, nf, nf);
+    n  += hm_noised(p * nf) * na * vec3(1.0, nf, nf);
     na *= uNoisePersistence;
     nf *= uNoiseLacunarity;
   }

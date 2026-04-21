@@ -40,6 +40,7 @@ export interface ElevationComputeParams {
   fractalOctaves:         number;
   fractalLacunarity:      number;
   fractalGain:            number;
+  fractalAmp:             number;
   erosionEnabled:         number;
   erosionOctaves:         number;
   erosionScale:           number;
@@ -99,6 +100,7 @@ uniform float uFractalFreq;
 uniform int   uFractalOctaves;
 uniform float uFractalLacunarity;
 uniform float uFractalGain;
+uniform float uFractalAmp;
 uniform int   uErosionEnabled;
 uniform int   uErosionOctaves;
 uniform float uErosionScale;
@@ -137,7 +139,7 @@ float baseNoise(vec3 wPos) {
   if (uNoiseType == 3) {
     l2 = gaussian2D(wPos) * 2.0 - 1.0;
   } else if (uNoiseType == 4) {
-    l2 = FractalNoise(wPos.xz, uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x;
+    l2 = uFractalAmp * FractalNoise(wPos.xz, uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x;
   } else {
     l2 = noiseFbm(wPos * uNoiseScale);
   }
@@ -395,6 +397,7 @@ export class TerrainElevationGL {
     gl.uniform1i(u('uFractalOctaves'),      p.fractalOctaves);
     gl.uniform1f(u('uFractalLacunarity'),   p.fractalLacunarity);
     gl.uniform1f(u('uFractalGain'),         p.fractalGain);
+    gl.uniform1f(u('uFractalAmp'),          p.fractalAmp);
     gl.uniform1i(u('uErosionEnabled'),        p.erosionEnabled);
     gl.uniform1i(u('uErosionOctaves'),        p.erosionOctaves);
     gl.uniform1f(u('uErosionScale'),          p.erosionScale);

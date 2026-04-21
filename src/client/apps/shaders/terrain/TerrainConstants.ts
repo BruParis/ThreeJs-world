@@ -13,6 +13,7 @@ export interface FractalNoiseParams {
   octaves:    number;
   lacunarity: number;
   gain:       number;
+  amp:       number;
 }
 
 export interface GaussianParams {
@@ -40,6 +41,7 @@ export const DEFAULT_FRACTAL_NOISE_PARAMS: FractalNoiseParams = {
   octaves:    3,
   lacunarity: 2.0,
   gain:       0.1,
+  amp:        0.125
 };
 
 export const DEFAULT_ELEV_OFFSET = 0.0;   // uniform shift applied to elevation before sea-level test
