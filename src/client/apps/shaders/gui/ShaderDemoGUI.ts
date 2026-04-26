@@ -5,6 +5,14 @@ import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from '../terrain/TerrainMesh';
 import { LayerOverlay } from '../terrain/LayerOverlay';
 import { SUBDIVISION_OPTIONS, PATCH_OPTIONS } from '../terrain/TerrainConstants';
+import {
+  TERRAIN_DEBUG_COLOR,
+  TERRAIN_DEBUG_ELEVATION,
+  TERRAIN_DEBUG_RIDGEMAP,
+  TERRAIN_DEBUG_TREES,
+  TERRAIN_DEBUG_NORMALS,
+  TERRAIN_DEBUG_STEEPNESS,
+} from '@core/shaders/terrainSampleGLSL';
 
 export interface ShaderDemoGUIHandle {
   show(): void;
@@ -92,11 +100,29 @@ export function buildShaderDemoGUI(
       else       { flyCam.disable(); controls.enabled = true; }
     });
 
-  const displayParams = { wireframe: terrain.wireframe, showLayers: overlay.showLayers };
+  const displayParams = {
+    wireframe:  terrain.wireframe,
+    showLayers: overlay.showLayers,
+    debugMode:  terrain.terrainColors.debugMode,
+  };
   viewPage.addBinding(displayParams, 'wireframe', { label: 'Wireframe' })
     .on('change', ({ value }) => { terrain.wireframe = value; updDisplay(); });
   viewPage.addBinding(displayParams, 'showLayers', { label: 'Show Layer Panels' })
     .on('change', ({ value }) => overlay.setVisible(value));
+  viewPage.addBinding(displayParams, 'debugMode', {
+    label: 'Debug View',
+    options: {
+      'Color':      TERRAIN_DEBUG_COLOR,
+      'Elevation':  TERRAIN_DEBUG_ELEVATION,
+      'Ridge Map':  TERRAIN_DEBUG_RIDGEMAP,
+      'Trees':      TERRAIN_DEBUG_TREES,
+      'Normals':    TERRAIN_DEBUG_NORMALS,
+      'Steepness':  TERRAIN_DEBUG_STEEPNESS,
+    },
+  }).on('change', ({ value }) => {
+    terrain.terrainColors.debugMode = Number(value);
+    terrain.syncTerrainColorUniforms();
+  });
 
   // ── Tab: Terrain ──────────────────────────────────────────────────────────
 

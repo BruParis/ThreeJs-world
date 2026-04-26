@@ -123,7 +123,8 @@ vec4 erosion_ErosionFilter(
   float roundingForInput = mix(rounding.y, rounding.x, clamp01(fadeTarget + 0.5)) * rounding.z;
   float combiMask = erosion_ease_out(erosion_smooth_start(slopeLength * onset.x, roundingForInput * onset.x));
 
-  float ridgeMapCombiMask  = erosion_ease_out(slopeLength * onset.z);
+  // float ridgeMapCombiMask  = erosion_ease_out(slopeLength * onset.z);
+  float ridgeMapCombiMask  = erosion_ease_out(slopeLength);
   float ridgeMapFadeTarget = fadeTarget;
 
   vec2 gullySlope = mix(heightAndSlope.yz,
@@ -131,14 +132,24 @@ vec4 erosion_ErosionFilter(
                         assumedSlope.y);
 
   for (int i = 0; i < octaves; i++) {
+    // Calculate and add gullies to the height and slope.
     vec4 phacelle = erosion_PhacelleNoise(p * freq, erosion_safe_normalize(gullySlope), cellScale, 0.25, normalization);
+    // Multiply with freq since p was multiplied with freq.
+    // Negate since we use slope directions that point down.
     phacelle.zw *= -freq;
 
+    // Amount of slope as value from 0 to 1.
     float sloping = abs(phacelle.y);
+
+    // Add non-masked, normalized slope to gullySlope, for use by subsequent octaves.
+    // It's normalized to use the steepest part of the sine wave everywhere.
     gullySlope += sign(phacelle.y) * phacelle.zw * strength * gullyWeight;
 
+    // Gullies has height offset (from -1 to 1) in x and derivative in yz.
     vec3 gullies     = vec3(phacelle.x, phacelle.y * phacelle.zw);
+    // Fade gullies towards fadeTarget based on combiMask.
     vec3 fadedGullies = mix(vec3(fadeTarget, 0.0, 0.0), gullies * gullyWeight, combiMask);
+    // Apply height offset and derivative (slope) according to strength of current octave.
     heightAndSlope  += fadedGullies * strength;
     magnitude       += strength;
 
@@ -158,6 +169,8 @@ vec4 erosion_ErosionFilter(
   }
 
   ridgeMap = ridgeMapFadeTarget * (1.0 - ridgeMapCombiMask);
+  // ridgeMap = ridgeMapCombiMask; // for dev purposes
+  // ridgeMap = ridgeMapFadeTarget; // for dev purposes
   debug    = fadeTarget;
 
   return vec4(heightAndSlope - inputHeightAndSlope, magnitude);
@@ -184,11 +197,16 @@ float applyErosion(
   float normalization,
   float ridgeRounding,
   float creaseRounding,
-  out float ridgeOut
+  out float ridgeOut,
+  out float erosionDepth
 ) {
   vec3 heightAndSlope = vec3(noise, slope);
 
-  float fadeTarget    = clamp(noise * 2.0 - 1.0, -1.0, 1.0);
+  // float fadeTarget    = clamp(noise * 2.0 - 1.0, -1.0, 1.0);
+  // Define the erosion fade target based on the altitude of the pre-eroded terrain.
+  // The fade target should strive to be -1 at valleys and 1 at peaks, but overshooting is ok.
+  // float fadeTarget = clamp(n.x / (HEIGHT_AMP * 0.6), -1.0, 1.0);
+  float fadeTarget = clamp(noise / (0.125 * 0.6), -1.0, 1.0);
 
   vec4 rounding     = vec4(ridgeRounding, creaseRounding, 0.1, 2.0);
   vec4 onset        = vec4(1.25, 1.25, 2.8, 1.5);
@@ -205,6 +223,12 @@ float applyErosion(
   );
 
   ridgeOut = ridgeMap;
+
+  // Normalised erosion depth: how much erosion raised or lowered this point
+  // relative to the total accumulated octave magnitude.
+  // Range [-1, 1]: negative in eroded gullies, positive on deposited ridges.
+  erosionDepth = (h.w > 0.0) ? clamp(h.x / h.w, -1.0, 1.0) : 0.0;
+
   // Height offset: pull terrain down slightly (TERRAIN_HEIGHT_OFFSET.x = -0.65).
   float offset = -0.65 * h.w;
   return h.x + offset;

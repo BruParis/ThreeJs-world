@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 import {
   terrainColorGLSL,
+  terrainFragmentMapChunk,
+  terrainFragmentNormalChunk,
   createTerrainColorUniforms,
   syncTerrainColorUniforms as _syncTerrainColorUniforms,
   DEFAULT_TERRAIN_COLORS,
@@ -26,6 +28,9 @@ import {
 } from '@core/shaders/detailNoiseGLSL';
 import {
   terrainVertexPreamble,
+  terrainVertexNormalChunk,
+  terrainVertexPositionChunk,
+  terrainFragmentVaryings,
   createTerrainVertexUniforms,
   syncTerrainVertexUniforms,
 } from '@core/shaders/terrainVertexGLSL';
@@ -390,79 +395,28 @@ export class TerrainMesh {
 
       // ── Vertex shader ────────────────────────────────────────────────────
       shader.vertexShader = terrainVertexPreamble + shader.vertexShader;
-
-      // Replace normal setup chunk: single texture read — elevation in R,
-      // baked gradient (amplitude=1) in G (dH/dX) and B (dH/dZ).
       shader.vertexShader = shader.vertexShader.replace(
         '#include <beginnormal_vertex>',
-        /* glsl */`
-        vec3 wPos = (modelMatrix * vec4(position, 1.0)).xyz;
-        vec2 elevUV = (wPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
-        vec4 elevData = texture2D(uElevationTex, elevUV);
-
-        float terrain_noise = elevData.r;
-        float terrain_dispY = terrain_displY(terrain_noise);
-
-        vTerrainElev     = terrain_noise;
-        vTerrainRidge    = elevData.a;
-        vTerrainWorldPos = vec3(wPos.x, terrain_dispY, wPos.z);
-
-        // Gradient stored amplitude-normalised; scale by uAmplitude to get world-space slope.
-        float dhdx = elevData.g * uAmplitude;
-        float dhdz = elevData.b * uAmplitude;
-        // Below water the mesh is flat (dispY == 0); use an upward normal so the
-        // baked gradient (which ignores uElevOffset) does not leak through as lighting artefacts.
-        bool underwater = (terrain_noise + uElevOffset) < TERRAIN_SEA;
-        vTerrainWorldNormal = underwater ? vec3(0.0, 1.0, 0.0) : normalize(vec3(-dhdx, 1.0, -dhdz));
-
-        vec3 objectNormal = vTerrainWorldNormal;
-        `,
+        terrainVertexNormalChunk,
       );
-
-      // Replace position setup chunk: apply Y displacement.
       shader.vertexShader = shader.vertexShader.replace(
         '#include <begin_vertex>',
-        /* glsl */`vec3 transformed = vec3(position.x, terrain_dispY, position.z);`,
+        terrainVertexPositionChunk,
       );
 
       // ── Fragment shader ──────────────────────────────────────────────────
-      shader.fragmentShader = /* glsl */`
-${terrainColorGLSL}
-${detailNoiseFragPreamble}
-varying float vTerrainElev;
-varying float vTerrainRidge;
-varying vec3  vTerrainWorldPos;
-varying vec3  vTerrainWorldNormal;
-` + shader.fragmentShader;
-
-      // Replace the texture-map chunk with our terrain color.
-      // terrainNorWorld is defined here for reuse in normal_fragment_begin below.
+      shader.fragmentShader =
+        terrainColorGLSL +
+        detailNoiseFragPreamble +
+        terrainFragmentVaryings +
+        shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <map_fragment>',
-        /* glsl */`
-        vec3 detailNoise = vec3(0.0);
-        if (uDetailNoiseEnabled == 1) {
-          vec2 detailUV = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
-          detailNoise = texture2D(uDetailNoiseTex, detailUV).xyz;
-        }
-        vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength);
-        float shiftedElev = vTerrainElev + uElevOffset;
-        vec3 colorNormal = shiftedElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
-        diffuseColor.rgb = terrainColor(shiftedElev, vTerrainWorldPos, colorNormal, vTerrainRidge, detailNoise);
-        `,
+        terrainFragmentMapChunk,
       );
-
-      // Override normal setup to use our world-space terrain normal (→ view space).
-      // viewMatrix is orthogonal, so mat3(viewMatrix) correctly rotates world→view.
-      // colorNormal was defined in map_fragment above (chunks share the same scope).
-      // It uses vTerrainWorldNormal for water and terrainNorWorld for land,
-      // so detailNoise perturbation only affects land lighting.
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <normal_fragment_begin>',
-        /* glsl */`
-        vec3 normal = normalize(mat3(viewMatrix) * colorNormal);
-        vec3 nonPerturbedNormal = normal;
-        `,
+        terrainFragmentNormalChunk,
       );
     };
 

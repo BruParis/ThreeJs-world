@@ -142,13 +142,15 @@ void main() {
 
   // ── Terrain elevation via applyTerrain (same call as flat terrain) ────────
   float ridgeOut  = 0.0;
-  float elevation = applyTerrain(
+  float elevation = 0.0;
+  float _ed       = 0.0;
+  applyTerrain(
     p, rawNoise, rawSlope,
     uErosionEnabled,
     uErosionOctaves,  uErosionScale,         uErosionStrength,  uErosionGullyWeight,
     uErosionDetail,   uErosionLacunarity,     uErosionGain,      uErosionCellScale,
     uErosionNormalization, uErosionRidgeRounding, uErosionCreaseRounding,
-    ridgeOut
+    elevation, ridgeOut, _ed
   );
   // elevation ∈ [0, 1]
 

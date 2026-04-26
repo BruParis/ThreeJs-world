@@ -84,7 +84,7 @@ vec2 heightmapElevation(vec2 p) {
     // Analytical derivatives give us the slope in scaled space.
     // Direction-only, so scaling doesn't matter for the gully steering.
     vec2 slope = n.yz;
-    float _ridgeDummy;
+    float _ridgeDummy, _erosionDepthDummy;
     erosionDelta = applyErosion(
       pWorld, n.x, slope,
       uErosionOctaves,
@@ -98,7 +98,7 @@ vec2 heightmapElevation(vec2 p) {
       uErosionNormalization,
       uErosionRidgeRounding,
       uErosionCreaseRounding,
-      _ridgeDummy
+      _ridgeDummy, _erosionDepthDummy
     );
   }
 

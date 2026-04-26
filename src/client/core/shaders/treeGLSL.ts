@@ -78,12 +78,10 @@ vec3 noised_tree(in vec2 p) {
 
 // Returns a signed tree-density value.
 // Positive  → trees present; negative → no trees (bare ground / water / cliff).
-float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap) {
+float _treesAmount(float height, float normalY, float ridgeMap) {
     return ((
         // Elevation gate: trees only in the grass/low-land zone.
         smoothstep(uTreeElevMax, uTreeElevMin, height + 0.01)
-        // Occlusion gate: suppress trees in fully occluded hollows.
-        // * smoothstep(0.0, 0.4, occlusion)
         // Slope gate: trees on reasonably flat surfaces, absent on cliffs.
         * smoothstep(uTreeSlopeMin, 1.0, normalY)
         // Ridge gate: suppress trees along erosion ridges / gullies.
@@ -97,15 +95,16 @@ float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMa
     ) - 0.5) / 0.6;
 }
 
-float ComputeTreeMap(float height, float normalY, float occlusion, float ridgeMap, vec3 worldPos) {
+// Returns tree coverage density for the given surface.
+// Takes individual fields instead of a struct — many WebGL2 drivers reject
+// struct types in function parameter positions.
+float ComputeTreeMap(float elevation, float ridgeMap, float normalY, vec2 worldXZ) {
+    if (uTreeEnabled == 0) return 0.0;
 
-    if (uTreeEnabled == 0) return -1.0;
+    float treesAmount = _treesAmount(elevation, normalY, ridgeMap);
 
-    float treesAmount = GetTreesAmount(height, normalY, occlusion, ridgeMap);
-
-    float treeNoise = noised_tree(worldPos.xz * uTreeNoiseFreq).x * 0.5 + 0.5;
-    float trees = (treesAmount + 1.0 - pow(treeNoise, uTreeNoisePow) - 1.0) * uTreeDensity;
-    return trees;
+    float treeNoise = noised_tree(worldXZ * uTreeNoiseFreq).x * 0.5 + 0.5;
+    return (treesAmount + 1.0 - pow(treeNoise, uTreeNoisePow) - 1.0) * uTreeDensity;
 }
 
 `;

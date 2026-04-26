@@ -2,33 +2,33 @@
  * Terrain coloring — reusable GLSL fragment.
  *
  * Exposes:
- *   vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal,
- *                    float ridgeMap, vec3 detailNoise)
+ *   vec3 terrainColor(inout TerrainSample s, vec3 worldPos, vec3 normal, vec3 detailNoise)
  *
- * Computes a slope-aware terrain color from a normalised elevation value [0, 1],
- * the displaced world position (used for breakup noise), a pre-computed smooth
- * surface normal, an erosion ridge signal, and the pre-sampled supplemental
- * noise data (RGB from the detailNoise texture — sampled once by the caller and
- * passed through so all layers share the same value).
+ * `s` is a TerrainSample with elevation and ridgeMap already filled (unpacked
+ * from the elevation texture in the vertex stage and passed via varyings).
+ * The function fills s.trees as a side-effect so callers can inspect it.
  *
- * Biome stack (bottom → top):
- *   ocean floor  →  sand  →  cliff (base)  →  dirt (moderate slopes)  →  grass (flat terrain)  →  cliff override (steep)  →  snow
+ * When uDebugMode ≠ TERRAIN_DEBUG_COLOR the function returns a diagnostic
+ * visualisation instead of the full color — see TERRAIN_DEBUG_* constants.
  *
- * Must be included in a GLSL 3 fragment shader that already has simplexNoiseGLSL
- * (i.e. snoise and simplexFbm) available in scope.
+ * Requires in scope (concatenated before this string):
+ *   TerrainSample struct + debug constants — from terrainSampleGLSL
+ *   simplexFbm, snoise                    — from simplexGLSL
+ *   shaderUtilsGLSL macros (clamp01, …)   — from shaderUtilsGLSL
+ *   ComputeTreeMap                         — from treeGLSL
  *
  * Constant WATER_HEIGHT (0.35) is the sea-level threshold and must match the
- * value used in the vertex shader (TERRAIN_SEA).
+ * value used in the vertex shader (TERRAIN_SEA in terrainVertexGLSL).
  *
- * Colors are exposed as uniforms (uCliffColor, uDirtColor, uGrassColor1/2,
- * uTreeColor, uWaterColor, uWaterShoreColor) so they can be tweaked at runtime
- * without recompiling the shader. Use createTerrainColorUniforms /
- * syncTerrainColorUniforms to manage them from TypeScript.
+ * Colors are exposed as uniforms so they can be tweaked at runtime without
+ * recompiling. Use createTerrainColorUniforms / syncTerrainColorUniforms from
+ * TypeScript.
  */
 
 import * as THREE from 'three';
-import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
-import { shaderUtilsGLSL } from '@core/shaders/shaderUtilsGLSL';
+import { terrainSampleGLSL }  from '@core/shaders/terrainSampleGLSL';
+import { simplexNoiseGLSL }   from '@core/noise/simplexGLSL';
+import { shaderUtilsGLSL }    from '@core/shaders/shaderUtilsGLSL';
 import { treeGLSL, TERRAIN_GRASS_HEIGHT } from '@core/shaders/treeGLSL';
 
 export const TERRAIN_WATER_HEIGHT = 0.35;
@@ -51,6 +51,7 @@ export interface TerrainColorState {
   treeColor:       [number, number, number];
   waterColor:      [number, number, number];
   waterShoreColor: [number, number, number];
+  debugMode:       number;
 }
 
 export const DEFAULT_TERRAIN_COLORS: TerrainColorState = {
@@ -61,6 +62,7 @@ export const DEFAULT_TERRAIN_COLORS: TerrainColorState = {
   treeColor:       DEFAULT_TREE_COLOR,
   waterColor:      DEFAULT_WATER_COLOR,
   waterShoreColor: DEFAULT_WATER_SHORE_COLOR,
+  debugMode:       0,
 };
 
 export function createTerrainColorUniforms(s: TerrainColorState): Record<string, THREE.IUniform> {
@@ -72,6 +74,7 @@ export function createTerrainColorUniforms(s: TerrainColorState): Record<string,
     uTreeColor:       { value: new THREE.Color(...s.treeColor) },
     uWaterColor:      { value: new THREE.Color(...s.waterColor) },
     uWaterShoreColor: { value: new THREE.Color(...s.waterShoreColor) },
+    uDebugMode:       { value: s.debugMode },
   };
 }
 
@@ -83,12 +86,44 @@ export function syncTerrainColorUniforms(u: Record<string, THREE.IUniform>, s: T
   (u.uTreeColor.value       as THREE.Color).setRGB(...s.treeColor);
   (u.uWaterColor.value      as THREE.Color).setRGB(...s.waterColor);
   (u.uWaterShoreColor.value as THREE.Color).setRGB(...s.waterShoreColor);
+  u.uDebugMode.value        = s.debugMode;
 }
+
+// ── GLSL chunk replacements ───────────────────────────────────────────────────
+
+/**
+ * Replaces Three.js `#include <map_fragment>`.
+ * Samples the detail noise texture, builds a TerrainSample from varyings,
+ * and writes diffuseColor via terrainColor().
+ * Defines `terrainNorWorld` and `colorNormal` for reuse in the normal chunk.
+ */
+export const terrainFragmentMapChunk = /* glsl */`
+vec3 detailNoise = vec3(0.0);
+if (uDetailNoiseEnabled == 1) {
+  vec2 detailUV = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+  detailNoise = texture2D(uDetailNoiseTex, detailUV).xyz;
+}
+vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength);
+float shiftedElev = vTerrainElev + uElevOffset;
+vec3 colorNormal = shiftedElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
+diffuseColor.rgb = terrainColor(shiftedElev, vTerrainRidge, vTerrainErosionDepth, vTerrainWorldPos.xz, colorNormal, detailNoise);
+`;
+
+/**
+ * Replaces Three.js `#include <normal_fragment_begin>`.
+ * Transforms the terrain world-space normal into view space for lighting.
+ * `colorNormal` is defined in terrainFragmentMapChunk (chunks share scope).
+ */
+export const terrainFragmentNormalChunk = /* glsl */`
+vec3 normal = normalize(mat3(viewMatrix) * colorNormal);
+vec3 nonPerturbedNormal = normal;
+`;
 
 // ── GLSL source ───────────────────────────────────────────────────────────────
 
 export const terrainColorGLSL = /* glsl */`
 
+${terrainSampleGLSL}
 ${simplexNoiseGLSL}
 ${shaderUtilsGLSL}
 
@@ -103,19 +138,26 @@ uniform vec3 uGrassColor2;
 uniform vec3 uTreeColor;
 uniform vec3 uWaterColor;
 uniform vec3 uWaterShoreColor;
+uniform int  uDebugMode;
 
 ${treeGLSL}
 
-vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal, float ridgeMap, vec3 detailNoise) {
+// Takes individual elevation/ridgeMap floats rather than a TerrainSample struct —
+// many WebGL2 drivers reject struct types in function parameter positions.
+vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worldXZ, vec3 normal, vec3 detailNoise) {
   elevation = clamp(elevation, 0.0, 1.0);
 
   float breakup = detailNoise.x;
 
-  float occlusion = 1.0;
-  float erosion = 0.0;
+  // "Occlusion" here is an erosion-derived proxy for ambient occlusion (AO).
+  // Eroded gullies (erosionDepth ≈ -1) are concave, sheltered surfaces — exactly
+  // the geometry that gets low AO in real lighting (less sky exposure, darker).
+  // Ridges (erosionDepth ≈ +1) are convex and exposed.  The +0.5 bias sets the
+  // neutral point so flat un-eroded terrain sits at occlusion = 0.5.
+  // This drives dirt placement: low occlusion → sheltered gully → sediment visible.
+  float occlusion = clamp01(erosionDepth + 0.5);
 
   // ── Water color (shore + foam) ─────────────────────────────────────────────
-  // diff clamped ≥ 0 so exp() stays safe even when e > WATER_HEIGHT.
   float diff  = max(0.0, WATER_HEIGHT - elevation);
   float shore = normal.y > 1e-2 ? exp(-diff * 60.0) : 0.0;
   float foam  = normal.y > 1e-2 ? smoothstep(0.005, 0.0, diff + breakup * 0.005) : 0.0;
@@ -123,44 +165,41 @@ vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal, float ridgeMap, v
   waterColor = mix(waterColor, vec3(1.0), foam);
 
   // ── Slope helpers ──────────────────────────────────────────────────────────
-  // normal.y ≈ 1 = flat ground, ≈ 0 = vertical cliff face.
-  float slopeCliff = smoothstep(0.65, 0.45, normal.y); // 1 on steep, 0 on flat
-  // slopeFlatness: 1 = flat, 0 = cliff. Squared so suppression kicks in hard
-  // even when smooth normals keep normal.y above zero on steep faces.
   float slopeFlatness = smoothstep(0.5, 0.80, normal.y);
   slopeFlatness *= slopeFlatness;
 
   // ── Tree coverage ──────────────────────────────────────────────────────────
-  float trees = ComputeTreeMap(elevation, normal.y, occlusion, ridgeMap, worldPos);
+  float trees = ComputeTreeMap(elevation, ridgeMap, normal.y, worldXZ);
 
   // ── Land color ─────────────────────────────────────────────────────────────
   vec3 landColor = vec3(0.0);
 
-  // Base: bare cliff — fallback for anything steep or uncovered.
-  landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
-  landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, occlusion + breakup * 1.5));
+  landColor = uCliffColor * smoothstep(0.0, 1.0, occlusion);
+  // landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
+  // landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, occlusion + breakup * 1.5));
 
   // Snow
-  landColor = mix(landColor, vec3(1.0), smoothstep(0.53, 0.6, elevation + breakup * 0.1));
+  //landColor = mix(landColor, vec3(1.0), smoothstep(0.53, 0.6, elevation + breakup * 0.1));
 
-  // Grass
-  // vec3 grassMix = mix(uGrassColor1, uGrassColor2, smoothstep(0.4, 0.6, elevation - erosion * 0.05 + breakup * 0.3));
-  // landColor = mix(landColor, grassMix,
-  //   smoothstep(GRASS_HEIGHT + 0.05, GRASS_HEIGHT + 0.02, elevation + 0.01 + (occlusion - 0.8) * 0.05 - breakup * 0.02)
-  //   * smoothstep(0.8, 1.0, 1.0 - (1.0 - normal.y) * (1.0 - trees) + breakup * 0.1));
+  // Tree color
+  // landColor = mix(landColor, uTreeColor * pow(trees, 8.0), clamp01(trees * 2.2 - 0.8) * 0.6);
 
-  // ── Tree color ─────────────────────────────────────────────────────────────
-  // vec3 treeColor = mix(uTreeColor, uTreeColor2, treeNoise);
-  landColor = mix(landColor, uTreeColor * pow(trees, 8.0), clamp01(trees * 2.2 - 0.8) * 0.6);
+  // landColor *= 1.0 + breakup * 0.5;
 
-  landColor *= 1.0 + breakup * 0.5;
-
-  // ── Shoreline blend: smooth gradient between water and land ────────────────
-  // Blend width shrinks from 0.01 (flat) to 0.001 (cliff).
-  float blendHalf = mix(0.001, 0.01, slopeFlatness);
+  // ── Shoreline blend ────────────────────────────────────────────────────────
+  float blendHalf   = mix(0.001, 0.01, slopeFlatness);
   float waterFactor = 1.0 - smoothstep(WATER_HEIGHT - blendHalf, WATER_HEIGHT + blendHalf, elevation);
 
-  return clamp(mix(landColor, waterColor, waterFactor), 0.0, 1.0);
+  vec3 result = clamp(mix(landColor, waterColor, waterFactor), 0.0, 1.0);
+
+  // ── Debug mode ─────────────────────────────────────────────────────────────
+  if (uDebugMode == TERRAIN_DEBUG_ELEVATION)  return vec3(elevation);
+  if (uDebugMode == TERRAIN_DEBUG_RIDGEMAP)   return vec3(max(0.0, ridgeMap), 0.0, max(0.0, -ridgeMap));
+  if (uDebugMode == TERRAIN_DEBUG_TREES)      return vec3(clamp(trees, 0.0, 1.0));
+  if (uDebugMode == TERRAIN_DEBUG_NORMALS)    return normal * 0.5 + 0.5;
+  if (uDebugMode == TERRAIN_DEBUG_STEEPNESS)  return vec3(1.0 - normal.y);
+
+  return result;
 }
 
 `;

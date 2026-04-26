@@ -11,14 +11,13 @@
  * for the rendering vertex shader.
  *
  * Color mapping is NOT done here — that belongs in the rendering fragment shader.
+ *
+ * All terrain-domain GLSL (noise, erosion, elevation math) lives in
+ * @core/shaders/elevationComputeGLSL. This file contains only the WebGL2
+ * pipeline: canvas setup, shader compilation, FBO, draw call, readback.
  */
 
-import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
-import { perlinNoiseGLSL }  from '@core/noise/perlinGLSL';
-import { erosionGLSL }      from '@core/shaders/erosionGLSL';
-import { terrainGLSL }      from '@core/shaders/terrainGLSL';
-import { heightmapGLSL }    from '@core/noise/heightmapGLSL';
-import { fractalNoiseGLSL } from '@core/noise/fractalNoiseGLSL';
+import { elevationComputeGLSL } from '@core/shaders/elevationComputeGLSL';
 
 export interface ElevationComputeParams {
   gridWidth:              number;
@@ -61,141 +60,12 @@ in vec2 aPos;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 `;
 
-// Each fragment corresponds to one grid vertex.
-// gl_FragCoord.xy gives the (col, row) via (x-0.5, y-0.5).
-//
-// Output layout (RGBA32F):
-//   R = elevation in [0, 1]
-//   G = dDisplNorm/dX  (finite-difference gradient, amplitude=1)
-//   B = dDisplNorm/dZ
-//   A = 1.0
-//
-// Baking the gradient here (once on param change) means the vertex shader
-// only needs a single texture read per vertex instead of 5.
 const FRAG_SRC = /* glsl */`#version 300 es
 precision highp float;
 precision highp int;
 precision highp sampler2D;
 
-${simplexNoiseGLSL}
-${perlinNoiseGLSL}
-${erosionGLSL}
-${terrainGLSL}
-
-uniform float uOriginX;
-uniform float uOriginZ;
-uniform float uStepX;
-uniform float uStepZ;
-uniform float uPatchHalfSize;
-uniform float uNoiseScale;
-uniform int   uNoiseOctaves;
-uniform float uNoisePersistence;
-uniform float uNoiseLacunarity;
-uniform int   uNoiseType;
-uniform float uGaussSigma;
-uniform float uGaussAmplitude;
-uniform float uFractalFreq;
-uniform int   uFractalOctaves;
-uniform float uFractalLacunarity;
-uniform float uFractalGain;
-uniform float uFractalAmp;
-uniform int   uErosionEnabled;
-uniform int   uErosionOctaves;
-uniform float uErosionScale;
-uniform float uErosionStrength;
-uniform float uErosionGullyWeight;
-uniform float uErosionDetail;
-uniform float uErosionGain;
-uniform float uErosionLacunarity;
-uniform float uErosionCellScale;
-uniform float uErosionNormalization;
-uniform float uErosionRidgeRounding;
-uniform float uErosionCreaseRounding;
-
-out vec4 fragColor;
-
-const float SEA_LEVEL = 0.35;
-
-${heightmapGLSL}
-${fractalNoiseGLSL}
-
-float noiseFbm(vec3 p) {
-  if (uNoiseType == 1) return perlinFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity);
-  return simplexFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity);
-}
-
-float gaussian2D(vec3 wPos) {
-  float sigma = max(uGaussSigma * uPatchHalfSize, 0.001);
-  return uGaussAmplitude * exp(-(wPos.x * wPos.x + wPos.z * wPos.z) / (2.0 * sigma * sigma));
-}
-
-// Returns raw noise in [-1, 1].
-// Normalisation and erosion are handled downstream by applyTerrain().
-float baseNoise(vec3 wPos) {
-  if (uNoiseType == 3) return gaussian2D(wPos) * 2.0 - 1.0;
-  if (uNoiseType == 4) return uFractalAmp * FractalNoise(wPos.xz, uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x;
-  return noiseFbm(wPos * uNoiseScale);
-}
-
-// Returns elevation in [0, 1] at an arbitrary world position.
-// Used both for the center fragment and for the finite-difference gradient.
-float computeElevation(vec3 wPos, out float ridgeOut) {
-  ridgeOut = 0.0;
-  if (uNoiseType == 2) {
-    return clamp(heightmapElevation(wPos.xz).x, 0.0, 1.0);
-  }
-
-  float rawN = baseNoise(wPos);
-  vec2  rawSlope = vec2(0.0);
-  if (uErosionEnabled == 1) {
-    float GE = 0.5 / max(uNoiseScale, 0.5);
-    float fL = baseNoise(wPos - vec3(GE, 0.0, 0.0));
-    float fR = baseNoise(wPos + vec3(GE, 0.0, 0.0));
-    float fD = baseNoise(wPos - vec3(0.0, 0.0, GE));
-    float fU = baseNoise(wPos + vec3(0.0, 0.0, GE));
-    rawSlope = vec2(fR - fL, fU - fD) / (2.0 * GE);
-  }
-  float elev = applyTerrain(
-    wPos.xz, rawN, rawSlope, uErosionEnabled,
-    uErosionOctaves, uErosionScale, uErosionStrength,
-    uErosionGullyWeight, uErosionDetail, uErosionLacunarity,
-    uErosionGain, uErosionCellScale, uErosionNormalization,
-    uErosionRidgeRounding, uErosionCreaseRounding,
-    ridgeOut
-  );
-  return elev;
-}
-
-// Normalised elevation for gradient baking — no sea-level clamp so that
-// underwater slopes are preserved and remain correct after an elevation offset.
-// (The vertex shader still clamps the actual Y displacement via max(0,...).)
-float displNorm(vec3 wPos) {
-  float _r;
-  return (computeElevation(wPos, _r) - SEA_LEVEL) / (1.0 - SEA_LEVEL);
-}
-
-void main() {
-  // Exact vertex world position from fragment coordinates.
-  float worldX = uOriginX + (gl_FragCoord.x - 0.5) * uStepX;
-  float worldZ = uOriginZ + (gl_FragCoord.y - 0.5) * uStepZ;
-  vec3 wPos = vec3(worldX, 0.0, worldZ);
-
-  float ridgeOut;
-  float noise = computeElevation(wPos, ridgeOut);
-
-  // Bake finite-difference gradient of the normalised displacement.
-  // The vertex shader multiplies by uAmplitude at runtime, so no amplitude
-  // dependency is baked in — amplitude changes are free (no recompute needed).
-  float dL = displNorm(wPos - vec3(uStepX, 0.0, 0.0));
-  float dR = displNorm(wPos + vec3(uStepX, 0.0, 0.0));
-  float dD = displNorm(wPos - vec3(0.0, 0.0, uStepZ));
-  float dU = displNorm(wPos + vec3(0.0, 0.0, uStepZ));
-  float gradX = (dR - dL) / (2.0 * uStepX);
-  float gradZ = (dU - dD) / (2.0 * uStepZ);
-
-  // R = elevation, G = dH/dX (norm), B = dH/dZ (norm), A = ridgeMap.
-  fragColor = vec4(noise, gradX, gradZ, ridgeOut);
-}
+${elevationComputeGLSL}
 `;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -293,7 +163,7 @@ export class TerrainElevationGL {
    * @returns
    *   elevations  Float32Array (length w×h) — R channel only, for CPU use (pathfinding, physics).
    *   packed      Float32Array (length w×h×4) — full RGBA readback:
-   *                 R = elevation [0,1],  G = dH/dX (norm),  B = dH/dZ (norm),  A = 1.
+   *                 R = elevation [0,1],  G = dH/dX (norm),  B = dH/dZ (norm),  A = ridgeMap.
    *               Upload this directly as a THREE.RGBAFormat DataTexture so the vertex shader
    *               can reconstruct the normal with a single texture read.
    */
