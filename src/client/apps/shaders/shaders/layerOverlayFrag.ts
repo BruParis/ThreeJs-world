@@ -111,7 +111,8 @@ float computeNoiseAtWorld(float worldX, float worldZ) {
   else if (uNoiseType == 2)
     return valueFbm(vec2(worldX, worldZ) * uNoiseScale);
   else if (uNoiseType == 4)
-    return uFractalAmp * FractalNoise(vec2(worldX, worldZ), uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x * 0.5 + 0.5;
+    // return uFractalAmp * FractalNoise(vec2(worldX, worldZ), uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x * 0.5 + 0.5;
+    return FractalNoise(vec2(worldX, worldZ), uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x * 0.5 + 0.5;
   else
     return simplexFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
 }

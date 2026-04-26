@@ -2,6 +2,15 @@ import * as THREE from 'three';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
 import { terrainColorGLSL } from '@core/shaders/terrainColorGLSL';
 import {
+  DEFAULT_TREE_ELEV_MAX,
+  DEFAULT_TREE_ELEV_MIN,
+  DEFAULT_TREE_SLOPE_MIN,
+  DEFAULT_TREE_RIDGE_MIN,
+  DEFAULT_TREE_NOISE_FREQ,
+  DEFAULT_TREE_NOISE_POW,
+  DEFAULT_TREE_DENSITY,
+} from '@core/shaders/treeGLSL';
+import {
   DEFAULT_NOISE_PARAMS,
   DEFAULT_GAUSSIAN_PARAMS,
   DEFAULT_FRACTAL_NOISE_PARAMS,
@@ -35,7 +44,7 @@ export class TerrainMesh {
   // Noise
   noiseParams        = { ...DEFAULT_NOISE_PARAMS };
   fractalNoiseParams = { ...DEFAULT_FRACTAL_NOISE_PARAMS };
-  noiseType          = 0; // 0 = simplex, 1 = perlin, 2 = heightmap, 3 = gaussian, 4 = fractalNoise
+  noiseType          = 4; // 0 = simplex, 1 = perlin, 2 = heightmap, 3 = gaussian, 4 = fractalNoise
 
   // Geometry / rendering
   elevationOffset = DEFAULT_ELEV_OFFSET;
@@ -52,7 +61,7 @@ export class TerrainMesh {
   suppNoiseStrength = 0.3;
 
   // Erosion
-  erosionEnabled        = true;
+  erosionEnabled        = false;
   erosionOctaves        = DEFAULT_EROSION_OCTAVES;
   erosionScale          = DEFAULT_EROSION_SCALE;
   erosionStrength       = DEFAULT_EROSION_STRENGTH;
@@ -64,6 +73,16 @@ export class TerrainMesh {
   erosionNormalization  = DEFAULT_EROSION_NORMALIZATION;
   erosionRidgeRounding  = DEFAULT_EROSION_RIDGE_ROUNDING;
   erosionCreaseRounding = DEFAULT_EROSION_CREASE_ROUNDING;
+
+  // Trees
+  treeEnabled   = true;
+  treeElevMax   = DEFAULT_TREE_ELEV_MAX;
+  treeElevMin   = DEFAULT_TREE_ELEV_MIN;
+  treeSlopeMin  = DEFAULT_TREE_SLOPE_MIN;
+  treeRidgeMin  = DEFAULT_TREE_RIDGE_MIN;
+  treeNoiseFreq = DEFAULT_TREE_NOISE_FREQ;
+  treeNoisePow  = DEFAULT_TREE_NOISE_POW;
+  treeDensity   = DEFAULT_TREE_DENSITY;
 
   /**
    * CPU-accessible elevation grid — use for pathfinding, physics, or any non-rendering query.
@@ -216,6 +235,20 @@ export class TerrainMesh {
     }
   }
 
+  /** Sync tree uniforms to all patch materials. */
+  syncTreeUniforms(): void {
+    for (const uniforms of this._patchUniforms) {
+      uniforms.uTreeEnabled.value   = this.treeEnabled ? 1 : 0;
+      uniforms.uTreeElevMax.value   = this.treeElevMax;
+      uniforms.uTreeElevMin.value   = this.treeElevMin;
+      uniforms.uTreeSlopeMin.value  = this.treeSlopeMin;
+      uniforms.uTreeRidgeMin.value  = this.treeRidgeMin;
+      uniforms.uTreeNoiseFreq.value = this.treeNoiseFreq;
+      uniforms.uTreeNoisePow.value  = this.treeNoisePow;
+      uniforms.uTreeDensity.value   = this.treeDensity;
+    }
+  }
+
   /** Sample terrain height at world XZ using the CPU elevation grid. */
   sampleTerrainHeight(wx: number, wz: number): number {
     if (!this.elevationData) return 0;
@@ -320,6 +353,14 @@ export class TerrainMesh {
       shader.uniforms.uSuppNoiseTex      = { value: this.suppNoiseGL?.texture ?? null };
       shader.uniforms.uSuppNoiseEnabled  = { value: this.suppNoiseEnabled ? 1 : 0 };
       shader.uniforms.uSuppNoiseStrength = { value: this.suppNoiseStrength };
+      shader.uniforms.uTreeEnabled       = { value: this.treeEnabled ? 1 : 0 };
+      shader.uniforms.uTreeElevMax       = { value: this.treeElevMax };
+      shader.uniforms.uTreeElevMin       = { value: this.treeElevMin };
+      shader.uniforms.uTreeSlopeMin      = { value: this.treeSlopeMin };
+      shader.uniforms.uTreeRidgeMin      = { value: this.treeRidgeMin };
+      shader.uniforms.uTreeNoiseFreq     = { value: this.treeNoiseFreq };
+      shader.uniforms.uTreeNoisePow      = { value: this.treeNoisePow };
+      shader.uniforms.uTreeDensity       = { value: this.treeDensity };
       this._patchUniforms.push(shader.uniforms);
 
       // ── Vertex shader ────────────────────────────────────────────────────
@@ -398,17 +439,15 @@ varying vec3  vTerrainWorldNormal;
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <map_fragment>',
         /* glsl */`
-        vec3 terrainNorWorld = vTerrainWorldNormal;
+        vec3 suppNoise = vec3(0.0);
         if (uSuppNoiseEnabled == 1) {
-          vec2 suppUV   = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
-          vec3 suppData = texture2D(uSuppNoiseTex, suppUV).xyz;
-          terrainNorWorld = normalize(terrainNorWorld + vec3(suppData.y, 0.0, suppData.z) * uSuppNoiseStrength);
+          vec2 suppUV = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+          suppNoise = texture2D(uSuppNoiseTex, suppUV).xyz;
         }
+        vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(suppNoise.y, 0.0, suppNoise.z) * uSuppNoiseStrength);
         float shiftedElev = vTerrainElev + uElevOffset;
         vec3 colorNormal = shiftedElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
-        // occlusion: open sky by default; wire to a real AO source when available.
-        float treeOcclusion = 1.0;
-        diffuseColor.rgb = terrainColor(shiftedElev, vTerrainWorldPos, colorNormal, treeOcclusion, vTerrainRidge);
+        diffuseColor.rgb = terrainColor(shiftedElev, vTerrainWorldPos, colorNormal, vTerrainRidge, suppNoise);
         `,
       );
 

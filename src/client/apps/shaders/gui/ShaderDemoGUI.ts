@@ -37,10 +37,11 @@ export function buildShaderDemoGUI(
       { title: 'Terrain'  },
       { title: 'Elevation' },
       { title: 'Erosion'  },
+      { title: 'Trees'    },
       { title: 'Lighting' },
     ],
   });
-  const [viewPage, terrainPage, elevationPage, erosionPage, lightingPage] = tab.pages;
+  const [viewPage, terrainPage, elevationPage, erosionPage, treesPage, lightingPage] = tab.pages;
 
   // ── Shared callbacks ──────────────────────────────────────────────────────
 
@@ -215,6 +216,36 @@ export function buildShaderDemoGUI(
     .on('change', ({ value }) => { terrain.erosionRidgeRounding = value; updElevation(); });
   erosionAdvFolder.addBinding(erosionParams, 'creaseRounding', { label: 'Crease Rounding', min: 0.0, max: 1.0, step: 0.05 })
     .on('change', ({ value }) => { terrain.erosionCreaseRounding = value; updElevation(); });
+
+  // ── Tab: Trees ────────────────────────────────────────────────────────────
+
+  const treeParams = {
+    enabled:   terrain.treeEnabled,
+    elevMax:   terrain.treeElevMax,
+    elevMin:   terrain.treeElevMin,
+    slopeMin:  terrain.treeSlopeMin,
+    ridgeMin:  terrain.treeRidgeMin,
+    noiseFreq: terrain.treeNoiseFreq,
+    noisePow:  terrain.treeNoisePow,
+    density:   terrain.treeDensity,
+  };
+
+  treesPage.addBinding(treeParams, 'enabled',   { label: 'Enabled' })
+    .on('change', ({ value }) => { terrain.treeEnabled = value; terrain.syncTreeUniforms(); });
+  treesPage.addBinding(treeParams, 'elevMax',   { label: 'Elev. Max',    min: 0.3,  max: 0.9,    step: 0.005 })
+    .on('change', ({ value }) => { terrain.treeElevMax = value; terrain.syncTreeUniforms(); });
+  treesPage.addBinding(treeParams, 'elevMin',   { label: 'Elev. Min',    min: 0.3,  max: 0.9,    step: 0.005 })
+    .on('change', ({ value }) => { terrain.treeElevMin = value; terrain.syncTreeUniforms(); });
+  treesPage.addBinding(treeParams, 'slopeMin',  { label: 'Slope Min',    min: 0.5,  max: 1.0,    step: 0.01  })
+    .on('change', ({ value }) => { terrain.treeSlopeMin = value; terrain.syncTreeUniforms(); });
+  treesPage.addBinding(treeParams, 'ridgeMin',  { label: 'Ridge Min',    min: -3.0, max: 0.0,    step: 0.05  })
+    .on('change', ({ value }) => { terrain.treeRidgeMin = value; terrain.syncTreeUniforms(); });
+  treesPage.addBinding(treeParams, 'noiseFreq', { label: 'Noise Freq',   min: 10,   max: 1000,   step: 10    })
+    .on('change', ({ value }) => { terrain.treeNoiseFreq = value; terrain.syncTreeUniforms(); });
+  treesPage.addBinding(treeParams, 'noisePow',  { label: 'Noise Power',  min: 0.5,  max: 8.0,    step: 0.1   })
+    .on('change', ({ value }) => { terrain.treeNoisePow = value; terrain.syncTreeUniforms(); });
+  treesPage.addBinding(treeParams, 'density',   { label: 'Density',      min: 0.1,  max: 5.0,    step: 0.1   })
+    .on('change', ({ value }) => { terrain.treeDensity = value; terrain.syncTreeUniforms(); });
 
   // ── Tab: Lighting ─────────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@
  * Tree coverage — reusable GLSL fragment.
  *
  * Exposes:
- *   float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap)
+ *   float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap, vec3 suppNoise)
  *
  * Returns a density value centred on zero: positive = tree-covered, negative =
  * bare ground.  Callers typically remap or clamp before use.
@@ -12,68 +12,98 @@
  *   normalY   – world-space Y component of the surface normal (flat = 1, cliff = 0)
  *   occlusion – ambient occlusion / cavity in [0, 1]  (0 = fully occluded, 1 = open sky)
  *   ridgeMap  – erosion ridge signal; negative values indicate gullies / ridges
+ *   suppNoise – pre-sampled supplemental noise RGB, shared with the caller
+ *   worldPos  – displaced world-space position (used for high-frequency tree noise)
  *
  * Requirements before including this snippet:
  *   GRASS_HEIGHT  must be defined (upper elevation limit for trees)
  *   WATER_HEIGHT  must be defined when the WATER flag is set
  *   Define WATER to enable the below-water suppression term.
  */
+// import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
 
-export const TERRAIN_GRASS_HEIGHT = 0.50;
+export const TERRAIN_GRASS_HEIGHT = 0.465;
+
+export const DEFAULT_TREE_ELEV_MAX   = TERRAIN_GRASS_HEIGHT + 0.05;  // 0.515
+export const DEFAULT_TREE_ELEV_MIN   = TERRAIN_GRASS_HEIGHT + 0.01;  // 0.475
+export const DEFAULT_TREE_SLOPE_MIN  = 0.95;
+export const DEFAULT_TREE_RIDGE_MIN  = -1.4;
+export const DEFAULT_TREE_NOISE_FREQ = 200.0;
+export const DEFAULT_TREE_NOISE_POW  = 2.0;
+export const DEFAULT_TREE_DENSITY    = 1.5;
 
 export const treeGLSL = /* glsl */`
 
-// Minimal value-noise helpers for tree density breakup.
-// (Same algorithm as heightmapGLSL noised(), duplicated here to avoid the
-//  applyErosion / uniform dependencies that come with the full heightmap module.)
-float tree_hash(vec2 p) {
-    float h = dot(p, vec2(127.1, 311.7));
-    return -1.0 + 2.0 * fract(sin(h) * 43758.5453123);
+uniform int   uTreeEnabled;
+uniform float uTreeElevMax;
+uniform float uTreeElevMin;
+uniform float uTreeSlopeMin;
+uniform float uTreeRidgeMin;
+uniform float uTreeNoiseFreq;
+uniform float uTreeNoisePow;
+uniform float uTreeDensity;
+
+vec2 hash_tree(in vec2 x) {
+    const vec2 k = vec2(0.3183099, 0.3678794);
+    x = x * k + k.yx;
+    return -1.0 + 2.0 * fract(16.0 * k * fract(x.x * x.y * (x.x + x.y)));
 }
-// Returns vec3(value [-1,1], dvalue/dx, dvalue/dy).
-vec3 noised_tree(vec2 x) {
-    vec2 i  = floor(x);
-    vec2 f  = fract(x);
-    vec2 u  = f*f*f*(f*(f*6.0 - 15.0) + 10.0);
-    vec2 du = 30.0*f*f*(f*(f - 2.0) + 1.0);
-    float a = tree_hash(i + vec2(0.0, 0.0));
-    float b = tree_hash(i + vec2(1.0, 0.0));
-    float c = tree_hash(i + vec2(0.0, 1.0));
-    float d = tree_hash(i + vec2(1.0, 1.0));
-    float k0 = a;
-    float k1 = b - a;
-    float k2 = c - a;
-    float k4 = a - b - c + d;
-    return vec3(k0 + k1*u.x + k2*u.y + k4*u.x*u.y,
-                du.x * (k1 + k4*u.y),
-                du.y * (k2 + k4*u.x));
+
+
+// Returns gradient noise (in x) and its derivatives (in yz).
+// From https://www.shadertoy.com/view/XdXBRH
+vec3 noised_tree(in vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0); 
+    
+    vec2 ga = hash_tree(i + vec2(0.0, 0.0));
+    vec2 gb = hash_tree(i + vec2(1.0, 0.0));
+    vec2 gc = hash_tree(i + vec2(0.0, 1.0));
+    vec2 gd = hash_tree(i + vec2(1.0, 1.0));
+    
+    float va = dot(ga, f - vec2(0.0, 0.0));
+    float vb = dot(gb, f - vec2(1.0, 0.0));
+    float vc = dot(gc, f - vec2(0.0, 1.0));
+    float vd = dot(gd, f - vec2(1.0, 1.0));
+
+    return vec3(va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * (va - vb - vc + vd),
+        ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) +
+        du * (u.yx * (va - vb - vc + vd) + vec2(vb, vc) - va));
 }
 
 // Returns a signed tree-density value.
 // Positive  → trees present; negative → no trees (bare ground / water / cliff).
-float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap) {
+float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap, vec3 suppNoise) {
+    if (uTreeEnabled == 0) return -100.0;
     return ((
         // Elevation gate: trees only in the grass/low-land zone.
-        smoothstep(
-            GRASS_HEIGHT + 0.05,
-            GRASS_HEIGHT + 0.01,
-            height + 0.01 + (occlusion - 0.8) * 0.05
-        )
+        smoothstep(uTreeElevMax, uTreeElevMin, height + 0.01)
         // Occlusion gate: suppress trees in fully occluded hollows.
-        * smoothstep(0.0, 0.4, occlusion)
+        // * smoothstep(0.0, 0.4, occlusion)
         // Slope gate: trees on reasonably flat surfaces, absent on cliffs.
-        * smoothstep(0.65, 0.82, normalY)
+        * smoothstep(uTreeSlopeMin, 1.0, normalY)
         // Ridge gate: suppress trees along erosion ridges / gullies.
-        * smoothstep(-1.4, 0.0, ridgeMap)
-        #if defined(WATER)
+        * smoothstep(uTreeRidgeMin, 0.0, ridgeMap)
         // Water gate: suppress trees below the water line.
         * smoothstep(
             WATER_HEIGHT + 0.000,
             WATER_HEIGHT + 0.007,
             height
         )
-        #endif
     ) - 0.5) / 0.6;
 }
 
+float ComputeTreeMap(float height, float normalY, float occlusion, float ridgeMap, vec3 suppNoise, vec3 worldPos) {
+    float treesAmount = GetTreesAmount(height, normalY, occlusion, ridgeMap, suppNoise);
+
+    float treeNoise = noised_tree(worldPos.xz * uTreeNoiseFreq).x * 0.5 + 0.5;
+    float trees = (treesAmount + 1.0 - pow(treeNoise, uTreeNoisePow) - 1.0) * uTreeDensity;
+    return trees;
+}
+
 `;
+
+

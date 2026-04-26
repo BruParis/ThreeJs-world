@@ -63,7 +63,7 @@ void main() {
   // coastal water / sandy beach.
 
   if (uColorMode == 2) {
-    fragColor = vec4(terrainColor(vElevation, vTerrainWorldPos, vTerrainLocalNormal, 1.0, vTerrainRidgeMap), 1.0);
+    fragColor = vec4(terrainColor(vElevation, vTerrainWorldPos, vTerrainLocalNormal, 1.0, vTerrainRidgeMap, vec3(0.0)), 1.0);
     return;
   }
 
