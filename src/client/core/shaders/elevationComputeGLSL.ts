@@ -17,11 +17,23 @@
  *   - Uniform declarations (compute-pass specific, not used in render pass)
  *   - main() — grid coord from gl_FragCoord, finite-diff loop, texture write
  *
- * Output layout (RGBA32F) — see terrainSampleGLSL for the canonical definition:
- *   R = elevation [0, 1]
- *   G = dDisplNorm/dX  (finite-difference gradient, amplitude-normalised)
- *   B = dDisplNorm/dZ
- *   A = ridgeMap
+ * Output layout — two MRT targets (see terrainSampleGLSL for the canonical definition):
+ *
+ *   COLOR_ATTACHMENT0  — elevation texture  (LinearFilter, geometry data)
+ *     R = elevation [0, 1]
+ *     G = dDisplNorm/dX  (finite-difference gradient, amplitude-normalised)
+ *     B = dDisplNorm/dZ
+ *     A = unused
+ *
+ *   COLOR_ATTACHMENT1  — attribute texture  (NearestFilter, shading data)
+ *     R = ridgeMap     [-1, 1]
+ *     G = erosionDepth [-1, 1]
+ *     BA = unused
+ *
+ * Splitting into two textures lets each use the correct filtering mode:
+ * LinearFilter on geometry data gives smooth normals and displacement;
+ * NearestFilter on the attribute data prevents linear interpolation from
+ * corrupting the ridge/erosionDepth signals at texel boundaries.
  *
  * Intended to be wrapped with a `#version 300 es` + `precision` header by
  * the consumer (TerrainElevationGL) before compilation.
@@ -78,7 +90,8 @@ uniform float uErosionNormalization;
 uniform float uErosionRidgeRounding;
 uniform float uErosionCreaseRounding;
 
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;  // elevation texture (COLOR_ATTACHMENT0)
+layout(location = 1) out vec4 fragAttr;   // attribute texture (COLOR_ATTACHMENT1)
 
 // ── Library includes ──────────────────────────────────────────────────────────
 // Order matters: each file may call functions defined in earlier files.
@@ -109,6 +122,7 @@ void main() {
   float gradX = (dR - dL) / (2.0 * uStepX);
   float gradZ = (dU - dD) / (2.0 * uStepZ);
 
-  fragColor = packElevationChannel(elev, gradX, gradZ, ridge, erosionDepth);
+  fragColor = packElevationChannel(elev, gradX, gradZ);
+  fragAttr  = vec4(ridge, erosionDepth, 0.0, 1.0);
 }
 `;

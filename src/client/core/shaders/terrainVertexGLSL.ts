@@ -30,8 +30,6 @@ uniform float uPatchHalfSize;
 uniform float uElevOffset;
 
 varying float vTerrainElev;
-varying float vTerrainRidge;
-varying float vTerrainErosionDepth;
 varying vec3  vTerrainWorldPos;
 varying vec3  vTerrainWorldNormal;
 
@@ -75,8 +73,6 @@ export function syncTerrainVertexUniforms(u: Record<string, THREE.IUniform>, s: 
  */
 export const terrainFragmentVaryings = /* glsl */`
 varying float vTerrainElev;
-varying float vTerrainRidge;
-varying float vTerrainErosionDepth;
 varying vec3  vTerrainWorldPos;
 varying vec3  vTerrainWorldNormal;
 `;
@@ -91,14 +87,12 @@ vec3 wPos = (modelMatrix * vec4(position, 1.0)).xyz;
 vec2 elevUV = (wPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
 vec4 elevData = texture2D(uElevationTex, elevUV);
 
-float terrain_elev, terrain_gradX, terrain_gradZ, terrain_ridge, terrain_erosionDepth;
-unpackElevationChannel(elevData, terrain_elev, terrain_gradX, terrain_gradZ, terrain_ridge, terrain_erosionDepth);
+float terrain_elev, terrain_gradX, terrain_gradZ;
+unpackElevationChannel(elevData, terrain_elev, terrain_gradX, terrain_gradZ);
 
 float terrain_dispY = terrain_displY(terrain_elev);
 
-vTerrainElev         = terrain_elev;
-vTerrainRidge        = terrain_ridge;
-vTerrainErosionDepth = terrain_erosionDepth;
+vTerrainElev     = terrain_elev;
 vTerrainWorldPos = vec3(wPos.x, terrain_dispY, wPos.z);
 
 // Gradient stored amplitude-normalised; scale by uAmplitude to get world-space slope.

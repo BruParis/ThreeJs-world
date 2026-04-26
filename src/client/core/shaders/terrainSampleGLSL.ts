@@ -9,21 +9,34 @@
  *                    Erosion  ───┘
  *                                         ↓
  *                               computeElevation (compute pass)
- *                                         ↓ (baked into elevation texture)
+ *                                         ↓ (baked into two textures)
  *                               unpackElevationChannel (vertex shader)
  *                                         ↓
  *                               terrainColor → s.trees filled   (fragment)
  *
- * Elevation texture channel 0 layout — one texel per grid vertex:
- *   R = elevation [0, 1]
- *   G = dDisplNorm/dX  (finite-difference gradient, amplitude-normalised)
- *   B = dDisplNorm/dZ
- *   A = ridgeMap + erosionDepth packed into a single float (RGBA32F):
- *         floor(A) / 255  → ridgeMap     [-1, 1]  (256 quantisation steps)
- *         fract(A)        → erosionDepth [-1, 1]  (full float precision)
+ * The compute pass writes two textures (MRT):
  *
- * All reads and writes to the texture go through packElevationChannel /
- * unpackElevationChannel so the layout is defined in exactly one place.
+ *   Elevation texture  (LinearFilter — smooth geometry interpolation)
+ *     R = elevation [0, 1]
+ *     G = dDisplNorm/dX  (finite-difference gradient, amplitude-normalised)
+ *     B = dDisplNorm/dZ
+ *     A = unused
+ *
+ *   Attribute texture  (NearestFilter — discrete per-vertex data, must NOT be interpolated)
+ *     R = ridgeMap     [-1, 1]
+ *     G = erosionDepth [-1, 1]
+ *     BA = unused
+ *
+ * Keeping ridgeMap and erosionDepth in a separate NearestFilter texture is
+ * intentional: LinearFilter on the elevation texture would interpolate the A
+ * channel across texel boundaries and corrupt any integer+fractional packing
+ * scheme.  These values are purely color/shading signals — they are sampled
+ * directly in the fragment shader (not via vertex varyings) using the same
+ * world-space UV as the elevation texture.
+ *
+ * All reads and writes to the elevation texture go through
+ * packElevationChannel / unpackElevationChannel so the layout is defined
+ * in exactly one place.
  *
  * Debug mode constants are defined both here (TypeScript) and in the GLSL
  * string as matching `#define` values, so the TS side can drive the uniform
@@ -53,40 +66,26 @@ struct TerrainSample {
   float trees;
 };
 
-// ── Elevation texture channel 0 — pack / unpack ───────────────────────────────
-// R = elevation, G = gradX, B = gradZ (amplitude-normalised finite-difference derivatives).
+// ── Elevation texture — pack / unpack ────────────────────────────────────────
+// Stores geometry data only (elevation + gradients). Sampled with LinearFilter
+// in the vertex shader so that normals and displacement interpolate smoothly.
 //
-// A encodes two values in one RGBA32F float using integer + fractional parts:
+//   R = elevation [0, 1]
+//   G = dDisplNorm/dX  (amplitude-normalised finite-difference derivative)
+//   B = dDisplNorm/dZ
+//   A = unused
 //
-//   ridge        (ridgeMap)    — floor(A) / 255, quantised to 256 steps.
-//                                 +1 = ridge crest, -1 = gully/crease.
-//                                 Produced by the erosion filter's ridge-tracking signal.
-//
-//   erosionDepth (erosionDepth) — fract(A) remapped to [-1, 1], full float precision.
-//                                 This is h.x / h.w from ErosionFilter: the height change
-//                                 applied by erosion, normalised by the total octave magnitude.
-//                                 +1 = point barely touched (ridge preserved / raised).
-//                                 -1 = point deeply carved (bottom of a gully).
-//                                 Used as an ambient-occlusion proxy in terrainColor:
-//                                 gullies collect sediment (dirt), ridges stay bare.
-//
-// All reads and writes go through these two functions.
+// ridgeMap and erosionDepth live in the separate attribute texture (NearestFilter)
+// and are sampled directly in the fragment shader — see terrainColorGLSL.
 
-vec4 packElevationChannel(float elev, float gradX, float gradZ, float ridge, float erosionDepth) {
-  float r01 = ridge * 0.5 + 0.5;
-  float e01 = erosionDepth * 0.5 + 0.5;
-  return vec4(elev, gradX, gradZ, floor(r01 * 255.0) + e01);
+vec4 packElevationChannel(float elev, float gradX, float gradZ) {
+  return vec4(elev, gradX, gradZ, 0.0);
 }
 
-void unpackElevationChannel(
-  vec4 ch,
-  out float elev, out float gradX, out float gradZ, out float ridge, out float erosionDepth
-) {
-  elev         = ch.r;
-  gradX        = ch.g;
-  gradZ        = ch.b;
-  ridge        = (floor(ch.a) / 255.0) * 2.0 - 1.0;  // integer part → ridgeMap
-  erosionDepth = fract(ch.a) * 2.0 - 1.0;             // fractional part → erosion depth
+void unpackElevationChannel(vec4 ch, out float elev, out float gradX, out float gradZ) {
+  elev  = ch.r;
+  gradX = ch.g;
+  gradZ = ch.b;
 }
 
 // ── Debug mode — must match TS-side TERRAIN_DEBUG_* constants ─────────────────

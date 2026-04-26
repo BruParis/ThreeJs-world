@@ -99,17 +99,18 @@ export class TerrainElevationGL {
   private readonly program: WebGLProgram;
   private readonly vao:     WebGLVertexArrayObject;
   private readonly fbo:     WebGLFramebuffer;
-  private readonly outTex:  WebGLTexture;
+  private readonly outTex:  WebGLTexture;  // COLOR_ATTACHMENT0 — elevation (LinearFilter in Three.js)
+  private readonly attrTex: WebGLTexture;  // COLOR_ATTACHMENT1 — ridge + erosionDepth (NearestFilter)
   private permTex:          WebGLTexture | null = null;
   private texSize           = { w: 0, h: 0 };
 
   private constructor(
     gl: WebGL2RenderingContext, canvas: HTMLCanvasElement,
     program: WebGLProgram, vao: WebGLVertexArrayObject,
-    fbo: WebGLFramebuffer, outTex: WebGLTexture,
+    fbo: WebGLFramebuffer, outTex: WebGLTexture, attrTex: WebGLTexture,
   ) {
     this.gl = gl; this.canvas = canvas; this.program = program;
-    this.vao = vao; this.fbo = fbo; this.outTex = outTex;
+    this.vao = vao; this.fbo = fbo; this.outTex = outTex; this.attrTex = attrTex;
   }
 
   static create(): TerrainElevationGL {
@@ -138,21 +139,33 @@ export class TerrainElevationGL {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
 
-    const fbo    = gl.createFramebuffer()!;
-    const outTex = gl.createTexture()!;
+    const fbo     = gl.createFramebuffer()!;
+    const outTex  = gl.createTexture()!;
+    const attrTex = gl.createTexture()!;
 
-    // Pre-attach the output texture to the FBO.
+    // Attach both textures to the FBO and configure draw buffers for MRT.
+    // COLOR_ATTACHMENT0 → outTex  (elevation, gradients)
+    // COLOR_ATTACHMENT1 → attrTex (ridgeMap, erosionDepth)
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.bindTexture(gl.TEXTURE_2D, outTex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, outTex, 0);
+
+    const attachTex = (tex: WebGLTexture, attachment: number) => {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, attachment, gl.TEXTURE_2D, tex, 0);
+    };
+    attachTex(outTex,  gl.COLOR_ATTACHMENT0);
+    attachTex(attrTex, gl.COLOR_ATTACHMENT1);
+
+    // Tell the driver that both attachments receive fragment output.
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
 
-    return new TerrainElevationGL(gl, canvas, program, vao, fbo, outTex);
+    return new TerrainElevationGL(gl, canvas, program, vao, fbo, outTex, attrTex);
   }
 
   /**
@@ -162,19 +175,23 @@ export class TerrainElevationGL {
    * @param permData  256-entry Perlin permutation table from PerlinNoise3D.getPermutation256().
    * @returns
    *   elevations  Float32Array (length w×h) — R channel only, for CPU use (pathfinding, physics).
-   *   packed      Float32Array (length w×h×4) — full RGBA readback:
-   *                 R = elevation [0,1],  G = dH/dX (norm),  B = dH/dZ (norm),  A = ridgeMap.
-   *               Upload this directly as a THREE.RGBAFormat DataTexture so the vertex shader
-   *               can reconstruct the normal with a single texture read.
+   *   packed      Float32Array (length w×h×4) — RGBA readback from COLOR_ATTACHMENT0:
+   *                 R = elevation [0,1],  G = dH/dX (norm),  B = dH/dZ (norm),  A = unused.
+   *               Upload as THREE.RGBAFormat DataTexture with LinearFilter for the vertex shader.
+   *   attrPacked  Float32Array (length w×h×4) — RGBA readback from COLOR_ATTACHMENT1:
+   *                 R = ridgeMap [-1,1],  G = erosionDepth [-1,1],  BA = unused.
+   *               Upload as THREE.RGBAFormat DataTexture with NearestFilter for the fragment shader.
    */
-  compute(params: ElevationComputeParams, permData: number[]): { elevations: Float32Array; packed: Float32Array } {
-    const { gl, program, fbo, outTex, vao } = this;
+  compute(params: ElevationComputeParams, permData: number[]): { elevations: Float32Array; packed: Float32Array; attrPacked: Float32Array } {
+    const { gl, program, fbo, outTex, attrTex, vao } = this;
     const { gridWidth: w, gridHeight: h } = params;
 
-    // ── Resize output texture when grid dimensions change ──────────────────
+    // ── Resize both output textures when grid dimensions change ────────────
     if (this.texSize.w !== w || this.texSize.h !== h) {
-      gl.bindTexture(gl.TEXTURE_2D, outTex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+      for (const tex of [outTex, attrTex]) {
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+      }
       gl.bindTexture(gl.TEXTURE_2D, null);
       this.canvas.width  = w;
       this.canvas.height = h;
@@ -201,20 +218,29 @@ export class TerrainElevationGL {
     gl.bindVertexArray(null);
 
     // ── Readback ───────────────────────────────────────────────────────────
-    const packed = new Float32Array(w * h * 4);
+    // Read each MRT attachment separately using gl.readBuffer to select the source.
+    const packed     = new Float32Array(w * h * 4);
+    const attrPacked = new Float32Array(w * h * 4);
+
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
     gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, packed);
+
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, attrPacked);
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
     // Extract R channel (elevation) for CPU use.
     const elevations = new Float32Array(w * h);
     for (let i = 0; i < w * h; i++) elevations[i] = packed[i * 4];
 
-    return { elevations, packed };
+    return { elevations, packed, attrPacked };
   }
 
   dispose(): void {
     const { gl } = this;
     gl.deleteTexture(this.outTex);
+    gl.deleteTexture(this.attrTex);
     gl.deleteTexture(this.permTex);
     gl.deleteFramebuffer(this.fbo);
     gl.deleteVertexArray(this.vao);

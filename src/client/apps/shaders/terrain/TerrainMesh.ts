@@ -119,6 +119,11 @@ export class TerrainMesh {
 
   private _meshes:          THREE.Mesh[] = [];
   private elevationTexture: THREE.DataTexture | null = null;
+  // Attribute texture (NearestFilter) — ridgeMap (R) + erosionDepth (G).
+  // Kept separate from the elevation texture so each can use the correct filter mode:
+  // elevation uses LinearFilter for smooth geometry; attributes use NearestFilter so
+  // per-texel shading signals are never blended across texel boundaries.
+  private attrTexture:      THREE.DataTexture | null = null;
   private elevationGL:      TerrainElevationGL | null = null;
   private suppNoiseGL:      SuppNoiseGL | null = null;
 
@@ -155,7 +160,7 @@ export class TerrainMesh {
     const halfSize       = this.patchSize / 2;
     const permData       = new PerlinNoise3D(this.noiseParams.seed).getPermutation256();
 
-    const { elevations, packed } = this.elevationGL.compute(
+    const { elevations, packed, attrPacked } = this.elevationGL.compute(
       {
         gridWidth:             totalVerts,
         gridHeight:            totalVerts,
@@ -197,7 +202,9 @@ export class TerrainMesh {
     this.elevationGridWidth  = totalVerts;
     this.elevationGridHeight = totalVerts;
 
-    // ── GPU texture (R=elevation, G=dH/dX, B=dH/dZ — vertex shader reads once) ──
+    // ── Elevation texture (LinearFilter) — geometry data read by the vertex shader ──
+    // LinearFilter is correct here: elevation and gradients are continuous signals
+    // whose smooth interpolation produces correct normals and displacement.
     this.elevationTexture?.dispose();
     this.elevationTexture = new THREE.DataTexture(
       packed, totalVerts, totalVerts,
@@ -208,7 +215,26 @@ export class TerrainMesh {
     this.elevationTexture.generateMipmaps = false;
     this.elevationTexture.needsUpdate    = true;
 
+    // ── Attribute texture (NearestFilter) — shading signals read by the fragment shader ──
+    // NearestFilter is mandatory: ridgeMap and erosionDepth are discrete per-vertex
+    // values.  Linear interpolation across texel boundaries would blend adjacent
+    // quantisation steps and corrupt the signal (producing the noisy black/cliff
+    // artefact).  The fragment shader samples this with the same world-space UV as
+    // the elevation texture — no vertex varying is involved, so NearestFilter holds.
+    this.attrTexture?.dispose();
+    this.attrTexture = new THREE.DataTexture(
+      attrPacked, totalVerts, totalVerts,
+      THREE.RGBAFormat, THREE.FloatType,
+    );
+    // this.attrTexture.minFilter      = THREE.NearestFilter;
+    // this.attrTexture.magFilter      = THREE.NearestFilter;
+    this.attrTexture.minFilter      = THREE.LinearFilter;
+    this.attrTexture.magFilter      = THREE.LinearFilter;
+    this.attrTexture.generateMipmaps = false;
+    this.attrTexture.needsUpdate    = true;
+
     this.syncElevationTexture();
+    this.syncAttrTexture();
     this.suppNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
   }
 
@@ -297,6 +323,8 @@ export class TerrainMesh {
     this.disposeMeshes();
     this.elevationTexture?.dispose();
     this.elevationTexture = null;
+    this.attrTexture?.dispose();
+    this.attrTexture = null;
     this.elevationGL?.dispose();
     this.elevationGL = null;
     this.suppNoiseGL?.dispose();
@@ -308,6 +336,12 @@ export class TerrainMesh {
   private syncElevationTexture(): void {
     for (const u of this._patchUniforms) {
       u.uElevationTex.value = this.elevationTexture;
+    }
+  }
+
+  private syncAttrTexture(): void {
+    for (const u of this._patchUniforms) {
+      u.uAttrTex.value = this.attrTexture;
     }
   }
 
@@ -390,6 +424,9 @@ export class TerrainMesh {
         }),
         createTreeUniforms(this as TreeUniformState),
         createTerrainColorUniforms(this.terrainColors),
+        // Attribute texture registered here (alongside elevation texture) because
+        // it is produced by the same compute pass and updated on the same cadence.
+        { uAttrTex: { value: this.attrTexture } },
       );
       this._patchUniforms.push(shader.uniforms);
 

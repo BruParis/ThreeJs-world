@@ -161,7 +161,10 @@ vec4 erosion_ErosionFilter(
 
     ridgeMapFadeTarget = mix(ridgeMapFadeTarget, gullies.x, ridgeMapCombiMask);
     float newRidgeMapMask = erosion_ease_out(sloping * onset.w);
-    ridgeMapCombiMask = ridgeMapCombiMask * newRidgeMapMask;
+    // Decay by gain each octave so coarser octaves dominate ridgeMapFadeTarget.
+    // Without this, newRidgeMapMask≈1 at slope transitions keeps the mask constant,
+    // and the finest octave ends up contributing ~84% of the ridgeMap signal.
+    ridgeMapCombiMask = ridgeMapCombiMask * newRidgeMapMask * gain;
 
     strength  *= gain;
     freq      *= lacunarity;
@@ -202,10 +205,9 @@ float applyErosion(
 ) {
   vec3 heightAndSlope = vec3(noise, slope);
 
-  // float fadeTarget    = clamp(noise * 2.0 - 1.0, -1.0, 1.0);
-  // Define the erosion fade target based on the altitude of the pre-eroded terrain.
-  // The fade target should strive to be -1 at valleys and 1 at peaks, but overshooting is ok.
-  // float fadeTarget = clamp(n.x / (HEIGHT_AMP * 0.6), -1.0, 1.0);
+  // Map elevation [0,1] to fade target [-1,1]: -1 at valleys, +1 at peaks.
+  // float fadeTarget = clamp(noise * 2.0 - 1.0, -1.0, 1.0);
+  // float fadeTarget = clamp(noise / (HEIGHT_AMP * 0.6), -1.0, 1.0);
   float fadeTarget = clamp(noise / (0.125 * 0.6), -1.0, 1.0);
 
   vec4 rounding     = vec4(ridgeRounding, creaseRounding, 0.1, 2.0);

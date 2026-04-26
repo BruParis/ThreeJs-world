@@ -93,9 +93,16 @@ export function syncTerrainColorUniforms(u: Record<string, THREE.IUniform>, s: T
 
 /**
  * Replaces Three.js `#include <map_fragment>`.
- * Samples the detail noise texture, builds a TerrainSample from varyings,
- * and writes diffuseColor via terrainColor().
+ * Samples the detail noise texture and the attribute texture, then writes
+ * diffuseColor via terrainColor().
  * Defines `terrainNorWorld` and `colorNormal` for reuse in the normal chunk.
+ *
+ * The attribute texture (uAttrTex, NearestFilter) is sampled here — in the
+ * fragment shader — rather than being read in the vertex shader and passed as
+ * varyings.  Varyings are linearly interpolated across triangles, which would
+ * re-introduce the same blending artefacts that the NearestFilter is meant to
+ * prevent.  Sampling directly in the fragment shader with the world-space UV
+ * guarantees exact per-texel values with no cross-boundary mixing.
  */
 export const terrainFragmentMapChunk = /* glsl */`
 vec3 detailNoise = vec3(0.0);
@@ -106,7 +113,14 @@ if (uDetailNoiseEnabled == 1) {
 vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength);
 float shiftedElev = vTerrainElev + uElevOffset;
 vec3 colorNormal = shiftedElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
-diffuseColor.rgb = terrainColor(shiftedElev, vTerrainRidge, vTerrainErosionDepth, vTerrainWorldPos.xz, colorNormal, detailNoise);
+
+// Sample the attribute texture directly in the fragment shader.
+// Using world-space UV (same formula as the elevation texture in the vertex shader).
+vec2 attrUV  = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+vec4 attrData = texture2D(uAttrTex, attrUV);
+// attrData.r = ridgeMap [-1,1],  attrData.g = erosionDepth [-1,1]
+
+diffuseColor.rgb = terrainColor(shiftedElev, attrData.r, attrData.g, vTerrainWorldPos.xz, colorNormal, detailNoise);
 `;
 
 /**
@@ -131,14 +145,18 @@ ${shaderUtilsGLSL}
 #define WATER_HEIGHT  ${(0.35).toFixed(2)}
 #define GRASS_HEIGHT  ${TERRAIN_GRASS_HEIGHT.toFixed(2)}
 
-uniform vec3 uCliffColor;
-uniform vec3 uDirtColor;
-uniform vec3 uGrassColor1;
-uniform vec3 uGrassColor2;
-uniform vec3 uTreeColor;
-uniform vec3 uWaterColor;
-uniform vec3 uWaterShoreColor;
-uniform int  uDebugMode;
+uniform vec3      uCliffColor;
+uniform vec3      uDirtColor;
+uniform vec3      uGrassColor1;
+uniform vec3      uGrassColor2;
+uniform vec3      uTreeColor;
+uniform vec3      uWaterColor;
+uniform vec3      uWaterShoreColor;
+uniform int       uDebugMode;
+// Attribute texture (NearestFilter) — ridgeMap (R) and erosionDepth (G).
+// Sampled here in the fragment shader rather than being carried as vertex varyings,
+// so that NearestFilter is respected and no linear interpolation crosses texel boundaries.
+uniform sampler2D uAttrTex;
 
 ${treeGLSL}
 
@@ -155,7 +173,8 @@ vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worl
   // Ridges (erosionDepth ≈ +1) are convex and exposed.  The +0.5 bias sets the
   // neutral point so flat un-eroded terrain sits at occlusion = 0.5.
   // This drives dirt placement: low occlusion → sheltered gully → sediment visible.
-  float occlusion = clamp01(erosionDepth + 0.5);
+  // float occlusion = clamp01(erosionDepth + 0.5);
+  float occlusion = erosionDepth;
 
   // ── Water color (shore + foam) ─────────────────────────────────────────────
   float diff  = max(0.0, WATER_HEIGHT - elevation);
@@ -174,9 +193,11 @@ vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worl
   // ── Land color ─────────────────────────────────────────────────────────────
   vec3 landColor = vec3(0.0);
 
-  landColor = uCliffColor * smoothstep(0.0, 1.0, occlusion);
-  // landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
+  // landColor = uCliffColor * smoothstep(0.0, 1.0, occlusion);
+  // landColor = uCliffColor * smoothstep(0.0, 1.0, ridgeMap);
+  landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
   // landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, occlusion + breakup * 1.5));
+  landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, occlusion));
 
   // Snow
   //landColor = mix(landColor, vec3(1.0), smoothstep(0.53, 0.6, elevation + breakup * 0.1));
