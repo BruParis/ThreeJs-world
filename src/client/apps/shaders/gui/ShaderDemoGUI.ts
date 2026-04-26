@@ -38,10 +38,11 @@ export function buildShaderDemoGUI(
       { title: 'Elevation' },
       { title: 'Erosion'  },
       { title: 'Trees'    },
+      { title: 'Colors'   },
       { title: 'Lighting' },
     ],
   });
-  const [viewPage, terrainPage, elevationPage, erosionPage, treesPage, lightingPage] = tab.pages;
+  const [viewPage, terrainPage, elevationPage, erosionPage, treesPage, colorsPage, lightingPage] = tab.pages;
 
   // ── Shared callbacks ──────────────────────────────────────────────────────
 
@@ -161,12 +162,12 @@ export function buildShaderDemoGUI(
   gaussFolder.hidden        = !isGaussian();
   fractalNoiseFolder.hidden = !isFractal();
 
-  const suppFolder = elevationPage.addFolder({ title: 'Supplemental', expanded: false });
-  const suppParams = { enabled: terrain.suppNoiseEnabled, strength: terrain.suppNoiseStrength };
+  const suppFolder = elevationPage.addFolder({ title: 'Detail Noise', expanded: false });
+  const suppParams = { enabled: terrain.detailNoiseEnabled, strength: terrain.detailNoiseStrength };
   suppFolder.addBinding(suppParams, 'enabled', { label: 'Enabled' })
-    .on('change', ({ value }) => terrain.setSuppNoiseEnabled(value));
+    .on('change', ({ value }) => terrain.setDetailNoiseEnabled(value));
   suppFolder.addBinding(suppParams, 'strength', { label: 'Strength', min: 0.0, max: 2.0, step: 0.05 })
-    .on('change', ({ value }) => { terrain.suppNoiseStrength = value; terrain.syncSuppNoiseUniforms(); });
+    .on('change', ({ value }) => { terrain.detailNoiseStrength = value; terrain.syncDetailNoiseUniforms(); });
 
   // ── Tab: Erosion ──────────────────────────────────────────────────────────
 
@@ -241,6 +242,45 @@ export function buildShaderDemoGUI(
     .on('change', ({ value }) => { terrain.treeNoisePow = value; terrain.syncTreeUniforms(); });
   treesPage.addBinding(treeParams, 'density',   { label: 'Density',      min: 0.1,  max: 5.0,    step: 0.1   })
     .on('change', ({ value }) => { terrain.treeDensity = value; terrain.syncTreeUniforms(); });
+
+  // ── Tab: Colors ───────────────────────────────────────────────────────────
+
+  function rgb01ToTp(c: [number, number, number]) {
+    return { r: c[0] * 255, g: c[1] * 255, b: c[2] * 255 };
+  }
+  function tpToRgb01(v: { r: number; g: number; b: number }): [number, number, number] {
+    return [v.r / 255, v.g / 255, v.b / 255];
+  }
+
+  const colorState = {
+    waterColor:      rgb01ToTp(terrain.terrainColors.waterColor),
+    waterShoreColor: rgb01ToTp(terrain.terrainColors.waterShoreColor),
+    cliffColor:      rgb01ToTp(terrain.terrainColors.cliffColor),
+    dirtColor:       rgb01ToTp(terrain.terrainColors.dirtColor),
+    grassColor1:     rgb01ToTp(terrain.terrainColors.grassColor1),
+    grassColor2:     rgb01ToTp(terrain.terrainColors.grassColor2),
+    treeColor:       rgb01ToTp(terrain.terrainColors.treeColor),
+  };
+
+  const waterColFolder = colorsPage.addFolder({ title: 'Water', expanded: true });
+  waterColFolder.addBinding(colorState, 'waterColor',      { label: 'Deep Water',  view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.waterColor      = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+  waterColFolder.addBinding(colorState, 'waterShoreColor', { label: 'Shore Water', view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.waterShoreColor = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+
+  const landColFolder = colorsPage.addFolder({ title: 'Land', expanded: true });
+  landColFolder.addBinding(colorState, 'cliffColor', { label: 'Cliff', view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.cliffColor = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+  landColFolder.addBinding(colorState, 'dirtColor',  { label: 'Dirt',  view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.dirtColor  = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+
+  const vegColFolder = colorsPage.addFolder({ title: 'Vegetation', expanded: true });
+  vegColFolder.addBinding(colorState, 'grassColor1', { label: 'Grass Low',  view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.grassColor1 = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+  vegColFolder.addBinding(colorState, 'grassColor2', { label: 'Grass High', view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.grassColor2 = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+  vegColFolder.addBinding(colorState, 'treeColor',   { label: 'Trees',      view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.treeColor   = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
 
   // ── Tab: Lighting ─────────────────────────────────────────────────────────
 

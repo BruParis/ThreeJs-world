@@ -3,8 +3,8 @@ import { VisualizationManager } from './VisualizationManager';
 import { TectonicManager } from './TectonicManager';
 import { NoiseManager } from './NoiseManager';
 import { InteractionHandler, BoundaryDisplayMode } from '../handlers/InteractionHandler';
-import { PlateDisplayMode, PLATE_VISUALIZATION_LEGEND, rgbToHex } from '../visualization/PlateColors';
-import { GEOLOGY_TYPE_LEGEND, geologyTypeColorToHex } from '../visualization/GeologyColors';
+import { PlateDisplayMode, PLATE_VISUALIZATION_LEGEND } from '../visualization/PlateColors';
+import { GEOLOGY_TYPE_LEGEND, getGeologicalTypeColor } from '../visualization/GeologyColors';
 import { LODTileRenderer } from '../lod/LODTileRenderer';
 import { TileShaderPatchOperation, LODColorMode } from '../lod/TileShaderPatchOperation';
 import { FlyCam } from '@core/FlyCam';
@@ -175,8 +175,9 @@ export class GUIManager {
 
     const tectonicLegendFolder = tectonicFolder.addFolder({ title: 'Legend', expanded: false });
     for (const entry of PLATE_VISUALIZATION_LEGEND) {
-      const colorObj = { color: rgbToHex(entry.color) };
-      tectonicLegendFolder.addBinding(colorObj, 'color', { label: entry.label });
+      const [r, g, b] = entry.color;
+      const colorObj = { color: { r: r * 255, g: g * 255, b: b * 255 } };
+      tectonicLegendFolder.addBinding(colorObj, 'color', { label: entry.label, view: 'color' });
     }
 
     // ── Geology ───────────────────────────────────────────────────────────────
@@ -188,8 +189,9 @@ export class GUIManager {
 
     const geologyLegendFolder = geologyFolder.addFolder({ title: 'Legend', expanded: false });
     for (const entry of GEOLOGY_TYPE_LEGEND) {
-      const colorObj = { color: geologyTypeColorToHex(entry.type) };
-      geologyLegendFolder.addBinding(colorObj, 'color', { label: entry.label });
+      const [r, g, b] = getGeologicalTypeColor(entry.type);
+      const colorObj = { color: { r: r * 255, g: g * 255, b: b * 255 } };
+      geologyLegendFolder.addBinding(colorObj, 'color', { label: entry.label, view: 'color' });
     }
 
     // ── Stats ─────────────────────────────────────────────────────────────────

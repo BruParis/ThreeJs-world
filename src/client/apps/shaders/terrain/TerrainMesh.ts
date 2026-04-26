@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
-import { terrainColorGLSL } from '@core/shaders/terrainColorGLSL';
+import {
+  terrainColorGLSL,
+  createTerrainColorUniforms,
+  syncTerrainColorUniforms as _syncTerrainColorUniforms,
+  DEFAULT_TERRAIN_COLORS,
+  type TerrainColorState,
+} from '@core/shaders/terrainColorGLSL';
 import {
   DEFAULT_TREE_ELEV_MAX,
   DEFAULT_TREE_ELEV_MIN,
@@ -9,7 +15,20 @@ import {
   DEFAULT_TREE_NOISE_FREQ,
   DEFAULT_TREE_NOISE_POW,
   DEFAULT_TREE_DENSITY,
+  createTreeUniforms,
+  syncTreeUniforms,
+  type TreeUniformState,
 } from '@core/shaders/treeGLSL';
+import {
+  detailNoiseFragPreamble,
+  createDetailNoiseUniforms,
+  syncDetailNoiseUniforms,
+} from '@core/shaders/detailNoiseGLSL';
+import {
+  terrainVertexPreamble,
+  createTerrainVertexUniforms,
+  syncTerrainVertexUniforms,
+} from '@core/shaders/terrainVertexGLSL';
 import {
   DEFAULT_NOISE_PARAMS,
   DEFAULT_GAUSSIAN_PARAMS,
@@ -54,9 +73,9 @@ export class TerrainMesh {
   wireframe    = false;
   roughness    = 0.85;
 
-  // Supplemental noise
-  suppNoiseEnabled  = false;
-  suppNoiseStrength = 0.3;
+  // Detail noise
+  detailNoiseEnabled  = false;
+  detailNoiseStrength = 0.3;
 
   // Erosion
   erosionEnabled        = false;
@@ -71,6 +90,9 @@ export class TerrainMesh {
   erosionNormalization  = DEFAULT_EROSION_NORMALIZATION;
   erosionRidgeRounding  = DEFAULT_EROSION_RIDGE_ROUNDING;
   erosionCreaseRounding = DEFAULT_EROSION_CREASE_ROUNDING;
+
+  // Terrain colors
+  terrainColors: TerrainColorState = { ...DEFAULT_TERRAIN_COLORS };
 
   // Trees
   treeEnabled   = true;
@@ -186,13 +208,16 @@ export class TerrainMesh {
 
   /** Update display-only uniforms (amplitude, wireframe, roughness) without recomputing elevation. */
   updateUniforms(): void {
-    for (const uniforms of this._patchUniforms) {
-      uniforms.uAmplitude.value     = this.amplitude;
-      uniforms.uPatchHalfSize.value = this.patchSize / 2;
-      uniforms.uElevOffset.value    = this.elevationOffset;
+    for (const u of this._patchUniforms) {
+      syncTerrainVertexUniforms(u, {
+        elevationTexture: this.elevationTexture,
+        amplitude:        this.amplitude,
+        patchHalfSize:    this.patchSize / 2,
+        elevationOffset:  this.elevationOffset,
+      });
     }
     for (const mesh of this._meshes) {
-      const mat   = mesh.material as THREE.MeshStandardMaterial;
+      const mat = mesh.material as THREE.MeshStandardMaterial;
       mat.wireframe = this.wireframe;
       mat.roughness = this.roughness;
     }
@@ -202,17 +227,17 @@ export class TerrainMesh {
    * Re-render the supplemental noise texture if needed and sync it to all patch materials.
    * Call once per frame before the main scene render — is a no-op when nothing has changed.
    */
-  updateSuppNoise(renderer: THREE.WebGLRenderer): void {
-    if (!this.suppNoiseGL || !this.suppNoiseEnabled) return;
+  updateDetailNoise(renderer: THREE.WebGLRenderer): void {
+    if (!this.suppNoiseGL || !this.detailNoiseEnabled) return;
     this.suppNoiseGL.update(renderer);
-    this.syncSuppNoiseUniforms();
+    this.syncDetailNoiseUniforms();
   }
 
-  /** Toggle supp noise on/off and sync the enabled uniform immediately. */
-  setSuppNoiseEnabled(enabled: boolean): void {
-    this.suppNoiseEnabled = enabled;
+  /** Toggle detail noise on/off and sync the enabled uniform immediately. */
+  setDetailNoiseEnabled(enabled: boolean): void {
+    this.detailNoiseEnabled = enabled;
     if (enabled) this.suppNoiseGL?.markDirty();
-    this.syncSuppNoiseUniforms();
+    this.syncDetailNoiseUniforms();
   }
 
   /** Set surface roughness (PBR) and apply to all patch materials immediately. */
@@ -223,26 +248,28 @@ export class TerrainMesh {
     }
   }
 
-  /** Sync supp noise uniforms (enabled, strength, texture) to all patch materials. */
-  syncSuppNoiseUniforms(): void {
-    for (const uniforms of this._patchUniforms) {
-      uniforms.uSuppNoiseTex.value      = this.suppNoiseGL?.texture ?? null;
-      uniforms.uSuppNoiseEnabled.value  = this.suppNoiseEnabled ? 1 : 0;
-      uniforms.uSuppNoiseStrength.value = this.suppNoiseStrength;
+  /** Sync detail noise uniforms (enabled, strength, texture) to all patch materials. */
+  syncDetailNoiseUniforms(): void {
+    for (const u of this._patchUniforms) {
+      syncDetailNoiseUniforms(u, {
+        detailNoiseTexture:  this.suppNoiseGL?.texture ?? null,
+        detailNoiseEnabled:  this.detailNoiseEnabled,
+        detailNoiseStrength: this.detailNoiseStrength,
+      });
     }
   }
 
   /** Sync tree uniforms to all patch materials. */
   syncTreeUniforms(): void {
-    for (const uniforms of this._patchUniforms) {
-      uniforms.uTreeEnabled.value   = this.treeEnabled ? 1 : 0;
-      uniforms.uTreeElevMax.value   = this.treeElevMax;
-      uniforms.uTreeElevMin.value   = this.treeElevMin;
-      uniforms.uTreeSlopeMin.value  = this.treeSlopeMin;
-      uniforms.uTreeRidgeMin.value  = this.treeRidgeMin;
-      uniforms.uTreeNoiseFreq.value = this.treeNoiseFreq;
-      uniforms.uTreeNoisePow.value  = this.treeNoisePow;
-      uniforms.uTreeDensity.value   = this.treeDensity;
+    for (const u of this._patchUniforms) {
+      syncTreeUniforms(u, this as TreeUniformState);
+    }
+  }
+
+  /** Sync terrain color uniforms to all patch materials. */
+  syncTerrainColorUniforms(): void {
+    for (const u of this._patchUniforms) {
+      _syncTerrainColorUniforms(u, this.terrainColors);
     }
   }
 
@@ -273,8 +300,8 @@ export class TerrainMesh {
   // ── private ──────────────────────────────────────────────────────────────────
 
   private syncElevationTexture(): void {
-    for (const uniforms of this._patchUniforms) {
-      uniforms.uElevationTex.value = this.elevationTexture;
+    for (const u of this._patchUniforms) {
+      u.uElevationTex.value = this.elevationTexture;
     }
   }
 
@@ -343,42 +370,25 @@ export class TerrainMesh {
 
     mat.onBeforeCompile = (shader) => {
       // Register custom uniforms — stored for later sync calls.
-      shader.uniforms.uElevationTex      = { value: this.elevationTexture };
-      shader.uniforms.uAmplitude         = { value: this.amplitude };
-      shader.uniforms.uPatchHalfSize     = { value: this.patchSize / 2 };
-      shader.uniforms.uElevOffset        = { value: this.elevationOffset };
-      shader.uniforms.uSuppNoiseTex      = { value: this.suppNoiseGL?.texture ?? null };
-      shader.uniforms.uSuppNoiseEnabled  = { value: this.suppNoiseEnabled ? 1 : 0 };
-      shader.uniforms.uSuppNoiseStrength = { value: this.suppNoiseStrength };
-      shader.uniforms.uTreeEnabled       = { value: this.treeEnabled ? 1 : 0 };
-      shader.uniforms.uTreeElevMax       = { value: this.treeElevMax };
-      shader.uniforms.uTreeElevMin       = { value: this.treeElevMin };
-      shader.uniforms.uTreeSlopeMin      = { value: this.treeSlopeMin };
-      shader.uniforms.uTreeRidgeMin      = { value: this.treeRidgeMin };
-      shader.uniforms.uTreeNoiseFreq     = { value: this.treeNoiseFreq };
-      shader.uniforms.uTreeNoisePow      = { value: this.treeNoisePow };
-      shader.uniforms.uTreeDensity       = { value: this.treeDensity };
+      Object.assign(shader.uniforms,
+        createTerrainVertexUniforms({
+          elevationTexture: this.elevationTexture,
+          amplitude:        this.amplitude,
+          patchHalfSize:    this.patchSize / 2,
+          elevationOffset:  this.elevationOffset,
+        }),
+        createDetailNoiseUniforms({
+          detailNoiseTexture:  this.suppNoiseGL?.texture ?? null,
+          detailNoiseEnabled:  this.detailNoiseEnabled,
+          detailNoiseStrength: this.detailNoiseStrength,
+        }),
+        createTreeUniforms(this as TreeUniformState),
+        createTerrainColorUniforms(this.terrainColors),
+      );
       this._patchUniforms.push(shader.uniforms);
 
       // ── Vertex shader ────────────────────────────────────────────────────
-      // Prepend helper functions and custom varyings.
-      shader.vertexShader = /* glsl */`
-uniform sampler2D uElevationTex;
-uniform float uAmplitude;
-uniform float uPatchHalfSize;
-uniform float uElevOffset;
-
-varying float vTerrainElev;
-varying float vTerrainRidge;
-varying vec3  vTerrainWorldPos;
-varying vec3  vTerrainWorldNormal;
-
-const float TERRAIN_SEA = 0.35;
-
-float terrain_displY(float noise) {
-  return max(0.0, (noise + uElevOffset - TERRAIN_SEA) / (1.0 - TERRAIN_SEA) * uAmplitude);
-}
-` + shader.vertexShader;
+      shader.vertexShader = terrainVertexPreamble + shader.vertexShader;
 
       // Replace normal setup chunk: single texture read — elevation in R,
       // baked gradient (amplitude=1) in G (dH/dX) and B (dH/dZ).
@@ -415,16 +425,9 @@ float terrain_displY(float noise) {
       );
 
       // ── Fragment shader ──────────────────────────────────────────────────
-      // Prepend terrain color function and custom varyings.
       shader.fragmentShader = /* glsl */`
 ${terrainColorGLSL}
-
-uniform sampler2D uSuppNoiseTex;
-uniform int       uSuppNoiseEnabled;
-uniform float     uSuppNoiseStrength;
-uniform float     uPatchHalfSize;
-uniform float     uElevOffset;
-
+${detailNoiseFragPreamble}
 varying float vTerrainElev;
 varying float vTerrainRidge;
 varying vec3  vTerrainWorldPos;
@@ -436,15 +439,15 @@ varying vec3  vTerrainWorldNormal;
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <map_fragment>',
         /* glsl */`
-        vec3 suppNoise = vec3(0.0);
-        if (uSuppNoiseEnabled == 1) {
-          vec2 suppUV = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
-          suppNoise = texture2D(uSuppNoiseTex, suppUV).xyz;
+        vec3 detailNoise = vec3(0.0);
+        if (uDetailNoiseEnabled == 1) {
+          vec2 detailUV = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+          detailNoise = texture2D(uDetailNoiseTex, detailUV).xyz;
         }
-        vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(suppNoise.y, 0.0, suppNoise.z) * uSuppNoiseStrength);
+        vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength);
         float shiftedElev = vTerrainElev + uElevOffset;
         vec3 colorNormal = shiftedElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNorWorld;
-        diffuseColor.rgb = terrainColor(shiftedElev, vTerrainWorldPos, colorNormal, vTerrainRidge, suppNoise);
+        diffuseColor.rgb = terrainColor(shiftedElev, vTerrainWorldPos, colorNormal, vTerrainRidge, detailNoise);
         `,
       );
 
@@ -452,7 +455,7 @@ varying vec3  vTerrainWorldNormal;
       // viewMatrix is orthogonal, so mat3(viewMatrix) correctly rotates world→view.
       // colorNormal was defined in map_fragment above (chunks share the same scope).
       // It uses vTerrainWorldNormal for water and terrainNorWorld for land,
-      // so suppNoise perturbation only affects land lighting.
+      // so detailNoise perturbation only affects land lighting.
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <normal_fragment_begin>',
         /* glsl */`

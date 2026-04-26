@@ -2,7 +2,7 @@
  * Tree coverage — reusable GLSL fragment.
  *
  * Exposes:
- *   float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap, vec3 suppNoise)
+ *   float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap, vec3 detailNoise)
  *
  * Returns a density value centred on zero: positive = tree-covered, negative =
  * bare ground.  Callers typically remap or clamp before use.
@@ -12,7 +12,7 @@
  *   normalY   – world-space Y component of the surface normal (flat = 1, cliff = 0)
  *   occlusion – ambient occlusion / cavity in [0, 1]  (0 = fully occluded, 1 = open sky)
  *   ridgeMap  – erosion ridge signal; negative values indicate gullies / ridges
- *   suppNoise – pre-sampled supplemental noise RGB, shared with the caller
+ *   detailNoise – pre-sampled supplemental noise RGB, shared with the caller
  *   worldPos  – displaced world-space position (used for high-frequency tree noise)
  *
  * Requirements before including this snippet:
@@ -21,6 +21,8 @@
  *   Define WATER to enable the below-water suppression term.
  */
 // import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
+
+import * as THREE from 'three';
 
 export const TERRAIN_GRASS_HEIGHT = 0.465;
 
@@ -76,8 +78,7 @@ vec3 noised_tree(in vec2 p) {
 
 // Returns a signed tree-density value.
 // Positive  → trees present; negative → no trees (bare ground / water / cliff).
-float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap, vec3 suppNoise) {
-    if (uTreeEnabled == 0) return -100.0;
+float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap) {
     return ((
         // Elevation gate: trees only in the grass/low-land zone.
         smoothstep(uTreeElevMax, uTreeElevMin, height + 0.01)
@@ -96,8 +97,11 @@ float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMa
     ) - 0.5) / 0.6;
 }
 
-float ComputeTreeMap(float height, float normalY, float occlusion, float ridgeMap, vec3 suppNoise, vec3 worldPos) {
-    float treesAmount = GetTreesAmount(height, normalY, occlusion, ridgeMap, suppNoise);
+float ComputeTreeMap(float height, float normalY, float occlusion, float ridgeMap, vec3 worldPos) {
+
+    if (uTreeEnabled == 0) return -1.0;
+
+    float treesAmount = GetTreesAmount(height, normalY, occlusion, ridgeMap);
 
     float treeNoise = noised_tree(worldPos.xz * uTreeNoiseFreq).x * 0.5 + 0.5;
     float trees = (treesAmount + 1.0 - pow(treeNoise, uTreeNoisePow) - 1.0) * uTreeDensity;
@@ -107,3 +111,40 @@ float ComputeTreeMap(float height, float normalY, float occlusion, float ridgeMa
 `;
 
 
+
+// ── Uniform helpers ───────────────────────────────────────────────────────────
+
+export interface TreeUniformState {
+  treeEnabled:   boolean;
+  treeElevMax:   number;
+  treeElevMin:   number;
+  treeSlopeMin:  number;
+  treeRidgeMin:  number;
+  treeNoiseFreq: number;
+  treeNoisePow:  number;
+  treeDensity:   number;
+}
+
+export function createTreeUniforms(s: TreeUniformState): Record<string, THREE.IUniform> {
+  return {
+    uTreeEnabled:   { value: s.treeEnabled ? 1 : 0 },
+    uTreeElevMax:   { value: s.treeElevMax },
+    uTreeElevMin:   { value: s.treeElevMin },
+    uTreeSlopeMin:  { value: s.treeSlopeMin },
+    uTreeRidgeMin:  { value: s.treeRidgeMin },
+    uTreeNoiseFreq: { value: s.treeNoiseFreq },
+    uTreeNoisePow:  { value: s.treeNoisePow },
+    uTreeDensity:   { value: s.treeDensity },
+  };
+}
+
+export function syncTreeUniforms(u: Record<string, THREE.IUniform>, s: TreeUniformState): void {
+  u.uTreeEnabled.value   = s.treeEnabled ? 1 : 0;
+  u.uTreeElevMax.value   = s.treeElevMax;
+  u.uTreeElevMin.value   = s.treeElevMin;
+  u.uTreeSlopeMin.value  = s.treeSlopeMin;
+  u.uTreeRidgeMin.value  = s.treeRidgeMin;
+  u.uTreeNoiseFreq.value = s.treeNoiseFreq;
+  u.uTreeNoisePow.value  = s.treeNoisePow;
+  u.uTreeDensity.value   = s.treeDensity;
+}
