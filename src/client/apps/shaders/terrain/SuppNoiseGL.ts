@@ -5,13 +5,9 @@
  * Renders a static FBM value-noise texture into a THREE.WebGLRenderTarget
  * using the main Three.js renderer.
  *
- * The output texture encodes:
- *   R = accumulated noise value  (FBM, 8 octaves)
- *   G = accumulated dNoise/du    (analytical derivative)
- *   B = accumulated dNoise/dv    (analytical derivative)
- *
- * Used in the terrain fragment shader to perturb the surface normal, adding
- * high-frequency diffuse and shading detail without modifying the base elevation.
+ * The GLSL shaders and the description of what the texture encodes live in
+ * detailNoiseGLSL.ts, which is the shared contract between this producer
+ * and the terrain fragment shader that consumes the texture.
  *
  * Call update(renderer) when the texture needs to be (re-)computed — it is a
  * no-op unless markDirty() has been called.  The .texture property is the
@@ -19,64 +15,7 @@
  */
 
 import * as THREE from 'three';
-
-// ── GLSL ─────────────────────────────────────────────────────────────────────
-
-const SUPP_VERT = /* glsl */`
-void main() {
-  gl_Position = vec4(position.xy, 0.0, 1.0);
-}
-`;
-
-const SUPP_FRAG = /* glsl */`
-precision highp float;
-
-uniform vec2 uBufferSize;
-
-out vec4 fragColor;
-
-// Value noise with analytical derivatives (IQ-style).
-// Returns vec3(value [-1,1], dvalue/du, dvalue/dv).
-float hm_hash(vec2 p) {
-  float h = dot(p, vec2(127.1, 311.7));
-  return -1.0 + 2.0 * fract(sin(h) * 43758.5453123);
-}
-
-vec3 noised(vec2 x) {
-  vec2 i  = floor(x);
-  vec2 f  = fract(x);
-  vec2 u  = f*f*f*(f*(f*6.0 - 15.0) + 10.0);
-  vec2 du = 30.0*f*f*(f*(f - 2.0) + 1.0);
-  float a = hm_hash(i + vec2(0.0, 0.0));
-  float b = hm_hash(i + vec2(1.0, 0.0));
-  float c = hm_hash(i + vec2(0.0, 1.0));
-  float d = hm_hash(i + vec2(1.0, 1.0));
-  float k0 = a;
-  float k1 = b - a;
-  float k2 = c - a;
-  float k4 = a - b - c + d;
-  return vec3(k0 + k1*u.x + k2*u.y + k4*u.x*u.y,
-              du.x * (k1 + k4*u.y),
-              du.y * (k2 + k4*u.x));
-}
-
-void main() {
-  vec2 uv = gl_FragCoord.xy / uBufferSize;
-
-  vec3 color = vec3(0.0);
-  float a = 0.5;
-  float f = 2.0;
-  for (int i = 0; i < 8; i++) {
-    color += noised(uv * f) * a;
-    a *= 0.95;
-    f *= 2.0;
-  }
-
-  fragColor = vec4(color, 1.0);
-}
-`;
-
-// ── SuppNoiseGL ───────────────────────────────────────────────────────────────
+import { suppNoiseVert, suppNoiseFrag } from '@core/shaders/detailNoiseGLSL';
 
 export class SuppNoiseGL {
   private readonly renderTarget: THREE.WebGLRenderTarget;
@@ -97,10 +36,12 @@ export class SuppNoiseGL {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: {
-        uBufferSize: { value: new THREE.Vector2(size, size) },
+        uBufferSize:  { value: new THREE.Vector2(size, size) },
+        uWorldOrigin: { value: new THREE.Vector2(-1.0, -1.0) },
+        uWorldSize:   { value: 2.0 },
       },
-      vertexShader:   SUPP_VERT,
-      fragmentShader: SUPP_FRAG,
+      vertexShader:   suppNoiseVert,
+      fragmentShader: suppNoiseFrag,
       depthTest:  false,
       depthWrite: false,
     });
@@ -114,6 +55,18 @@ export class SuppNoiseGL {
 
   /** Mark the texture as needing a re-render on the next update() call. */
   markDirty(): void { this.dirty = true; }
+
+  /**
+   * Update the world-space coordinate range used when baking the noise.
+   * Pass the same origin/size as the terrain patch so the texture is computed
+   * in the same XZ coordinate space as the elevation noise.
+   * Automatically marks the texture dirty.
+   */
+  setWorldParams(originX: number, originZ: number, worldSize: number): void {
+    (this.material.uniforms.uWorldOrigin.value as THREE.Vector2).set(originX, originZ);
+    this.material.uniforms.uWorldSize.value = worldSize;
+    this.markDirty();
+  }
 
   /**
    * Re-render the supplemental noise texture if dirty; no-op otherwise.

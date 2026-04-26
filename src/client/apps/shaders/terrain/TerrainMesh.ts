@@ -204,6 +204,7 @@ export class TerrainMesh {
     this.elevationTexture.needsUpdate    = true;
 
     this.syncElevationTexture();
+    this.suppNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
   }
 
   /** Update display-only uniforms (amplitude, wireframe, roughness) without recomputing elevation. */

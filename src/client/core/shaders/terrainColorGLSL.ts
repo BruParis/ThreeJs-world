@@ -144,10 +144,10 @@ vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal, float ridgeMap, v
   landColor = mix(landColor, vec3(1.0), smoothstep(0.53, 0.6, elevation + breakup * 0.1));
 
   // Grass
-  vec3 grassMix = mix(uGrassColor1, uGrassColor2, smoothstep(0.4, 0.6, elevation - erosion * 0.05 + breakup * 0.3));
-  landColor = mix(landColor, grassMix,
-    smoothstep(GRASS_HEIGHT + 0.05, GRASS_HEIGHT + 0.02, elevation + 0.01 + (occlusion - 0.8) * 0.05 - breakup * 0.02)
-    * smoothstep(0.8, 1.0, 1.0 - (1.0 - normal.y) * (1.0 - trees) + breakup * 0.1));
+  // vec3 grassMix = mix(uGrassColor1, uGrassColor2, smoothstep(0.4, 0.6, elevation - erosion * 0.05 + breakup * 0.3));
+  // landColor = mix(landColor, grassMix,
+  //   smoothstep(GRASS_HEIGHT + 0.05, GRASS_HEIGHT + 0.02, elevation + 0.01 + (occlusion - 0.8) * 0.05 - breakup * 0.02)
+  //   * smoothstep(0.8, 1.0, 1.0 - (1.0 - normal.y) * (1.0 - trees) + breakup * 0.1));
 
   // ── Tree color ─────────────────────────────────────────────────────────────
   // vec3 treeColor = mix(uTreeColor, uTreeColor2, treeNoise);
