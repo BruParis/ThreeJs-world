@@ -72,7 +72,6 @@ export class LayerOverlay {
       mat.uniforms.uFractalLacunarity.value = params.fractalNoiseParams.lacunarity;
       mat.uniforms.uFractalGain.value       = params.fractalNoiseParams.gain;
       mat.uniforms.uFractalAmp.value        = params.fractalNoiseParams.amp;
-      mat.uniforms.uLayerMix.value          = params.layerMix;
       mat.uniforms.uPatchHalfSize.value     = params.patchHalfSize;
       mat.uniforms.uErosionEnabled.value         = params.erosionEnabled ? 1 : 0;
       mat.uniforms.uErosionOctaves.value         = params.erosionOctaves;
@@ -181,7 +180,6 @@ export class LayerOverlay {
           uFractalLacunarity:       { value: params.fractalNoiseParams.lacunarity },
           uFractalGain:             { value: params.fractalNoiseParams.gain },
           uFractalAmp:              { value: params.fractalNoiseParams.amp },
-          uLayerMix:                { value: params.layerMix },
           uPatchHalfSize:           { value: params.patchHalfSize },
           uErosionEnabled:          { value: params.erosionEnabled ? 1 : 0 },
           uErosionOctaves:          { value: params.erosionOctaves },

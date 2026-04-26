@@ -6,11 +6,11 @@
  * UV.y → worldZ with Y-flip so the panel aligns with the 3D view).
  *
  * uLayerIndex acts as an early-return breakpoint through the pipeline:
- *   0 = gradient  — diagonal XZ gradient (terrain l1)
- *   1 = noise     — raw FBM result (same type as terrain)
- *   2 = blended   — mix(gradient, noise, uLayerMix)
- *   3 = erosion   — blended + hydraulic erosion pass
- *                   (falls back to blended when noiseType == 2 or erosion disabled)
+ *   0 = noise       — raw FBM result (same type as terrain)
+ *   1 = erosion     — noise + hydraulic erosion pass
+ *                     (falls back to noise when noiseType == 2 or erosion disabled)
+ *   2 = water clamp — elevation after sea-level clamp
+ *   3 = ridgemap    — erosion gully signal
  *
  * uNoiseType selects the noise algorithm (0=simplex, 1=perlin, 2=heightmap, 3=gaussian, 4=fractalNoise).
  */
@@ -45,7 +45,6 @@ uniform int   uFractalOctaves;
 uniform float uFractalLacunarity;
 uniform float uFractalGain;
 uniform float uFractalAmp;
-uniform float uLayerMix;
 uniform float uPatchHalfSize;
 
 uniform int   uErosionEnabled;
@@ -91,13 +90,6 @@ float valueFbm(vec2 p) {
   return value * 0.5 + 0.5;
 }
 
-// UV [0,1] → world XZ matching the terrain coordinate frame:
-//   UV.x increases left→right  = world +X
-//   UV.y increases bottom→top  = world -Z  (flipped: camera sits at +Z)
-float computeGradientAtWorld(float worldX, float worldZ) {
-  return clamp((worldX + worldZ) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
-}
-
 float computeGaussianAtWorld(float worldX, float worldZ) {
   float sigma = max(uGaussSigma * uPatchHalfSize, 0.001);
   return uGaussAmplitude * exp(-(worldX * worldX + worldZ * worldZ) / (2.0 * sigma * sigma));
@@ -117,43 +109,25 @@ float computeNoiseAtWorld(float worldX, float worldZ) {
     return simplexFbm(p, uNoiseOctaves, uNoisePersistence, uNoiseLacunarity) * 0.5 + 0.5;
 }
 
-// Used for neighbour samples when computing the erosion slope.
-float computeBaseAtWorld(float worldX, float worldZ) {
-  return mix(
-    computeGradientAtWorld(worldX, worldZ),
-    computeNoiseAtWorld(worldX, worldZ),
-    uLayerMix
-  );
-}
-
 float computeLayer(vec2 uv) {
   float worldX =  (uv.x - 0.5) * 2.0 * uPatchHalfSize;
   float worldZ = -(uv.y - 0.5) * 2.0 * uPatchHalfSize;
 
-  // Step 0: diagonal XZ gradient
-  float l1 = computeGradientAtWorld(worldX, worldZ);
-  if (uLayerIndex == 0) return l1;
+  // Step 0: raw noise FBM
+  float base = computeNoiseAtWorld(worldX, worldZ);
+  if (uLayerIndex == 0) return base;
 
-  // Step 1: raw noise FBM
-  float l2 = computeNoiseAtWorld(worldX, worldZ);
-  if (uLayerIndex == 1) return l2;
-
-  // Step 2: gradient + noise blended
-  float base = mix(l1, l2, uLayerMix);
-  if (uLayerIndex == 2) return base;
-
-  // Step 3: hydraulic erosion pass via applyTerrain.
-  // Heightmap mode has erosion built in — show blended as fallback.
-  // base is [0,1]; applyTerrain expects [-1,1] raw input, so convert: raw = base*2-1,
-  // rawSlope = slope_grad*2 (gradient in [-1,1] space = gradient in [0,1] space * 2).
+  // Step 1: hydraulic erosion pass via applyTerrain.
+  // Heightmap mode has erosion built in — show noise as fallback.
+  // base is [0,1]; applyTerrain expects [-1,1] raw input.
   float eroded = base;
   float ridge  = 0.0;
   if (uNoiseType != 2 && uErosionEnabled != 0) {
     float GE = 0.5 / max(uNoiseScale, 0.5);
-    float fL = computeBaseAtWorld(worldX - GE, worldZ);
-    float fR = computeBaseAtWorld(worldX + GE, worldZ);
-    float fD = computeBaseAtWorld(worldX, worldZ - GE);
-    float fU = computeBaseAtWorld(worldX, worldZ + GE);
+    float fL = computeNoiseAtWorld(worldX - GE, worldZ);
+    float fR = computeNoiseAtWorld(worldX + GE, worldZ);
+    float fD = computeNoiseAtWorld(worldX, worldZ - GE);
+    float fU = computeNoiseAtWorld(worldX, worldZ + GE);
     vec2 slope_grad = vec2(fR - fL, fU - fD) / (2.0 * GE);
     eroded = applyTerrain(
       vec2(worldX, worldZ), base * 2.0 - 1.0, slope_grad * 2.0, 1,
@@ -164,14 +138,14 @@ float computeLayer(vec2 uv) {
       ridge
     );
   }
-  if (uLayerIndex == 3) return eroded;
+  if (uLayerIndex == 1) return eroded;
 
-  // Step 5: ridgemap — erosion gully signal.
+  // Step 3: ridgemap — erosion gully signal.
   // Negative values = ridge / gully carved by erosion → shown bright.
   // Positive / flat areas → dark. Nonlinear mapping to maximise contrast.
-  if (uLayerIndex == 5) return pow(clamp(-ridge, 0.0, 1.0), 0.5);
+  if (uLayerIndex == 3) return pow(clamp(-ridge, 0.0, 1.0), 0.5);
 
-  // Step 4: water-level clamping — mirrors elevToDisplY() in the vertex shader.
+  // Step 2: water-level clamping — mirrors elevToDisplY() in the vertex shader.
   return max(0.0, (eroded + uElevOffset - SEA_LEVEL) / (1.0 - SEA_LEVEL));
 }
 

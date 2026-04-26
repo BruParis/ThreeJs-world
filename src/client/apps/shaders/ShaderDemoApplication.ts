@@ -181,7 +181,6 @@ export class ShaderDemoApplication implements TabApplication {
       noiseType:             this.terrain.noiseType,
       gaussSigma:            this.terrain.gaussianParams.sigma,
       gaussAmplitude:        this.terrain.gaussianParams.amplitude,
-      layerMix:              this.terrain.layerMix,
       patchHalfSize:         this.terrain.patchSize / 2,
       elevationOffset:       this.terrain.elevationOffset,
       erosionEnabled:         this.terrain.erosionEnabled,

@@ -18,7 +18,6 @@ import {
   DEFAULT_PATCH_SIZE,
   DEFAULT_SUBDIVISION,
   DEFAULT_NUM_PATCHES,
-  DEFAULT_LAYER_MIX,
   DEFAULT_ELEV_OFFSET,
 } from './TerrainConstants';
 import {
@@ -53,7 +52,6 @@ export class TerrainMesh {
   subdivisions = DEFAULT_SUBDIVISION;
   numPatches   = DEFAULT_NUM_PATCHES;
   wireframe    = false;
-  layerMix     = DEFAULT_LAYER_MIX;
   roughness    = 0.85;
 
   // Supplemental noise
@@ -142,7 +140,6 @@ export class TerrainMesh {
         noiseOctaves:          this.noiseParams.octaves,
         noisePersistence:      this.noiseParams.persistence,
         noiseLacunarity:       this.noiseParams.lacunarity,
-        layerMix:              this.layerMix,
         patchHalfSize:         halfSize,
         noiseType:             this.noiseType,
         gaussSigma:            this.gaussianParams.sigma,

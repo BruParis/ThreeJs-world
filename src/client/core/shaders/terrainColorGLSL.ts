@@ -59,7 +59,6 @@ vec3 terrainColor(float elevation, vec3 worldPos, vec3 normal, float ridgeMap, v
   // Raw high-frequency detail noise — needed for both water foam and land breakup.
   float noise = simplexFbm(worldPos * 8.0, 4, 0.5, 2.0) * 0.5 + 0.5;
 
-  // float breakup = mix(noise, elevation, 0.4);
   float breakup = suppNoise.x;
 
   float occlusion = 1.0;

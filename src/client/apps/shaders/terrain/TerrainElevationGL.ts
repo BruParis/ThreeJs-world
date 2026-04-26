@@ -31,7 +31,6 @@ export interface ElevationComputeParams {
   noiseOctaves:           number;
   noisePersistence:       number;
   noiseLacunarity:        number;
-  layerMix:               number;
   patchHalfSize:          number;
   noiseType:              number;
   gaussSigma:             number;
@@ -92,7 +91,6 @@ uniform float uNoiseScale;
 uniform int   uNoiseOctaves;
 uniform float uNoisePersistence;
 uniform float uNoiseLacunarity;
-uniform float uLayerMix;
 uniform int   uNoiseType;
 uniform float uGaussSigma;
 uniform float uGaussAmplitude;
@@ -131,19 +129,12 @@ float gaussian2D(vec3 wPos) {
   return uGaussAmplitude * exp(-(wPos.x * wPos.x + wPos.z * wPos.z) / (2.0 * sigma * sigma));
 }
 
-// Returns the blended raw noise in [-1, 1].
+// Returns raw noise in [-1, 1].
 // Normalisation and erosion are handled downstream by applyTerrain().
 float baseNoise(vec3 wPos) {
-  float l1 = clamp((wPos.x + wPos.z) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0) * 2.0 - 1.0;
-  float l2;
-  if (uNoiseType == 3) {
-    l2 = gaussian2D(wPos) * 2.0 - 1.0;
-  } else if (uNoiseType == 4) {
-    l2 = uFractalAmp * FractalNoise(wPos.xz, uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x;
-  } else {
-    l2 = noiseFbm(wPos * uNoiseScale);
-  }
-  return mix(l1, l2, uLayerMix);
+  if (uNoiseType == 3) return gaussian2D(wPos) * 2.0 - 1.0;
+  if (uNoiseType == 4) return uFractalAmp * FractalNoise(wPos.xz, uFractalFreq, uFractalOctaves, uFractalLacunarity, uFractalGain).x;
+  return noiseFbm(wPos * uNoiseScale);
 }
 
 // Returns elevation in [0, 1] at an arbitrary world position.
@@ -151,9 +142,7 @@ float baseNoise(vec3 wPos) {
 float computeElevation(vec3 wPos, out float ridgeOut) {
   ridgeOut = 0.0;
   if (uNoiseType == 2) {
-    float l1 = clamp((wPos.x + wPos.z) / (2.0 * uPatchHalfSize) + 0.5, 0.0, 1.0);
-    float hm = clamp(heightmapElevation(wPos.xz).x, 0.0, 1.0);
-    return mix(l1, hm, uLayerMix);
+    return clamp(heightmapElevation(wPos.xz).x, 0.0, 1.0);
   }
 
   float rawN = baseNoise(wPos);
@@ -389,7 +378,6 @@ export class TerrainElevationGL {
     gl.uniform1i(u('uNoiseOctaves'),        p.noiseOctaves);
     gl.uniform1f(u('uNoisePersistence'),    p.noisePersistence);
     gl.uniform1f(u('uNoiseLacunarity'),     p.noiseLacunarity);
-    gl.uniform1f(u('uLayerMix'),            p.layerMix);
     gl.uniform1i(u('uNoiseType'),           p.noiseType);
     gl.uniform1f(u('uGaussSigma'),          p.gaussSigma);
     gl.uniform1f(u('uGaussAmplitude'),      p.gaussAmplitude);

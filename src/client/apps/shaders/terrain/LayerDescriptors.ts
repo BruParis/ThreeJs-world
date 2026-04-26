@@ -11,12 +11,10 @@ export interface LayerDescriptor {
  * Adding a new step here + a matching early-return in the shader is all that's needed.
  */
 export const LAYER_DESCRIPTORS: readonly LayerDescriptor[] = [
-  { index: 0, label: 'Gradient' },
-  { index: 1, label: 'Noise' },
-  { index: 2, label: 'Blended' },
-  { index: 3, label: 'Erosion' },
-  { index: 4, label: 'Water Clamp' },
-  { index: 5, label: 'RidgeMap' },
+  { index: 0, label: 'Noise' },
+  { index: 1, label: 'Erosion' },
+  { index: 2, label: 'Water Clamp' },
+  { index: 3, label: 'RidgeMap' },
 ];
 
 /** Full set of uniforms the overlay panels need to mirror the elevation compute shader. */
@@ -26,7 +24,6 @@ export interface OverlayParams {
   noiseType:              number;
   gaussSigma:             number;
   gaussAmplitude:         number;
-  layerMix:               number;
   patchHalfSize:          number;
   elevationOffset:        number;
   erosionEnabled:         boolean;

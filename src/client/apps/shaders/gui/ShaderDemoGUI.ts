@@ -53,7 +53,6 @@ export function buildShaderDemoGUI(
     noiseType:              terrain.noiseType,
     gaussSigma:             terrain.gaussianParams.sigma,
     gaussAmplitude:         terrain.gaussianParams.amplitude,
-    layerMix:               terrain.layerMix,
     patchHalfSize:          terrain.patchSize / 2,
     elevationOffset:        terrain.elevationOffset,
     erosionEnabled:         terrain.erosionEnabled,
@@ -161,10 +160,6 @@ export function buildShaderDemoGUI(
   noiseFolder.hidden        = !isStdNoise();
   gaussFolder.hidden        = !isGaussian();
   fractalNoiseFolder.hidden = !isFractal();
-
-  const layerParams = { mix: terrain.layerMix };
-  elevationPage.addBinding(layerParams, 'mix', { label: 'Layer Mix', min: 0.0, max: 1.0, step: 0.01 })
-    .on('change', ({ value }) => { terrain.layerMix = value; updElevation(); });
 
   const suppFolder = elevationPage.addFolder({ title: 'Supplemental', expanded: false });
   const suppParams = { enabled: terrain.suppNoiseEnabled, strength: terrain.suppNoiseStrength };
