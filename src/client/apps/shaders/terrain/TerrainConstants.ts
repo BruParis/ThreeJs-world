@@ -45,7 +45,6 @@ export const DEFAULT_FRACTAL_NOISE_PARAMS: FractalNoiseParams = {
 };
 
 export const DEFAULT_ELEV_OFFSET = 0.0;   // uniform shift applied to elevation before sea-level test
-export const DEFAULT_AMPLITUDE   = 1.0;   // world units — max Y displacement
 export const DEFAULT_PATCH_SIZE  = 2.0;   // world units — XZ extent of the whole grid
 export const DEFAULT_SUBDIVISION = 256;    // grid cells per side (power of 2)
 export const DEFAULT_NUM_PATCHES = 1;     // total patches (must be a perfect square: 1, 4, 9, 16…)

@@ -130,7 +130,6 @@ export function buildShaderDemoGUI(
     size:            terrain.patchSize,
     numPatches:      terrain.numPatches,
     subdivision:     terrain.subdivisions,
-    amplitude:       terrain.amplitude,
     elevationOffset: terrain.elevationOffset,
   };
 
@@ -140,8 +139,6 @@ export function buildShaderDemoGUI(
     .on('change', ({ value }) => { terrain.numPatches = value; updGeometry(); });
   terrainPage.addBinding(terrainParams, 'subdivision', { label: 'Subdivision', options: SUBDIVISION_OPTIONS })
     .on('change', ({ value }) => { terrain.subdivisions = Number(value); updGeometry(); });
-  terrainPage.addBinding(terrainParams, 'amplitude', { label: 'Amplitude', min: 0.0, max: 2.0, step: 0.05 })
-    .on('change', ({ value }) => { terrain.amplitude = value; updDisplay(); });
   terrainPage.addBinding(terrainParams, 'elevationOffset', { label: 'Elev. Offset', min: -0.5, max: 0.5, step: 0.01 })
     .on('change', ({ value }) => { terrain.elevationOffset = value; updDisplay(); updOverlay(); });
 

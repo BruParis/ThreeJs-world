@@ -38,7 +38,6 @@ import {
   DEFAULT_NOISE_PARAMS,
   DEFAULT_GAUSSIAN_PARAMS,
   DEFAULT_FRACTAL_NOISE_PARAMS,
-  DEFAULT_AMPLITUDE,
   DEFAULT_PATCH_SIZE,
   DEFAULT_SUBDIVISION,
   DEFAULT_NUM_PATCHES,
@@ -71,7 +70,6 @@ export class TerrainMesh {
 
   // Geometry / rendering
   elevationOffset = DEFAULT_ELEV_OFFSET;
-  amplitude       = DEFAULT_AMPLITUDE;
   patchSize    = DEFAULT_PATCH_SIZE;
   subdivisions = DEFAULT_SUBDIVISION;
   numPatches   = DEFAULT_NUM_PATCHES;
@@ -238,12 +236,11 @@ export class TerrainMesh {
     this.suppNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
   }
 
-  /** Update display-only uniforms (amplitude, wireframe, roughness) without recomputing elevation. */
+  /** Update display-only uniforms (wireframe, roughness) without recomputing elevation. */
   updateUniforms(): void {
     for (const u of this._patchUniforms) {
       syncTerrainVertexUniforms(u, {
         elevationTexture: this.elevationTexture,
-        amplitude:        this.amplitude,
         patchHalfSize:    this.patchSize / 2,
         elevationOffset:  this.elevationOffset,
       });
@@ -316,7 +313,7 @@ export class TerrainMesh {
     const col   = Math.max(0, Math.min(w - 1, Math.floor(u * (w - 1))));
     const row   = Math.max(0, Math.min(h - 1, Math.floor(v * (h - 1))));
     const noise = this.elevationData[row * w + col];
-    return Math.max(0, (noise + this.elevationOffset - 0.35) / (1 - 0.35) * this.amplitude);
+    return Math.max(0, (noise + this.elevationOffset - 0.35) / (1 - 0.35));
   }
 
   dispose(): void {
@@ -413,7 +410,6 @@ export class TerrainMesh {
       Object.assign(shader.uniforms,
         createTerrainVertexUniforms({
           elevationTexture: this.elevationTexture,
-          amplitude:        this.amplitude,
           patchHalfSize:    this.patchSize / 2,
           elevationOffset:  this.elevationOffset,
         }),

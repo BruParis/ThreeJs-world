@@ -25,7 +25,6 @@ export const terrainVertexPreamble = /* glsl */`
 ${terrainSampleGLSL}
 
 uniform sampler2D uElevationTex;
-uniform float uAmplitude;
 uniform float uPatchHalfSize;
 uniform float uElevOffset;
 
@@ -36,7 +35,7 @@ varying vec3  vTerrainWorldNormal;
 const float TERRAIN_SEA = ${TERRAIN_SEA_LEVEL.toFixed(2)};
 
 float terrain_displY(float noise) {
-  return max(0.0, (noise + uElevOffset - TERRAIN_SEA) / (1.0 - TERRAIN_SEA) * uAmplitude);
+  return max(0.0, (noise + uElevOffset - TERRAIN_SEA) / (1.0 - TERRAIN_SEA));
 }
 `;
 
@@ -44,7 +43,6 @@ float terrain_displY(float noise) {
 
 export interface TerrainVertexUniformState {
   elevationTexture: THREE.DataTexture | null;
-  amplitude:        number;
   patchHalfSize:    number;
   elevationOffset:  number;
 }
@@ -52,7 +50,6 @@ export interface TerrainVertexUniformState {
 export function createTerrainVertexUniforms(s: TerrainVertexUniformState): Record<string, THREE.IUniform> {
   return {
     uElevationTex:  { value: s.elevationTexture },
-    uAmplitude:     { value: s.amplitude },
     uPatchHalfSize: { value: s.patchHalfSize },
     uElevOffset:    { value: s.elevationOffset },
   };
@@ -60,7 +57,6 @@ export function createTerrainVertexUniforms(s: TerrainVertexUniformState): Recor
 
 export function syncTerrainVertexUniforms(u: Record<string, THREE.IUniform>, s: TerrainVertexUniformState): void {
   u.uElevationTex.value  = s.elevationTexture;
-  u.uAmplitude.value     = s.amplitude;
   u.uPatchHalfSize.value = s.patchHalfSize;
   u.uElevOffset.value    = s.elevationOffset;
 }
@@ -95,9 +91,8 @@ float terrain_dispY = terrain_displY(terrain_elev);
 vTerrainElev     = terrain_elev;
 vTerrainWorldPos = vec3(wPos.x, terrain_dispY, wPos.z);
 
-// Gradient stored amplitude-normalised; scale by uAmplitude to get world-space slope.
-float dhdx = terrain_gradX * uAmplitude;
-float dhdz = terrain_gradZ * uAmplitude;
+float dhdx = terrain_gradX;
+float dhdz = terrain_gradZ;
 // Below water the mesh is flat — use an upward normal so the baked gradient
 // (which ignores uElevOffset) does not leak through as lighting artefacts.
 bool underwater = (terrain_elev + uElevOffset) < TERRAIN_SEA;

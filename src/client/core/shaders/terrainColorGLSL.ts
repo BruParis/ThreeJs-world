@@ -193,19 +193,22 @@ vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worl
   // ── Land color ─────────────────────────────────────────────────────────────
   vec3 landColor = vec3(0.0);
 
-  // landColor = uCliffColor * smoothstep(0.0, 1.0, occlusion);
-  // landColor = uCliffColor * smoothstep(0.0, 1.0, ridgeMap);
-  landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
-  // landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, occlusion + breakup * 1.5));
-  landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, occlusion));
+  // landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
+  landColor = uCliffColor * smoothstep(0.2, 0.52, elevation);
+  landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, occlusion + breakup * 1.5));
 
   // Snow
   //landColor = mix(landColor, vec3(1.0), smoothstep(0.53, 0.6, elevation + breakup * 0.1));
 
-  // Tree color
-  // landColor = mix(landColor, uTreeColor * pow(trees, 8.0), clamp01(trees * 2.2 - 0.8) * 0.6);
+  // Grass
+  vec3 grassMix = mix(uGrassColor1, uGrassColor2, smoothstep(0.4, 0.6, elevation - erosionDepth * 0.05 + breakup * 0.3));
+  landColor = mix(landColor, grassMix,
+    smoothstep(GRASS_HEIGHT + 0.05, GRASS_HEIGHT + 0.02, elevation + 0.01 + (occlusion - 0.8) * 0.05 - breakup * 0.02)
+    * smoothstep(0.8, 1.0, 1.0 - (1.0 - normal.y) * (1.0 - trees) + breakup * 0.1));
 
-  // landColor *= 1.0 + breakup * 0.5;
+  // Tree color
+  landColor = mix(landColor, uTreeColor * pow(trees, 8.0), clamp01(trees * 2.2 - 0.8) * 0.6);
+  landColor *= 1.0 + breakup * 0.5;
 
   // ── Shoreline blend ────────────────────────────────────────────────────────
   float blendHalf   = mix(0.001, 0.01, slopeFlatness);
