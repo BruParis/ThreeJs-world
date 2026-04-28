@@ -27,7 +27,7 @@
  *
  *   COLOR_ATTACHMENT1  — attribute texture  (NearestFilter, shading data)
  *     R = ridgeMap     [-1, 1]
- *     G = erosionDepth [-1, 1]
+ *     G = erosionDepth  [0, 1]  (packed from [-1,1] with * 0.5 + 0.5; unpack with * 2.0 - 1.0)
  *     BA = unused
  *
  * Splitting into two textures lets each use the correct filtering mode:
@@ -123,6 +123,9 @@ void main() {
   float gradZ = (dU - dD) / (2.0 * uStepZ);
 
   fragColor = packElevationChannel(elev, gradX, gradZ);
-  fragAttr  = vec4(ridge, erosionDepth, 0.0, 1.0);
+  // Pack erosionDepth [-1,1] → [0,1] so the fragment shader can unpack with * 2.0 - 1.0.
+  // Default (no erosion, value 0.0) maps to 0.5, which decodes back to 0.0 (neutral).
+  // This avoids the disabled-case ambiguity.
+  fragAttr  = vec4(ridge, erosionDepth * 0.5 + 0.5, 0.0, 1.0);
 }
 `;

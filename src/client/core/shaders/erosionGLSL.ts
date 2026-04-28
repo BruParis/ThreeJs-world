@@ -161,6 +161,7 @@ vec4 erosion_ErosionFilter(
 
     ridgeMapFadeTarget = mix(ridgeMapFadeTarget, gullies.x, ridgeMapCombiMask);
     float newRidgeMapMask = erosion_ease_out(sloping * onset.w);
+
     // Decay by gain each octave so coarser octaves dominate ridgeMapFadeTarget.
     // Without this, newRidgeMapMask≈1 at slope transitions keeps the mask constant,
     // and the finest octave ends up contributing ~84% of the ridgeMap signal.

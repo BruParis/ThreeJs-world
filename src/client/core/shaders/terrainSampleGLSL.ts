@@ -24,7 +24,7 @@
  *
  *   Attribute texture  (NearestFilter — discrete per-vertex data, must NOT be interpolated)
  *     R = ridgeMap     [-1, 1]
- *     G = erosionDepth [-1, 1]
+ *     G = erosionDepth  [0, 1]  (packed from [-1,1] with * 0.5 + 0.5; unpack with * 2.0 - 1.0)
  *     BA = unused
  *
  * Keeping ridgeMap and erosionDepth in a separate NearestFilter texture is
@@ -51,6 +51,8 @@ export const TERRAIN_DEBUG_RIDGEMAP   = 2; // red = ridge, blue = gully
 export const TERRAIN_DEBUG_TREES      = 3; // tree coverage mask
 export const TERRAIN_DEBUG_NORMALS    = 4; // world-space normal as RGB
 export const TERRAIN_DEBUG_STEEPNESS  = 5; // 1 - normal.y  (slope angle proxy)
+export const TERRAIN_DEBUG_OCCLUSION  = 6; // erosion-derived occlusion [0,1]
+export const TERRAIN_DEBUG_BREAKUP    = 7; // detail noise breakup [-1,1] remapped to [0,1]
 
 // ── GLSL source ───────────────────────────────────────────────────────────────
 
@@ -95,5 +97,7 @@ void unpackElevationChannel(vec4 ch, out float elev, out float gradX, out float 
 #define TERRAIN_DEBUG_TREES     3
 #define TERRAIN_DEBUG_NORMALS   4
 #define TERRAIN_DEBUG_STEEPNESS 5
+#define TERRAIN_DEBUG_OCCLUSION 6
+#define TERRAIN_DEBUG_BREAKUP   7
 
 `;

@@ -12,6 +12,8 @@ import {
   TERRAIN_DEBUG_TREES,
   TERRAIN_DEBUG_NORMALS,
   TERRAIN_DEBUG_STEEPNESS,
+  TERRAIN_DEBUG_OCCLUSION,
+  TERRAIN_DEBUG_BREAKUP,
 } from '@core/shaders/terrainSampleGLSL';
 
 export interface ShaderDemoGUIHandle {
@@ -118,6 +120,8 @@ export function buildShaderDemoGUI(
       'Trees':      TERRAIN_DEBUG_TREES,
       'Normals':    TERRAIN_DEBUG_NORMALS,
       'Steepness':  TERRAIN_DEBUG_STEEPNESS,
+      'Occlusion':  TERRAIN_DEBUG_OCCLUSION,
+      'Breakup':    TERRAIN_DEBUG_BREAKUP,
     },
   }).on('change', ({ value }) => {
     terrain.terrainColors.debugMode = Number(value);

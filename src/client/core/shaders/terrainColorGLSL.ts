@@ -118,9 +118,11 @@ vec3 colorNormal = shiftedElev < WATER_HEIGHT ? vTerrainWorldNormal : terrainNor
 // Using world-space UV (same formula as the elevation texture in the vertex shader).
 vec2 attrUV  = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
 vec4 attrData = texture2D(uAttrTex, attrUV);
-// attrData.r = ridgeMap [-1,1],  attrData.g = erosionDepth [-1,1]
+// attrData.r = ridgeMap      [-1, 1]  (stored directly)
+// attrData.g = erosionPacked  [0, 1]  (packed: 0 = deep gully, 0.5 = neutral, 1 = ridge)
+float erosionDepth = attrData.g * 2.0 - 1.0;  // unpack [0,1] → [-1,1]
 
-diffuseColor.rgb = terrainColor(shiftedElev, attrData.r, attrData.g, vTerrainWorldPos.xz, colorNormal, detailNoise);
+diffuseColor.rgb = terrainColor(shiftedElev, attrData.r, erosionDepth, vTerrainWorldPos.xz, colorNormal, detailNoise);
 `;
 
 /**
@@ -162,9 +164,26 @@ ${treeGLSL}
 
 // Takes individual elevation/ridgeMap floats rather than a TerrainSample struct —
 // many WebGL2 drivers reject struct types in function parameter positions.
+//
+// Parameters (all expected ranges):
+//   elevation    [0, 1]    eroded terrain height; 0 = deepest water, 1 = highest peak
+//   ridgeMap     [-1, 1]   erosion ridge signal: -1 = deep gully/crease, +1 = sharp ridge
+//   erosionDepth [-1, 1]   erosion proxy AO: -1 = concave/sheltered, 0 = neutral, +1 = convex/exposed
+//                          caller must unpack from [0,1] storage with * 2.0 - 1.0
+//   worldXZ               world-space XZ position (used by tree placement)
+//   normal                surface normal in world space (may be perturbed by detail noise)
+//   detailNoise  vec3      suppNoise texture sample: .x = FBM value [-1,1], .yz = derivatives
 vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worldXZ, vec3 normal, vec3 detailNoise) {
   elevation = clamp(elevation, 0.0, 1.0);
 
+  // FROM shadertoys
+  // vec4 GetChannel1(vec2 uv) {
+  //   uv *= BUFFER_SIZE / iResolution.xy;
+  //   return texture(iChannel1, uv);
+  // }
+  // ...
+  // breakup = breakupTex.x;
+  // float breakup = -1.0 * abs(detailNoise.x);
   float breakup = detailNoise.x;
 
   // "Occlusion" here is an erosion-derived proxy for ambient occlusion (AO).
@@ -173,8 +192,7 @@ vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worl
   // Ridges (erosionDepth ≈ +1) are convex and exposed.  The +0.5 bias sets the
   // neutral point so flat un-eroded terrain sits at occlusion = 0.5.
   // This drives dirt placement: low occlusion → sheltered gully → sediment visible.
-  // float occlusion = clamp01(erosionDepth + 0.5);
-  float occlusion = erosionDepth;
+  float occlusion = clamp01(erosionDepth + 0.5);
 
   // ── Water color (shore + foam) ─────────────────────────────────────────────
   float diff  = max(0.0, WATER_HEIGHT - elevation);
@@ -193,12 +211,11 @@ vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worl
   // ── Land color ─────────────────────────────────────────────────────────────
   vec3 landColor = vec3(0.0);
 
-  // landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
-  landColor = uCliffColor * smoothstep(0.2, 0.52, elevation);
+  landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
   landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, occlusion + breakup * 1.5));
 
   // Snow
-  //landColor = mix(landColor, vec3(1.0), smoothstep(0.53, 0.6, elevation + breakup * 0.1));
+  landColor = mix(landColor, vec3(1.0), smoothstep(0.53, 0.6, elevation + breakup * 0.1));
 
   // Grass
   vec3 grassMix = mix(uGrassColor1, uGrassColor2, smoothstep(0.4, 0.6, elevation - erosionDepth * 0.05 + breakup * 0.3));
@@ -214,7 +231,8 @@ vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worl
   float blendHalf   = mix(0.001, 0.01, slopeFlatness);
   float waterFactor = 1.0 - smoothstep(WATER_HEIGHT - blendHalf, WATER_HEIGHT + blendHalf, elevation);
 
-  vec3 result = clamp(mix(landColor, waterColor, waterFactor), 0.0, 1.0);
+  // vec3 result = clamp(mix(landColor, waterColor, waterFactor), 0.0, 1.0);
+  vec3 result = landColor;
 
   // ── Debug mode ─────────────────────────────────────────────────────────────
   if (uDebugMode == TERRAIN_DEBUG_ELEVATION)  return vec3(elevation);
@@ -222,6 +240,8 @@ vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth, vec2 worl
   if (uDebugMode == TERRAIN_DEBUG_TREES)      return vec3(clamp(trees, 0.0, 1.0));
   if (uDebugMode == TERRAIN_DEBUG_NORMALS)    return normal * 0.5 + 0.5;
   if (uDebugMode == TERRAIN_DEBUG_STEEPNESS)  return vec3(1.0 - normal.y);
+  if (uDebugMode == TERRAIN_DEBUG_OCCLUSION)  return vec3(occlusion);
+  if (uDebugMode == TERRAIN_DEBUG_BREAKUP)    return vec3(breakup * 0.5 + 0.5);
 
   return result;
 }
