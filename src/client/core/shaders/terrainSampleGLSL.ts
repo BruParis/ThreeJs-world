@@ -45,14 +45,15 @@
 
 // ── TypeScript debug mode constants ───────────────────────────────────────────
 
-export const TERRAIN_DEBUG_COLOR      = 0; // full shaded output (default)
-export const TERRAIN_DEBUG_ELEVATION  = 1; // grayscale elevation
-export const TERRAIN_DEBUG_RIDGEMAP   = 2; // red = ridge, blue = gully
-export const TERRAIN_DEBUG_TREES      = 3; // tree coverage mask
-export const TERRAIN_DEBUG_NORMALS    = 4; // world-space normal as RGB
-export const TERRAIN_DEBUG_STEEPNESS  = 5; // 1 - normal.y  (slope angle proxy)
-export const TERRAIN_DEBUG_OCCLUSION  = 6; // erosion-derived occlusion [0,1]
-export const TERRAIN_DEBUG_BREAKUP    = 7; // detail noise breakup [-1,1] remapped to [0,1]
+export const TERRAIN_DEBUG_COLOR          = 0; // full shaded output (default)
+export const TERRAIN_DEBUG_ELEVATION      = 1; // grayscale elevation
+export const TERRAIN_DEBUG_RIDGEMAP       = 2; // red = ridge, blue = gully
+export const TERRAIN_DEBUG_TREES          = 3; // tree coverage mask
+export const TERRAIN_DEBUG_NORMALS        = 4; // world-space normal as RGB
+export const TERRAIN_DEBUG_STEEPNESS      = 5; // 1 - normal.y  (slope angle proxy)
+export const TERRAIN_DEBUG_EXPOSURE       = 6; // erosion-derived surface exposure [0,1]
+export const TERRAIN_DEBUG_BREAKUP        = 7; // detail noise breakup [-1,1] remapped to [0,1]
+export const TERRAIN_DEBUG_CLASSIFICATION = 8; // terrain type: water/grass/tree/rock
 
 // ── GLSL source ───────────────────────────────────────────────────────────────
 
@@ -91,13 +92,14 @@ void unpackElevationChannel(vec4 ch, out float elev, out float gradX, out float 
 }
 
 // ── Debug mode — must match TS-side TERRAIN_DEBUG_* constants ─────────────────
-#define TERRAIN_DEBUG_COLOR     0
-#define TERRAIN_DEBUG_ELEVATION 1
-#define TERRAIN_DEBUG_RIDGEMAP  2
-#define TERRAIN_DEBUG_TREES     3
-#define TERRAIN_DEBUG_NORMALS   4
-#define TERRAIN_DEBUG_STEEPNESS 5
-#define TERRAIN_DEBUG_OCCLUSION 6
-#define TERRAIN_DEBUG_BREAKUP   7
+#define TERRAIN_DEBUG_COLOR          0
+#define TERRAIN_DEBUG_ELEVATION      1
+#define TERRAIN_DEBUG_RIDGEMAP       2
+#define TERRAIN_DEBUG_TREES          3
+#define TERRAIN_DEBUG_NORMALS        4
+#define TERRAIN_DEBUG_STEEPNESS      5
+#define TERRAIN_DEBUG_EXPOSURE       6
+#define TERRAIN_DEBUG_BREAKUP        7
+#define TERRAIN_DEBUG_CLASSIFICATION 8
 
 `;

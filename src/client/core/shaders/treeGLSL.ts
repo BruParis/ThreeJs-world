@@ -2,7 +2,7 @@
  * Tree coverage — reusable GLSL fragment.
  *
  * Exposes:
- *   float GetTreesAmount(float height, float normalY, float occlusion, float ridgeMap, vec3 detailNoise)
+ *   float GetTreesAmount(float height, float normalY, float exposure, float ridgeMap, vec3 detailNoise)
  *
  * Returns a density value centred on zero: positive = tree-covered, negative =
  * bare ground.  Callers typically remap or clamp before use.
@@ -10,7 +10,7 @@
  * Parameters:
  *   height    – normalised elevation [0, 1]
  *   normalY   – world-space Y component of the surface normal (flat = 1, cliff = 0)
- *   occlusion – ambient occlusion / cavity in [0, 1]  (0 = fully occluded, 1 = open sky)
+ *   exposure – ambient exposure / cavity in [0, 1]  (0 = fully occluded, 1 = open sky)
  *   ridgeMap  – erosion ridge signal; negative values indicate gullies / ridges
  *   detailNoise – pre-sampled supplemental noise RGB, shared with the caller
  *   worldPos  – displaced world-space position (used for high-frequency tree noise)

@@ -12,8 +12,9 @@ import {
   TERRAIN_DEBUG_TREES,
   TERRAIN_DEBUG_NORMALS,
   TERRAIN_DEBUG_STEEPNESS,
-  TERRAIN_DEBUG_OCCLUSION,
+  TERRAIN_DEBUG_EXPOSURE,
   TERRAIN_DEBUG_BREAKUP,
+  TERRAIN_DEBUG_CLASSIFICATION,
 } from '@core/shaders/terrainSampleGLSL';
 
 export interface ShaderDemoGUIHandle {
@@ -114,14 +115,15 @@ export function buildShaderDemoGUI(
   viewPage.addBinding(displayParams, 'debugMode', {
     label: 'Debug View',
     options: {
-      'Color':      TERRAIN_DEBUG_COLOR,
-      'Elevation':  TERRAIN_DEBUG_ELEVATION,
-      'Ridge Map':  TERRAIN_DEBUG_RIDGEMAP,
-      'Trees':      TERRAIN_DEBUG_TREES,
-      'Normals':    TERRAIN_DEBUG_NORMALS,
-      'Steepness':  TERRAIN_DEBUG_STEEPNESS,
-      'Occlusion':  TERRAIN_DEBUG_OCCLUSION,
-      'Breakup':    TERRAIN_DEBUG_BREAKUP,
+      'Color':          TERRAIN_DEBUG_COLOR,
+      'Elevation':      TERRAIN_DEBUG_ELEVATION,
+      'Ridge Map':      TERRAIN_DEBUG_RIDGEMAP,
+      'Trees':          TERRAIN_DEBUG_TREES,
+      'Normals':        TERRAIN_DEBUG_NORMALS,
+      'Steepness':      TERRAIN_DEBUG_STEEPNESS,
+      'Exposure':      TERRAIN_DEBUG_EXPOSURE,
+      'Breakup':        TERRAIN_DEBUG_BREAKUP,
+      'Classification': TERRAIN_DEBUG_CLASSIFICATION,
     },
   }).on('change', ({ value }) => {
     terrain.terrainColors.debugMode = Number(value);
