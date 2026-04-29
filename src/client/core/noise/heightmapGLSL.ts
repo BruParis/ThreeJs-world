@@ -77,6 +77,7 @@ vec2 heightmapElevation(vec2 p) {
     na *= uNoisePersistence;
     nf *= uNoiseLacunarity;
   }
+  float fadeTarget = clamp(n.x, -1.0, 1.0);
   n.x = n.x * 0.5 + 0.5;  // [-1,1] -> [0,1]
 
   float erosionDelta = 0.0;
@@ -86,7 +87,7 @@ vec2 heightmapElevation(vec2 p) {
     vec2 slope = n.yz;
     float _ridgeDummy, _erosionDepthDummy;
     erosionDelta = applyErosion(
-      pWorld, n.x, slope,
+      pWorld, n.x, slope, fadeTarget,
       uErosionOctaves,
       uErosionScale,
       uErosionStrength,

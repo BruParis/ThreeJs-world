@@ -40,6 +40,10 @@ void applyTerrain(
   outRidge        = 0.0;
   outErosionDepth = 0.0;
 
+  // Compute fadeTarget from rawNoise in [-1, 1] before normalization.
+  // -1 at valleys, +1 at peaks — rawNoise already spans this range naturally.
+  float fadeTarget = clamp(rawNoise, -1.0, 1.0);
+
   // Step 1: normalise [-1, 1] → [0, 1].
   float elev = rawNoise * 0.5 + 0.5;
 
@@ -47,7 +51,7 @@ void applyTerrain(
   // rawSlope is in [-1, 1] space; divide by 2 to match [0, 1] elevation scale.
   if (erosionEnabled == 1) {
     elev += applyErosion(
-      p, elev, rawSlope * 0.5,
+      p, elev, rawSlope * 0.5, fadeTarget,
       erosionOctaves, erosionScale, erosionStrength,
       erosionGullyWeight, erosionDetail, erosionLacunarity,
       erosionGain, erosionCellScale, erosionNormalization,

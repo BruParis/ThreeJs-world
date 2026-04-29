@@ -1,11 +1,9 @@
 /**
- * Advanced Terrain Erosion — reusable GLSL fragment.
- *
- * Based on the ErosionFilter by Rune Skovbo Johansen (MPL 2.0).
+ * Advanced Terrain Erosion — reusable GLSL fragment. Based on the ErosionFilter by Rune Skovbo Johansen (MPL 2.0).
  * Uses PhacelleNoise to produce directional gullies.
  *
  * Exposes:
- *   float applyErosion(p, noise, slope, octaves, scale, strength,
+ *   float applyErosion(p, noise, slope, fadeTarget, octaves, scale, strength,
  *                      gullyWeight, detail, lacunarity, gain,
  *                      cellScale, normalization, ridgeRounding, creaseRounding)
  *
@@ -191,6 +189,7 @@ float applyErosion(
   vec2  p,
   float noise,
   vec2  slope,
+  float fadeTarget,
   int   octaves,
   float scale,
   float strength,
@@ -206,11 +205,6 @@ float applyErosion(
   out float erosionDepth
 ) {
   vec3 heightAndSlope = vec3(noise, slope);
-
-  // Map elevation [0,1] to fade target [-1,1]: -1 at valleys, +1 at peaks.
-  // float fadeTarget = clamp(noise * 2.0 - 1.0, -1.0, 1.0);
-  // float fadeTarget = clamp(noise / (HEIGHT_AMP * 0.6), -1.0, 1.0);
-  float fadeTarget = clamp(noise / (0.125 * 0.6), -1.0, 1.0);
 
   vec4 rounding     = vec4(ridgeRounding, creaseRounding, 0.1, 2.0);
   vec4 onset        = vec4(1.25, 1.25, 2.8, 1.5);
@@ -234,7 +228,8 @@ float applyErosion(
   erosionDepth = (h.w > 0.0) ? clamp(h.x / h.w, -1.0, 1.0) : 0.0;
 
   // Height offset: pull terrain down slightly (TERRAIN_HEIGHT_OFFSET.x = -0.65).
-  float offset = -0.65 * h.w;
+  // float offset = mix(TERRAIN_HEIGHT_OFFSET.x, -fadeTarget, TERRAIN_HEIGHT_OFFSET.y) * h.w;
+  float offset = mix(-0.65, -fadeTarget, 0.0) * h.w;
   return h.x + offset;
 }
 
