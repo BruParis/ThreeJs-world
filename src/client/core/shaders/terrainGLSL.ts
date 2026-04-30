@@ -21,6 +21,7 @@ void applyTerrain(
   vec2  p,
   float rawNoise,
   vec2  rawSlope,
+  float fadeTarget,
   int   erosionEnabled,
   int   erosionOctaves,
   float erosionScale,
@@ -39,10 +40,6 @@ void applyTerrain(
 ) {
   outRidge        = 0.0;
   outErosionDepth = 0.0;
-
-  // Compute fadeTarget from rawNoise in [-1, 1] before normalization.
-  // -1 at valleys, +1 at peaks — rawNoise already spans this range naturally.
-  float fadeTarget = clamp(rawNoise, -1.0, 1.0);
 
   // Step 1: normalise [-1, 1] → [0, 1].
   float elev = rawNoise * 0.5 + 0.5;

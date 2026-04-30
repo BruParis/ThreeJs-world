@@ -35,7 +35,7 @@ varying vec3  vTerrainWorldNormal;
 const float TERRAIN_SEA = ${TERRAIN_SEA_LEVEL.toFixed(2)};
 
 float terrain_displY(float noise) {
-  return max(0.0, (noise + uElevOffset - TERRAIN_SEA) / (1.0 - TERRAIN_SEA));
+  return noise + uElevOffset;
 }
 `;
 

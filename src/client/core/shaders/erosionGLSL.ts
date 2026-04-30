@@ -121,8 +121,8 @@ vec4 erosion_ErosionFilter(
   float roundingForInput = mix(rounding.y, rounding.x, clamp01(fadeTarget + 0.5)) * rounding.z;
   float combiMask = erosion_ease_out(erosion_smooth_start(slopeLength * onset.x, roundingForInput * onset.x));
 
-  // float ridgeMapCombiMask  = erosion_ease_out(slopeLength * onset.z);
-  float ridgeMapCombiMask  = erosion_ease_out(slopeLength);
+  float ridgeMapCombiMask  = erosion_ease_out(slopeLength * onset.z);
+  // float ridgeMapCombiMask  = erosion_ease_out(slopeLength);
   float ridgeMapFadeTarget = fadeTarget;
 
   vec2 gullySlope = mix(heightAndSlope.yz,
@@ -163,8 +163,9 @@ vec4 erosion_ErosionFilter(
     // Decay by gain each octave so coarser octaves dominate ridgeMapFadeTarget.
     // Without this, newRidgeMapMask≈1 at slope transitions keeps the mask constant,
     // and the finest octave ends up contributing ~84% of the ridgeMap signal.
-    // ridgeMapCombiMask = ridgeMapCombiMask * newRidgeMapMask;
-    ridgeMapCombiMask = ridgeMapCombiMask * newRidgeMapMask * gain;
+    // but this is only significant for drainage effect in terrain color
+    ridgeMapCombiMask = ridgeMapCombiMask * newRidgeMapMask;
+    // ridgeMapCombiMask = ridgeMapCombiMask * newRidgeMapMask * gain;
 
     strength  *= gain;
     freq      *= lacunarity;

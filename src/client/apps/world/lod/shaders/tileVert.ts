@@ -145,7 +145,7 @@ void main() {
   float elevation = 0.0;
   float _ed       = 0.0;
   applyTerrain(
-    p, rawNoise, rawSlope,
+    p, rawNoise, rawSlope, clamp(rawNoise, -1.0, 1.0),
     uErosionEnabled,
     uErosionOctaves,  uErosionScale,         uErosionStrength,  uErosionGullyWeight,
     uErosionDetail,   uErosionLacunarity,     uErosionGain,      uErosionCellScale,

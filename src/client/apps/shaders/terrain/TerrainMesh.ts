@@ -214,11 +214,12 @@ export class TerrainMesh {
     this.elevationTexture.needsUpdate    = true;
 
     // ── Attribute texture (NearestFilter) — shading signals read by the fragment shader ──
-    // NearestFilter is mandatory: ridgeMap and erosionDepth are discrete per-vertex
+    // NearestFilter: ridgeMap and erosionDepth are discrete per-vertex
     // values.  Linear interpolation across texel boundaries would blend adjacent
     // quantisation steps and corrupt the signal (producing the noisy black/cliff
     // artefact).  The fragment shader samples this with the same world-space UV as
     // the elevation texture — no vertex varying is involved, so NearestFilter holds.
+    // check visually which filter (nearest, or linear) looks best.
     this.attrTexture?.dispose();
     this.attrTexture = new THREE.DataTexture(
       attrPacked, totalVerts, totalVerts,

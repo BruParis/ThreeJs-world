@@ -32,8 +32,6 @@
 
 export const terrainNoiseGLSL = /* glsl */`
 
-const float TERRAIN_SEA_LEVEL = 0.35;
-
 // ── Noise type routing ────────────────────────────────────────────────────────
 
 float _noiseFbm(vec3 p) {
@@ -66,9 +64,30 @@ void computeElevation(vec3 wPos, out float outElev, out float outRidge, out floa
   }
 
   float rawN = baseNoise(wPos);
+
+  // Compute fadeTarget normalised to [-1, 1], matching the shadertoy's
+  //   clamp(n.x / (HEIGHT_AMP * 0.6), -1, 1)
+  // For fractal noise, rawN = uFractalAmp * FractalNoise.x is much smaller than 1,
+  // so a plain clamp(rawN, -1, 1) leaves fadeTarget near 0 everywhere — the erosion
+  // filter cannot distinguish peaks from valleys, breaking the drainage pattern.
+  float fadeTarget;
+  if (uNoiseType == 4) {
+    fadeTarget = clamp(rawN / (uFractalAmp * 0.6), -1.0, 1.0);
+  } else {
+    fadeTarget = clamp(rawN, -1.0, 1.0);
+  }
+
   vec2  rawSlope = vec2(0.0);
   if (uErosionEnabled == 1) {
-    float GE = 0.5 / max(uNoiseScale, 0.5);
+    // For fractal noise the effective wavelength is 1/uFractalFreq world-units.
+    // The legacy step GE = 0.5/uNoiseScale = 0.25 exceeds the Nyquist limit for
+    // uFractalFreq=3 (max safe step ≈ 0.167), causing sin(6πh) to go negative and
+    // inverting the slope sign — gullies point uphill, ridgeMap turns to noise.
+    // Use 0.1/freq so the step is ~10% of the wavelength (94% derivative accuracy).
+    // TODO: The noise should be analytically derived
+    float GE = (uNoiseType == 4)
+      ? (0.1 / max(uFractalFreq, 0.1))
+      : (0.5 / max(uNoiseScale, 0.5));
     float fL = baseNoise(wPos - vec3(GE, 0.0, 0.0));
     float fR = baseNoise(wPos + vec3(GE, 0.0, 0.0));
     float fD = baseNoise(wPos - vec3(0.0, 0.0, GE));
@@ -77,7 +96,7 @@ void computeElevation(vec3 wPos, out float outElev, out float outRidge, out floa
   }
 
   applyTerrain(
-    wPos.xz, rawN, rawSlope, uErosionEnabled,
+    wPos.xz, rawN, rawSlope, fadeTarget, uErosionEnabled,
     uErosionOctaves, uErosionScale, uErosionStrength,
     uErosionGullyWeight, uErosionDetail, uErosionLacunarity,
     uErosionGain, uErosionCellScale, uErosionNormalization,
@@ -86,12 +105,13 @@ void computeElevation(vec3 wPos, out float outElev, out float outRidge, out floa
   );
 }
 
-// Elevation normalised to displacement space — no sea-level clamp so that
-// underwater slopes are preserved. Used for finite-difference gradient baking.
+// Elevation in displacement space — matches terrain_displY (which is just noise + offset).
+// uElevOffset is a vertex-shader uniform not available here, so the compute pass bakes
+// gradients at offset=0; the offset is a uniform shift that does not change the gradient.
 float displNorm(vec3 wPos) {
   float e, _r, _ed;
   computeElevation(wPos, e, _r, _ed);
-  return (e - TERRAIN_SEA_LEVEL) / (1.0 - TERRAIN_SEA_LEVEL);
+  return e;
 }
 
 `;

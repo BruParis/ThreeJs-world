@@ -131,7 +131,7 @@ float computeLayer(vec2 uv) {
     vec2 slope_grad = vec2(fR - fL, fU - fD) / (2.0 * GE);
     float _ed;
     applyTerrain(
-      vec2(worldX, worldZ), base * 2.0 - 1.0, slope_grad * 2.0, 1,
+      vec2(worldX, worldZ), base * 2.0 - 1.0, slope_grad * 2.0, clamp(base * 2.0 - 1.0, -1.0, 1.0), 1,
       uErosionOctaves, uErosionScale, uErosionStrength,
       uErosionGullyWeight, uErosionDetail, uErosionLacunarity,
       uErosionGain, uErosionCellScale, uErosionNormalization,
