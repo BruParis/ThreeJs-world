@@ -4,6 +4,8 @@ import {
   terrainColorGLSL,
   terrainFragmentMapChunk,
   terrainFragmentNormalChunk,
+  terrainFragmentRoughnessChunk,
+  terrainFragmentMetalnessChunk,
   createTerrainColorUniforms,
   syncTerrainColorUniforms as _syncTerrainColorUniforms,
   DEFAULT_TERRAIN_COLORS,
@@ -455,6 +457,17 @@ export class TerrainMesh {
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <normal_fragment_begin>',
         terrainFragmentNormalChunk,
+      );
+      // Roughness / metalness overrides — water pixels get low roughness so
+      // MeshStandardMaterial produces specular highlights.  Set scene.environment
+      // (via PMREMGenerator) for full PBR reflections on water.
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <roughnessmap_fragment>',
+        terrainFragmentRoughnessChunk,
+      );
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <metalnessmap_fragment>',
+        terrainFragmentMetalnessChunk,
       );
     };
 

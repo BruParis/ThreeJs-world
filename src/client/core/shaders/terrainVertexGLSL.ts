@@ -107,7 +107,9 @@ vec3 objectNormal = vTerrainWorldNormal;
 /**
  * Replaces Three.js `#include <begin_vertex>`.
  * Applies Y displacement computed in the normal chunk above.
+ * Underwater vertices are clamped to uSeaLevel so the mesh forms a flat
+ * water surface — no separate water plane needed.
  */
 export const terrainVertexPositionChunk = /* glsl */`
-vec3 transformed = vec3(position.x, terrain_dispY, position.z);
+vec3 transformed = vec3(position.x, underwater ? uSeaLevel : terrain_dispY, position.z);
 `;

@@ -3,7 +3,6 @@ import { DirectionalLight, AmbientLight } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from '../terrain/TerrainMesh';
-import { WaterMesh }   from '../terrain/WaterMesh';
 import { LayerOverlay } from '../terrain/LayerOverlay';
 import { SUBDIVISION_OPTIONS, PATCH_OPTIONS } from '../terrain/TerrainConstants';
 import {
@@ -27,7 +26,6 @@ export interface ShaderDemoGUIHandle {
 export function buildShaderDemoGUI(
   contentArea: HTMLElement,
   terrain: TerrainMesh,
-  water: WaterMesh,
   overlay: LayerOverlay,
   controls: OrbitControls,
   flyCam: FlyCam,
@@ -290,6 +288,8 @@ export function buildShaderDemoGUI(
     grassColor1: rgb01ToTp(terrain.terrainColors.grassColor1),
     grassColor2: rgb01ToTp(terrain.terrainColors.grassColor2),
     treeColor:   rgb01ToTp(terrain.terrainColors.treeColor),
+    waterDeepColor:  rgb01ToTp(terrain.terrainColors.waterDeepColor),
+    waterShoreColor: rgb01ToTp(terrain.terrainColors.waterShoreColor),
   };
 
   const landColFolder = colorsPage.addFolder({ title: 'Land', expanded: true });
@@ -307,6 +307,26 @@ export function buildShaderDemoGUI(
     .on('change', ({ value }) => { terrain.terrainColors.grassColor2 = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
   vegColFolder.addBinding(colorState, 'treeColor',   { label: 'Trees',      view: 'color' })
     .on('change', ({ value }) => { terrain.terrainColors.treeColor   = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+
+  const waterColFolder = colorsPage.addFolder({ title: 'Water', expanded: true });
+  waterColFolder.addBinding(colorState, 'waterDeepColor',  { label: 'Deep',  view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.waterDeepColor  = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+  waterColFolder.addBinding(colorState, 'waterShoreColor', { label: 'Shore', view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.waterShoreColor = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
+  const waterNormalParams = {
+    freq:      terrain.terrainColors.waterNormalFreq,
+    strength:  terrain.terrainColors.waterNormalStrength,
+    fadeDist:  terrain.terrainColors.waterNormalFadeDist,
+    roughness: terrain.terrainColors.waterRoughness,
+  };
+  waterColFolder.addBinding(waterNormalParams, 'freq',      { label: 'Wave Freq',      min: 0.1, max: 200.0, step: 0.5  })
+    .on('change', ({ value }) => { terrain.terrainColors.waterNormalFreq     = value; terrain.syncTerrainColorUniforms(); });
+  waterColFolder.addBinding(waterNormalParams, 'strength',  { label: 'Wave Strength',  min: 0.0, max: 2.0,   step: 0.01 })
+    .on('change', ({ value }) => { terrain.terrainColors.waterNormalStrength = value; terrain.syncTerrainColorUniforms(); });
+  waterColFolder.addBinding(waterNormalParams, 'fadeDist',  { label: 'Wave Fade Dist', min: 0.5, max: 20.0,  step: 0.5  })
+    .on('change', ({ value }) => { terrain.terrainColors.waterNormalFadeDist = value; terrain.syncTerrainColorUniforms(); });
+  waterColFolder.addBinding(waterNormalParams, 'roughness', { label: 'Roughness',      min: 0.0, max: 1.0,   step: 0.01 })
+    .on('change', ({ value }) => { terrain.terrainColors.waterRoughness      = value; terrain.syncTerrainColorUniforms(); });
 
   // ── Tab: Lighting ─────────────────────────────────────────────────────────
 
@@ -328,7 +348,6 @@ export function buildShaderDemoGUI(
       Math.sin(el),
       Math.cos(el) * Math.cos(az),
     );
-    water.setSunDirection(sunLight.position);
   };
 
   lightingPage.addBinding(lightingParams, 'sunAzimuth',   { label: 'Sun Azimuth',   min: 0, max: 360, step: 1 }).on('change', updateSunDir);
@@ -336,7 +355,6 @@ export function buildShaderDemoGUI(
   lightingPage.addBinding(lightingParams, 'sunColor',     { label: 'Sun Color'    })
     .on('change', ({ value }) => {
       sunLight.color.setRGB(value.r / 255, value.g / 255, value.b / 255);
-      water.setSunColor(sunLight.color);
     });
   lightingPage.addBinding(lightingParams, 'sunIntensity', { label: 'Sun Intensity', min: 0, max: 8, step: 0.1 })
     .on('change', ({ value }) => { sunLight.intensity = value; });
