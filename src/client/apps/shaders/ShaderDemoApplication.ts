@@ -13,6 +13,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TabApplication } from '../../tabs/TabManager';
 import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from './terrain/TerrainMesh';
+import { WaterMesh }   from './terrain/WaterMesh';
 import { LayerOverlay } from './terrain/LayerOverlay';
 import { buildShaderDemoGUI, ShaderDemoGUIHandle } from './gui/ShaderDemoGUI';
 
@@ -25,6 +26,7 @@ export class ShaderDemoApplication implements TabApplication {
   private gui:         ShaderDemoGUIHandle | null = null;
 
   private terrain:      TerrainMesh | null = null;
+  private water:        WaterMesh   | null = null;
   private overlay:      LayerOverlay | null = null;
   private sunLight:     THREE.DirectionalLight | null = null;
   private ambientLight: THREE.AmbientLight | null = null;
@@ -85,6 +87,7 @@ export class ShaderDemoApplication implements TabApplication {
       renderCam = this.orbitCamera!;
     }
 
+    this.water?.update(dt, renderCam.position);
     this.renderer.render(this.scene, renderCam);
 
     if (this.overlay?.showLayers) {
@@ -100,6 +103,8 @@ export class ShaderDemoApplication implements TabApplication {
     this.flyCam = null;
     this.terrain?.dispose();
     this.terrain = null;
+    this.water?.dispose();
+    this.water = null;
     this.overlay?.dispose();
     this.overlay = null;
     this.controls?.dispose();
@@ -174,6 +179,7 @@ export class ShaderDemoApplication implements TabApplication {
 
     this.terrain = new TerrainMesh(this.scene!);
     this.terrain.init();
+    this.water = new WaterMesh(this.scene!, this.terrain.patchSize, this.sunLight!);
 
     this.overlay = new LayerOverlay(w, h, contentArea, {
       noiseParams:           this.terrain.noiseParams,
@@ -200,6 +206,7 @@ export class ShaderDemoApplication implements TabApplication {
     this.gui = buildShaderDemoGUI(
       contentArea,
       this.terrain,
+      this.water,
       this.overlay,
       this.controls!,
       this.flyCam!,

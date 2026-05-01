@@ -17,8 +17,8 @@
  *   shaderUtilsGLSL macros (clamp01, …)   — from shaderUtilsGLSL
  *   ComputeTreeMap                         — from treeGLSL
  *
- * Constant WATER_HEIGHT (0.35) is the sea-level threshold and must match the
- * value used in the vertex shader (TERRAIN_SEA in terrainVertexGLSL).
+ * Sea level is controlled by the `uSeaLevel` uniform (default 0.35), shared
+ * with the vertex shader. Adjust via terrain.seaLevel on the TS side.
  *
  * Colors are exposed as uniforms so they can be tweaked at runtime without
  * recompiling. Use createTerrainColorUniforms / syncTerrainColorUniforms from
@@ -35,58 +35,53 @@ export const TERRAIN_WATER_HEIGHT = 0.35;
 
 // ── Default color palette ─────────────────────────────────────────────────────
 
-export const DEFAULT_CLIFF_COLOR:        [number, number, number] = [0.22, 0.20, 0.20];
-export const DEFAULT_DIRT_COLOR:         [number, number, number] = [0.60, 0.50, 0.40];
-export const DEFAULT_GRASS_COLOR1:       [number, number, number] = [0.15, 0.30, 0.10];
-export const DEFAULT_GRASS_COLOR2:       [number, number, number] = [0.40, 0.50, 0.20];
-export const DEFAULT_TREE_COLOR:         [number, number, number] = [0.12, 0.26, 0.10];
-export const DEFAULT_WATER_COLOR:        [number, number, number] = [0.05, 0.10, 0.40];
-export const DEFAULT_WATER_SHORE_COLOR:  [number, number, number] = [0.15, 0.55, 0.80];
+export const DEFAULT_CLIFF_COLOR:  [number, number, number] = [0.22, 0.20, 0.20];
+export const DEFAULT_DIRT_COLOR:   [number, number, number] = [0.60, 0.50, 0.40];
+export const DEFAULT_GRASS_COLOR1: [number, number, number] = [0.15, 0.30, 0.10];
+export const DEFAULT_GRASS_COLOR2: [number, number, number] = [0.40, 0.50, 0.20];
+export const DEFAULT_TREE_COLOR:   [number, number, number] = [0.12, 0.26, 0.10];
+export const DEFAULT_SAND_COLOR:   [number, number, number] = [0.76, 0.70, 0.50];
 
 export interface TerrainColorState {
-  cliffColor:      [number, number, number];
-  dirtColor:       [number, number, number];
-  grassColor1:     [number, number, number];
-  grassColor2:     [number, number, number];
-  treeColor:       [number, number, number];
-  waterColor:      [number, number, number];
-  waterShoreColor: [number, number, number];
-  debugMode:       number;
+  cliffColor:  [number, number, number];
+  dirtColor:   [number, number, number];
+  grassColor1: [number, number, number];
+  grassColor2: [number, number, number];
+  treeColor:   [number, number, number];
+  sandColor:   [number, number, number];
+  debugMode:   number;
 }
 
 export const DEFAULT_TERRAIN_COLORS: TerrainColorState = {
-  cliffColor:      DEFAULT_CLIFF_COLOR,
-  dirtColor:       DEFAULT_DIRT_COLOR,
-  grassColor1:     DEFAULT_GRASS_COLOR1,
-  grassColor2:     DEFAULT_GRASS_COLOR2,
-  treeColor:       DEFAULT_TREE_COLOR,
-  waterColor:      DEFAULT_WATER_COLOR,
-  waterShoreColor: DEFAULT_WATER_SHORE_COLOR,
-  debugMode:       0,
+  cliffColor:  DEFAULT_CLIFF_COLOR,
+  dirtColor:   DEFAULT_DIRT_COLOR,
+  grassColor1: DEFAULT_GRASS_COLOR1,
+  grassColor2: DEFAULT_GRASS_COLOR2,
+  treeColor:   DEFAULT_TREE_COLOR,
+  sandColor:   DEFAULT_SAND_COLOR,
+  debugMode:   0,
 };
 
 export function createTerrainColorUniforms(s: TerrainColorState): Record<string, THREE.IUniform> {
   return {
-    uCliffColor:      { value: new THREE.Color(...s.cliffColor) },
-    uDirtColor:       { value: new THREE.Color(...s.dirtColor) },
-    uGrassColor1:     { value: new THREE.Color(...s.grassColor1) },
-    uGrassColor2:     { value: new THREE.Color(...s.grassColor2) },
-    uTreeColor:       { value: new THREE.Color(...s.treeColor) },
-    uWaterColor:      { value: new THREE.Color(...s.waterColor) },
-    uWaterShoreColor: { value: new THREE.Color(...s.waterShoreColor) },
-    uDebugMode:       { value: s.debugMode },
+    uCliffColor:  { value: new THREE.Color(...s.cliffColor) },
+    uDirtColor:   { value: new THREE.Color(...s.dirtColor) },
+    uGrassColor1: { value: new THREE.Color(...s.grassColor1) },
+    uGrassColor2: { value: new THREE.Color(...s.grassColor2) },
+    uTreeColor:   { value: new THREE.Color(...s.treeColor) },
+    uSandColor:   { value: new THREE.Color(...s.sandColor) },
+    uDebugMode:   { value: s.debugMode },
   };
 }
 
 export function syncTerrainColorUniforms(u: Record<string, THREE.IUniform>, s: TerrainColorState): void {
-  (u.uCliffColor.value      as THREE.Color).setRGB(...s.cliffColor);
-  (u.uDirtColor.value       as THREE.Color).setRGB(...s.dirtColor);
-  (u.uGrassColor1.value     as THREE.Color).setRGB(...s.grassColor1);
-  (u.uGrassColor2.value     as THREE.Color).setRGB(...s.grassColor2);
-  (u.uTreeColor.value       as THREE.Color).setRGB(...s.treeColor);
-  (u.uWaterColor.value      as THREE.Color).setRGB(...s.waterColor);
-  (u.uWaterShoreColor.value as THREE.Color).setRGB(...s.waterShoreColor);
-  u.uDebugMode.value        = s.debugMode;
+  (u.uCliffColor.value  as THREE.Color).setRGB(...s.cliffColor);
+  (u.uDirtColor.value   as THREE.Color).setRGB(...s.dirtColor);
+  (u.uGrassColor1.value as THREE.Color).setRGB(...s.grassColor1);
+  (u.uGrassColor2.value as THREE.Color).setRGB(...s.grassColor2);
+  (u.uTreeColor.value   as THREE.Color).setRGB(...s.treeColor);
+  (u.uSandColor.value   as THREE.Color).setRGB(...s.sandColor);
+  u.uDebugMode.value    = s.debugMode;
 }
 
 // ── GLSL chunk replacements ───────────────────────────────────────────────────
@@ -160,16 +155,16 @@ ${simplexNoiseGLSL}
 ${shaderUtilsGLSL}
 
 #define WATER
-#define WATER_HEIGHT  ${(0.35).toFixed(2)}
 #define GRASS_HEIGHT  ${TERRAIN_GRASS_HEIGHT.toFixed(2)}
+
+uniform float uSeaLevel;
 
 uniform vec3      uCliffColor;
 uniform vec3      uDirtColor;
 uniform vec3      uGrassColor1;
 uniform vec3      uGrassColor2;
 uniform vec3      uTreeColor;
-uniform vec3      uWaterColor;
-uniform vec3      uWaterShoreColor;
+uniform vec3      uSandColor;
 uniform int       uDebugMode;
 // Attribute texture (NearestFilter) — ridgeMap (R) and erosionDepth (G).
 // Sampled here in the fragment shader rather than being carried as vertex varyings,
@@ -205,7 +200,7 @@ struct TerrainClassification {
 TerrainClassification classifyTerrain(float elevation, float ridgeMap, float normalY, vec2 worldXZ) {
   TerrainClassification tc;
   tc.trees   = ComputeTreeMap(elevation, ridgeMap, normalY, worldXZ);
-  tc.isWater = elevation < WATER_HEIGHT;
+  tc.isWater = elevation < uSeaLevel;
   tc.isTree  = !tc.isWater && tc.trees > 0.36;
   tc.isGrass = !tc.isWater && !tc.isTree
              && elevation < GRASS_HEIGHT + 0.04
@@ -258,21 +253,10 @@ vec3 terrainColor(float elevation, float ridgeMap,
   // high exposure → clean rock.
   float exposure = clamp01(erosionDepth + 0.5);
 
-  // ── Water color (shore + foam) ─────────────────────────────────────────────
-  float diff  = max(0.0, WATER_HEIGHT - elevation);
-  float shore = normal.y > 1e-2 ? exp(-diff * 60.0) : 0.0;
-  float foam  = normal.y > 1e-2 ? smoothstep(0.005, 0.0, diff + breakup * 0.005) : 0.0;
-  vec3 waterColor = mix(uWaterColor, uWaterShoreColor, shore);
-  waterColor = mix(waterColor, vec3(1.0), foam);
-
-  // ── Slope helpers ──────────────────────────────────────────────────────────
-  float slopeFlatness = smoothstep(0.5, 0.80, normal.y);
-  slopeFlatness *= slopeFlatness;
-
   // ── Land color ─────────────────────────────────────────────────────────────
   vec3 landColor = vec3(0.0);
 
-  landColor = uCliffColor * smoothstep(0.4, 0.52, elevation);
+  landColor = uCliffColor * smoothstep(0.0, 0.52, elevation);
   landColor = mix(landColor, uDirtColor, smoothstep(0.6, 0.0, exposure + breakup * 1.5));
 
   // Snow
@@ -289,12 +273,10 @@ vec3 terrainColor(float elevation, float ridgeMap,
   landColor = mix(landColor, uTreeColor * pow(trees, 8.0), clamp01(trees * 2.2 - 0.8) * 0.6);
   landColor *= 1.0 + breakup * 0.5;
 
-  // ── Shoreline blend ────────────────────────────────────────────────────────
-  float blendHalf   = mix(0.001, 0.01, slopeFlatness);
-  float waterFactor = 1.0 - smoothstep(WATER_HEIGHT - blendHalf, WATER_HEIGHT + blendHalf, elevation);
+  // ── Sand beach ────────────────────────────────────────────────────────────
+  landColor = mix(landColor, uSandColor, smoothstep(uSeaLevel + 0.005, uSeaLevel, elevation + breakup * 0.01));
 
-  // vec3 result = clamp(mix(landColor, waterColor, waterFactor), 0.0, 1.0);
-  vec3 result = landColor;
+  vec3 result = clamp(landColor, 0.0, 1.0);
 
   // ── Debug mode ─────────────────────────────────────────────────────────────
   if (uDebugMode == TERRAIN_DEBUG_ELEVATION)  return vec3(elevation);

@@ -33,6 +33,7 @@ import {
   terrainFragmentVaryings,
   createTerrainVertexUniforms,
   syncTerrainVertexUniforms,
+  TERRAIN_SEA_LEVEL,
 } from '@core/shaders/terrainVertexGLSL';
 import {
   DEFAULT_NOISE_PARAMS,
@@ -70,6 +71,7 @@ export class TerrainMesh {
 
   // Geometry / rendering
   elevationOffset = DEFAULT_ELEV_OFFSET;
+  seaLevel        = TERRAIN_SEA_LEVEL;
   patchSize    = DEFAULT_PATCH_SIZE;
   subdivisions = DEFAULT_SUBDIVISION;
   numPatches   = DEFAULT_NUM_PATCHES;
@@ -244,6 +246,7 @@ export class TerrainMesh {
         elevationTexture: this.elevationTexture,
         patchHalfSize:    this.patchSize / 2,
         elevationOffset:  this.elevationOffset,
+        seaLevel:         this.seaLevel,
       });
     }
     for (const mesh of this._meshes) {
@@ -314,7 +317,7 @@ export class TerrainMesh {
     const col   = Math.max(0, Math.min(w - 1, Math.floor(u * (w - 1))));
     const row   = Math.max(0, Math.min(h - 1, Math.floor(v * (h - 1))));
     const noise = this.elevationData[row * w + col];
-    return Math.max(0, (noise + this.elevationOffset - 0.35) / (1 - 0.35));
+    return Math.max(0, (noise + this.elevationOffset - this.seaLevel) / (1 - this.seaLevel));
   }
 
   dispose(): void {
@@ -413,6 +416,7 @@ export class TerrainMesh {
           elevationTexture: this.elevationTexture,
           patchHalfSize:    this.patchSize / 2,
           elevationOffset:  this.elevationOffset,
+          seaLevel:         this.seaLevel,
         }),
         createDetailNoiseUniforms({
           detailNoiseTexture:  this.suppNoiseGL?.texture ?? null,

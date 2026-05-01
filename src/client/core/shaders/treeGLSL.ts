@@ -17,7 +17,7 @@
  *
  * Requirements before including this snippet:
  *   GRASS_HEIGHT  must be defined (upper elevation limit for trees)
- *   WATER_HEIGHT  must be defined when the WATER flag is set
+ *   uSeaLevel     uniform must be in scope (declared in the fragment shader)
  *   Define WATER to enable the below-water suppression term.
  */
 // import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
@@ -88,8 +88,8 @@ float _treesAmount(float height, float normalY, float ridgeMap) {
         * smoothstep(uTreeRidgeMin, 0.0, ridgeMap)
         // Water gate: suppress trees below the water line.
         * smoothstep(
-            WATER_HEIGHT + 0.000,
-            WATER_HEIGHT + 0.007,
+            uSeaLevel + 0.000,
+            uSeaLevel + 0.007,
             height
         )
     ) - 0.5) / 0.6;

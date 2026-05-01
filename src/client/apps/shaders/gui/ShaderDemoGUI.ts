@@ -3,6 +3,7 @@ import { DirectionalLight, AmbientLight } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from '../terrain/TerrainMesh';
+import { WaterMesh }   from '../terrain/WaterMesh';
 import { LayerOverlay } from '../terrain/LayerOverlay';
 import { SUBDIVISION_OPTIONS, PATCH_OPTIONS } from '../terrain/TerrainConstants';
 import {
@@ -26,6 +27,7 @@ export interface ShaderDemoGUIHandle {
 export function buildShaderDemoGUI(
   contentArea: HTMLElement,
   terrain: TerrainMesh,
+  water: WaterMesh,
   overlay: LayerOverlay,
   controls: OrbitControls,
   flyCam: FlyCam,
@@ -145,7 +147,7 @@ export function buildShaderDemoGUI(
     .on('change', ({ value }) => { terrain.numPatches = value; updGeometry(); });
   terrainPage.addBinding(terrainParams, 'subdivision', { label: 'Subdivision', options: SUBDIVISION_OPTIONS })
     .on('change', ({ value }) => { terrain.subdivisions = Number(value); updGeometry(); });
-  terrainPage.addBinding(terrainParams, 'elevationOffset', { label: 'Elev. Offset', min: -0.5, max: 0.5, step: 0.01 })
+  terrainPage.addBinding(terrainParams, 'elevationOffset', { label: 'Elev. Offset', min: -0.4, max: 0.5, step: 0.01 })
     .on('change', ({ value }) => { terrain.elevationOffset = value; updDisplay(); updOverlay(); });
 
   // ── Tab: Elevation ───────────────────────────────────────────────────────
@@ -282,22 +284,17 @@ export function buildShaderDemoGUI(
   }
 
   const colorState = {
-    waterColor:      rgb01ToTp(terrain.terrainColors.waterColor),
-    waterShoreColor: rgb01ToTp(terrain.terrainColors.waterShoreColor),
-    cliffColor:      rgb01ToTp(terrain.terrainColors.cliffColor),
-    dirtColor:       rgb01ToTp(terrain.terrainColors.dirtColor),
-    grassColor1:     rgb01ToTp(terrain.terrainColors.grassColor1),
-    grassColor2:     rgb01ToTp(terrain.terrainColors.grassColor2),
-    treeColor:       rgb01ToTp(terrain.terrainColors.treeColor),
+    sandColor:   rgb01ToTp(terrain.terrainColors.sandColor),
+    cliffColor:  rgb01ToTp(terrain.terrainColors.cliffColor),
+    dirtColor:   rgb01ToTp(terrain.terrainColors.dirtColor),
+    grassColor1: rgb01ToTp(terrain.terrainColors.grassColor1),
+    grassColor2: rgb01ToTp(terrain.terrainColors.grassColor2),
+    treeColor:   rgb01ToTp(terrain.terrainColors.treeColor),
   };
 
-  const waterColFolder = colorsPage.addFolder({ title: 'Water', expanded: true });
-  waterColFolder.addBinding(colorState, 'waterColor',      { label: 'Deep Water',  view: 'color' })
-    .on('change', ({ value }) => { terrain.terrainColors.waterColor      = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
-  waterColFolder.addBinding(colorState, 'waterShoreColor', { label: 'Shore Water', view: 'color' })
-    .on('change', ({ value }) => { terrain.terrainColors.waterShoreColor = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
-
   const landColFolder = colorsPage.addFolder({ title: 'Land', expanded: true });
+  landColFolder.addBinding(colorState, 'sandColor', { label: 'Sand', view: 'color' })
+    .on('change', ({ value }) => { terrain.terrainColors.sandColor = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
   landColFolder.addBinding(colorState, 'cliffColor', { label: 'Cliff', view: 'color' })
     .on('change', ({ value }) => { terrain.terrainColors.cliffColor = tpToRgb01(value); terrain.syncTerrainColorUniforms(); });
   landColFolder.addBinding(colorState, 'dirtColor',  { label: 'Dirt',  view: 'color' })
@@ -331,12 +328,16 @@ export function buildShaderDemoGUI(
       Math.sin(el),
       Math.cos(el) * Math.cos(az),
     );
+    water.setSunDirection(sunLight.position);
   };
 
   lightingPage.addBinding(lightingParams, 'sunAzimuth',   { label: 'Sun Azimuth',   min: 0, max: 360, step: 1 }).on('change', updateSunDir);
   lightingPage.addBinding(lightingParams, 'sunElevation', { label: 'Sun Elevation', min: 0, max: 90,  step: 1 }).on('change', updateSunDir);
   lightingPage.addBinding(lightingParams, 'sunColor',     { label: 'Sun Color'    })
-    .on('change', ({ value }) => sunLight.color.setRGB(value.r / 255, value.g / 255, value.b / 255));
+    .on('change', ({ value }) => {
+      sunLight.color.setRGB(value.r / 255, value.g / 255, value.b / 255);
+      water.setSunColor(sunLight.color);
+    });
   lightingPage.addBinding(lightingParams, 'sunIntensity', { label: 'Sun Intensity', min: 0, max: 8, step: 0.1 })
     .on('change', ({ value }) => { sunLight.intensity = value; });
   lightingPage.addBinding(lightingParams, 'ambientColor', { label: 'Ambient Color' })

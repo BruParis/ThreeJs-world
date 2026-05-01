@@ -5,7 +5,7 @@
  * drives Y-displacement + normal reconstruction.
  *
  * Exposes:
- *   TERRAIN_SEA_LEVEL              – JS constant (0.35) matching the GLSL define
+ *   TERRAIN_SEA_LEVEL              – JS constant (0.35), default value for uSeaLevel uniform
  *   terrainVertexPreamble          – GLSL preamble (uniforms, varyings, helper fn,
  *                                    TerrainSample struct + unpackElevationChannel)
  *   terrainVertexNormalChunk       – replaces `#include <beginnormal_vertex>`
@@ -32,7 +32,7 @@ varying float vTerrainElev;
 varying vec3  vTerrainWorldPos;
 varying vec3  vTerrainWorldNormal;
 
-const float TERRAIN_SEA = ${TERRAIN_SEA_LEVEL.toFixed(2)};
+uniform float uSeaLevel;
 
 float terrain_displY(float noise) {
   return noise + uElevOffset;
@@ -45,6 +45,7 @@ export interface TerrainVertexUniformState {
   elevationTexture: THREE.DataTexture | null;
   patchHalfSize:    number;
   elevationOffset:  number;
+  seaLevel:         number;
 }
 
 export function createTerrainVertexUniforms(s: TerrainVertexUniformState): Record<string, THREE.IUniform> {
@@ -52,6 +53,7 @@ export function createTerrainVertexUniforms(s: TerrainVertexUniformState): Recor
     uElevationTex:  { value: s.elevationTexture },
     uPatchHalfSize: { value: s.patchHalfSize },
     uElevOffset:    { value: s.elevationOffset },
+    uSeaLevel:      { value: s.seaLevel },
   };
 }
 
@@ -59,6 +61,7 @@ export function syncTerrainVertexUniforms(u: Record<string, THREE.IUniform>, s: 
   u.uElevationTex.value  = s.elevationTexture;
   u.uPatchHalfSize.value = s.patchHalfSize;
   u.uElevOffset.value    = s.elevationOffset;
+  u.uSeaLevel.value      = s.seaLevel;
 }
 
 // ── GLSL chunk replacements ───────────────────────────────────────────────────
@@ -95,7 +98,7 @@ float dhdx = terrain_gradX;
 float dhdz = terrain_gradZ;
 // Below water the mesh is flat — use an upward normal so the baked gradient
 // (which ignores uElevOffset) does not leak through as lighting artefacts.
-bool underwater = (terrain_elev + uElevOffset) < TERRAIN_SEA;
+bool underwater = (terrain_elev + uElevOffset) < uSeaLevel;
 vTerrainWorldNormal = underwater ? vec3(0.0, 1.0, 0.0) : normalize(vec3(-dhdx, 1.0, -dhdz));
 
 vec3 objectNormal = vTerrainWorldNormal;
