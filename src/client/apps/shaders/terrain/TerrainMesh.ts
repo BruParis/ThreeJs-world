@@ -121,10 +121,8 @@ export class TerrainMesh {
 
   private _meshes:          THREE.Mesh[] = [];
   private elevationTexture: THREE.DataTexture | null = null;
-  // Attribute texture (NearestFilter) — ridgeMap (R) + erosionDepth (G).
-  // Kept separate from the elevation texture so each can use the correct filter mode:
-  // elevation uses LinearFilter for smooth geometry; attributes use NearestFilter so
-  // per-texel shading signals are never blended across texel boundaries.
+  // Attribute texture (LinearFilter) — four continuous float channels: ridgeMap (R),
+  // erosionDepth packed (G), trees (B), hardness (A). All baked in the compute pass.
   private attrTexture:      THREE.DataTexture | null = null;
   private elevationGL:      TerrainElevationGL | null = null;
   private suppNoiseGL:      SuppNoiseGL | null = null;
@@ -195,6 +193,15 @@ export class TerrainMesh {
         erosionNormalization:   this.erosionNormalization,
         erosionRidgeRounding:   this.erosionRidgeRounding,
         erosionCreaseRounding:  this.erosionCreaseRounding,
+        seaLevel:               this.seaLevel,
+        treeEnabled:            this.treeEnabled ? 1 : 0,
+        treeElevMax:            this.treeElevMax,
+        treeElevMin:            this.treeElevMin,
+        treeSlopeMin:           this.treeSlopeMin,
+        treeRidgeMin:           this.treeRidgeMin,
+        treeNoiseFreq:          this.treeNoiseFreq,
+        treeNoisePow:           this.treeNoisePow,
+        treeDensity:            this.treeDensity,
       },
       permData,
     );
@@ -229,8 +236,6 @@ export class TerrainMesh {
       attrPacked, totalVerts, totalVerts,
       THREE.RGBAFormat, THREE.FloatType,
     );
-    // this.attrTexture.minFilter      = THREE.NearestFilter;
-    // this.attrTexture.magFilter      = THREE.NearestFilter;
     this.attrTexture.minFilter      = THREE.LinearFilter;
     this.attrTexture.magFilter      = THREE.LinearFilter;
     this.attrTexture.generateMipmaps = false;

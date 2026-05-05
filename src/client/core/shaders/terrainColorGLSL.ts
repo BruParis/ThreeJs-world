@@ -2,34 +2,28 @@
  * Terrain coloring — reusable GLSL fragment.
  *
  * Exposes:
- *   vec3 terrainColor(inout TerrainSample s, vec3 worldPos, vec3 normal, vec3 detailNoise)
+ *   vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth,
+ *                     float trees, float hardness, vec3 normal, vec3 detailNoise)
+ *   vec3 waterColor(float elevation, vec3 normal, vec3 detailNoise)
+ *   vec3 computeWaterNormal(vec2 worldXZ)
  *
- * `s` is a TerrainSample with elevation and ridgeMap already filled (unpacked
- * from the elevation texture in the vertex stage and passed via varyings).
- * The function fills s.trees as a side-effect so callers can inspect it.
- *
- * When uDebugMode ≠ TERRAIN_DEBUG_COLOR the function returns a diagnostic
- * visualisation instead of the full color — see TERRAIN_DEBUG_* constants.
+ * Classification (trees, hardness, isWater, isGrass, isTree) is baked in the
+ * elevation compute pass and read from the attribute texture (attrData.g int+fract
+ * packing and attrData.b) — NOT recomputed here.
  *
  * Requires in scope (concatenated before this string):
  *   TerrainSample struct + debug constants — from terrainSampleGLSL
  *   simplexFbm, snoise                    — from simplexGLSL
- *   shaderUtilsGLSL macros (clamp01, …)   — from shaderUtilsGLSL
- *   ComputeTreeMap                         — from treeGLSL
+ *   clamp01                               — from shaderUtilsGLSL
  *
- * Sea level is controlled by the `uSeaLevel` uniform (default 0.35), shared
- * with the vertex shader. Adjust via terrain.seaLevel on the TS side.
- *
- * Colors are exposed as uniforms so they can be tweaked at runtime without
- * recompiling. Use createTerrainColorUniforms / syncTerrainColorUniforms from
- * TypeScript.
+ * Colors are exposed as uniforms. Use createTerrainColorUniforms / syncTerrainColorUniforms.
  */
 
 import * as THREE from 'three';
 import { terrainSampleGLSL }  from '@core/shaders/terrainSampleGLSL';
 import { simplexNoiseGLSL }   from '@core/noise/simplexGLSL';
 import { shaderUtilsGLSL }    from '@core/shaders/shaderUtilsGLSL';
-import { treeGLSL, TERRAIN_GRASS_HEIGHT } from '@core/shaders/treeGLSL';
+import { TERRAIN_GRASS_HEIGHT } from '@core/shaders/treeGLSL';
 
 export const TERRAIN_WATER_HEIGHT = 0.35;
 
@@ -137,39 +131,43 @@ if (uDetailNoiseEnabled == 1) {
   detailNoise = texture2D(uDetailNoiseTex, detailUV).xyz;
 }
 
-// 2. Terrain inputs — elevation and attribute texture (ridgeMap, erosionDepth).
+// 2. Read elevation and pre-baked classification from the attribute texture.
+//    Trees and hardness were computed in the elevation compute pass (classifyTerrain),
+//    using the exact vertex-shader normalY — no recomputation needed here.
 float shiftedElev = vTerrainElev + uElevOffset;
 vec2 attrUV   = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
 vec4 attrData = texture2D(uAttrTex, attrUV);
-// attrData.r = ridgeMap      [-1, 1]  (stored directly)
-// attrData.g = erosionPacked  [0, 1]  (packed: 0 = deep gully, 0.5 = neutral, 1 = ridge)
-float erosionDepth = attrData.g * 2.0 - 1.0;  // unpack [0,1] → [-1,1]
+// attrData.r = ridgeMap     [-1, 1]  (direct)
+// attrData.g = erosionDepth [0, 1]   (packed: ×0.5+0.5; unpack: ×2−1)
+// attrData.b = trees        float    (direct; isTree when > 0.36)
+// attrData.a = hardness     [0, 1]   (direct)
+float erosionDepth = attrData.g * 2.0 - 1.0;
+float trees        = attrData.b;
+float hardness     = attrData.a;
 
-// 3. Classify terrain using the UNPERTURBED vertex normal.
-//    The classification must precede normal perturbation so it can gate it.
-TerrainClassification tc = classifyTerrain(shiftedElev, attrData.r, vTerrainWorldNormal.y, vTerrainWorldPos.xz);
+// 3. Derive terrain flags from baked data.
+bool isWater = shiftedElev < uSeaLevel;
+bool isTree  = !isWater && trees > 0.36;
+bool isGrass = !isWater && !isTree && shiftedElev < (GRASS_HEIGHT + 0.04) && vTerrainWorldNormal.y > 0.85;
 
-// 4. Perturb the normal — faded out on soft surfaces (grass/tree) using the
-//    smooth hardness scalar so no visible edge appears at the boundary.
-vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength * tc.hardness);
+// 4. Perturb the normal — gated by baked hardness so no sharp edge appears
+//    at terrain-type boundaries.
+vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength * hardness);
 vec3 waterNorWorld   = computeWaterNormal(vTerrainWorldPos.xz);
-vec3 colorNormal = tc.isWater ? waterNorWorld : terrainNorWorld;
+vec3 colorNormal = isWater ? waterNorWorld : terrainNorWorld;
 
 // 5. Output color.
-//    TERRAIN_DEBUG_COLOR (0) → full shading, branching on tc.isWater.
-//    All other debug modes fall through to terrainColor() for a universal
-//    visualization that works on both land and water pixels.
-bool _terrainIsWater = tc.isWater;   // shared with roughness/metalness chunks below
+bool _terrainIsWater = isWater;   // shared with roughness/metalness chunks below
 if (uDebugMode == TERRAIN_DEBUG_CLASSIFICATION) {
   vec3 classColor = vec3(0.35, 0.30, 0.25);        // rock / cliff / dirt / snow
-  if (tc.isGrass) classColor = vec3(0.30, 0.60, 0.10);
-  if (tc.isTree)  classColor = vec3(0.05, 0.25, 0.05);
-  if (tc.isWater) classColor = vec3(0.05, 0.10, 0.45);
+  if (isGrass) classColor = vec3(0.30, 0.60, 0.10);
+  if (isTree)  classColor = vec3(0.05, 0.25, 0.05);
+  if (isWater) classColor = vec3(0.05, 0.10, 0.45);
   diffuseColor.rgb = classColor;
-} else if (tc.isWater && uDebugMode == TERRAIN_DEBUG_COLOR) {
+} else if (isWater && uDebugMode == TERRAIN_DEBUG_COLOR) {
   diffuseColor.rgb = waterColor(shiftedElev, colorNormal, detailNoise);
 } else {
-  diffuseColor.rgb = terrainColor(shiftedElev, attrData.r, erosionDepth, tc.trees, tc.hardness, colorNormal, detailNoise);
+  diffuseColor.rgb = terrainColor(shiftedElev, attrData.r, erosionDepth, trees, hardness, colorNormal, detailNoise);
 }
 `;
 
@@ -246,54 +244,9 @@ uniform float     uWaterNormalStrength;
 uniform float     uWaterNormalFadeDist;
 uniform float     uWaterRoughness;
 uniform int       uDebugMode;
-// Attribute texture (NearestFilter) — ridgeMap (R) and erosionDepth (G).
-// Sampled here in the fragment shader rather than being carried as vertex varyings,
-// so that NearestFilter is respected and no linear interpolation crosses texel boundaries.
+// Attribute texture (LinearFilter) — four continuous float channels baked in the compute pass.
+// R = ridgeMap, G = erosionDepth (packed), B = trees, A = hardness.
 uniform sampler2D uAttrTex;
-
-${treeGLSL}
-
-// Terrain classification — computed once per fragment from the UNPERTURBED normal
-// and shared between the normal-perturbation step and the color step.
-//
-// Fields:
-//   trees    float  continuous tree density [0, 1] — used for color blending
-//   isWater  bool   elevation below sea level
-//   isGrass  bool   grass zone: low elevation, flat surface, no tree cover
-//   isTree   bool   tree cover above density threshold
-//   (implicitly: isRock = !isWater && !isGrass && !isTree)
-//
-// Priority order: water > tree > grass > rock.
-// Thresholds are deliberately simple — they do not need to exactly match the
-// smooth color blends in terrainColor(); they only drive domain decisions such
-// as normal-noise masking.
-struct TerrainClassification {
-  float trees;
-  float hardness; // [0, 1] — 0 = soft (grass/tree), 1 = hard (rock/cliff/snow)
-                  // smooth signal for normal-perturbation weight; avoids the sharp
-                  // edge that boolean gating produces at terrain-type boundaries
-  bool  isWater;
-  bool  isGrass;
-  bool  isTree;
-};
-
-TerrainClassification classifyTerrain(float elevation, float ridgeMap, float normalY, vec2 worldXZ) {
-  TerrainClassification tc;
-  tc.trees   = ComputeTreeMap(elevation, ridgeMap, normalY, worldXZ);
-  tc.isWater = elevation < uSeaLevel;
-  tc.isTree  = !tc.isWater && tc.trees > 0.36;
-  tc.isGrass = !tc.isWater && !tc.isTree
-             && elevation < GRASS_HEIGHT + 0.04
-             && normalY   > 0.85;
-
-  // Smooth version of the rock/soft boundary — mirrors the transition bands
-  // used in terrainColor() so the fade-out is invisible against the color blend.
-  float grassSmooth = smoothstep(GRASS_HEIGHT + 0.05, GRASS_HEIGHT + 0.02, elevation)
-                    * smoothstep(0.80, 1.0, normalY);
-  float treeSmooth  = clamp01(tc.trees * 2.2 - 0.8);
-  tc.hardness = 1.0 - clamp01(grassSmooth + treeSmooth);
-  return tc;
-}
 
 // ── Water normal perturbation ─────────────────────────────────────────────────
 //

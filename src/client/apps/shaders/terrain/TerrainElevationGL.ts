@@ -51,6 +51,16 @@ export interface ElevationComputeParams {
   erosionNormalization:   number;
   erosionRidgeRounding:   number;
   erosionCreaseRounding:  number;
+  // Sea level + tree params — drive classifyTerrain in the elevation compute pass.
+  seaLevel:               number;
+  treeEnabled:            number;
+  treeElevMax:            number;
+  treeElevMin:            number;
+  treeSlopeMin:           number;
+  treeRidgeMin:           number;
+  treeNoiseFreq:          number;
+  treeNoisePow:           number;
+  treeDensity:            number;
 }
 
 // ── Shaders ───────────────────────────────────────────────────────────────────
@@ -179,8 +189,9 @@ export class TerrainElevationGL {
    *                 R = elevation [0,1],  G = dH/dX (norm),  B = dH/dZ (norm),  A = unused.
    *               Upload as THREE.RGBAFormat DataTexture with LinearFilter for the vertex shader.
    *   attrPacked  Float32Array (length w×h×4) — RGBA readback from COLOR_ATTACHMENT1:
-   *                 R = ridgeMap [-1,1],  G = erosionDepth [-1,1],  BA = unused.
-   *               Upload as THREE.RGBAFormat DataTexture with NearestFilter for the fragment shader.
+   *                 R = ridgeMap [-1,1],  G = erosionDepth [0,1] (packed ×0.5+0.5),
+   *                 B = trees (float, direct),  A = hardness [0,1] (direct).
+   *               All channels are continuous floats — upload with LinearFilter.
    */
   compute(params: ElevationComputeParams, permData: number[]): { elevations: Float32Array; packed: Float32Array; attrPacked: Float32Array } {
     const { gl, program, fbo, outTex, attrTex, vao } = this;
@@ -294,5 +305,14 @@ export class TerrainElevationGL {
     gl.uniform1f(u('uErosionNormalization'),  p.erosionNormalization);
     gl.uniform1f(u('uErosionRidgeRounding'),  p.erosionRidgeRounding);
     gl.uniform1f(u('uErosionCreaseRounding'), p.erosionCreaseRounding);
+    gl.uniform1f(u('uSeaLevel'),              p.seaLevel);
+    gl.uniform1i(u('uTreeEnabled'),           p.treeEnabled);
+    gl.uniform1f(u('uTreeElevMax'),           p.treeElevMax);
+    gl.uniform1f(u('uTreeElevMin'),           p.treeElevMin);
+    gl.uniform1f(u('uTreeSlopeMin'),          p.treeSlopeMin);
+    gl.uniform1f(u('uTreeRidgeMin'),          p.treeRidgeMin);
+    gl.uniform1f(u('uTreeNoiseFreq'),         p.treeNoiseFreq);
+    gl.uniform1f(u('uTreeNoisePow'),          p.treeNoisePow);
+    gl.uniform1f(u('uTreeDensity'),           p.treeDensity);
   }
 }
