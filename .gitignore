@@ -30,6 +30,3 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-
-# Vibe code
-CLAUDE.md
