@@ -193,7 +193,7 @@ export class TerrainElevationGL {
    *                 B = trees (float, direct),  A = hardness [0,1] (direct).
    *               All channels are continuous floats — upload with LinearFilter.
    */
-  compute(params: ElevationComputeParams, permData: number[]): { elevations: Float32Array; packed: Float32Array; attrPacked: Float32Array } {
+  compute(params: ElevationComputeParams, permData: number[]): { elevations: Float32Array<ArrayBuffer>; packed: Float32Array<ArrayBuffer>; attrPacked: Float32Array<ArrayBuffer> } {
     const { gl, program, fbo, outTex, attrTex, vao } = this;
     const { gridWidth: w, gridHeight: h } = params;
 
