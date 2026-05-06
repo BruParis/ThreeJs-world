@@ -256,21 +256,21 @@ export function buildShaderDemoGUI(
   };
 
   treesPage.addBinding(treeParams, 'enabled',   { label: 'Enabled' })
-    .on('change', ({ value }) => { terrain.treeEnabled = value; terrain.syncTreeUniforms(); });
+    .on('change', ({ value }) => { terrain.treeEnabled = value; updElevation(); });
   treesPage.addBinding(treeParams, 'elevMax',   { label: 'Elev. Max',    min: 0.3,  max: 0.9,    step: 0.005 })
-    .on('change', ({ value }) => { terrain.treeElevMax = value; terrain.syncTreeUniforms(); });
+    .on('change', ({ value }) => { terrain.treeElevMax = value; updElevation(); });
   treesPage.addBinding(treeParams, 'elevMin',   { label: 'Elev. Min',    min: 0.3,  max: 0.9,    step: 0.005 })
-    .on('change', ({ value }) => { terrain.treeElevMin = value; terrain.syncTreeUniforms(); });
+    .on('change', ({ value }) => { terrain.treeElevMin = value; updElevation(); });
   treesPage.addBinding(treeParams, 'slopeMin',  { label: 'Slope Min',    min: 0.5,  max: 1.0,    step: 0.01  })
-    .on('change', ({ value }) => { terrain.treeSlopeMin = value; terrain.syncTreeUniforms(); });
+    .on('change', ({ value }) => { terrain.treeSlopeMin = value; updElevation(); });
   treesPage.addBinding(treeParams, 'ridgeMin',  { label: 'Ridge Min',    min: -3.0, max: 0.0,    step: 0.05  })
-    .on('change', ({ value }) => { terrain.treeRidgeMin = value; terrain.syncTreeUniforms(); });
+    .on('change', ({ value }) => { terrain.treeRidgeMin = value; updElevation(); });
   treesPage.addBinding(treeParams, 'noiseFreq', { label: 'Noise Freq',   min: 10,   max: 1000,   step: 10    })
-    .on('change', ({ value }) => { terrain.treeNoiseFreq = value; terrain.syncTreeUniforms(); });
+    .on('change', ({ value }) => { terrain.treeNoiseFreq = value; updElevation(); });
   treesPage.addBinding(treeParams, 'noisePow',  { label: 'Noise Power',  min: 0.5,  max: 8.0,    step: 0.1   })
-    .on('change', ({ value }) => { terrain.treeNoisePow = value; terrain.syncTreeUniforms(); });
+    .on('change', ({ value }) => { terrain.treeNoisePow = value; updElevation(); });
   treesPage.addBinding(treeParams, 'density',   { label: 'Density',      min: 0.1,  max: 5.0,    step: 0.1   })
-    .on('change', ({ value }) => { terrain.treeDensity = value; terrain.syncTreeUniforms(); });
+    .on('change', ({ value }) => { terrain.treeDensity = value; updElevation(); });
 
   // ── Tab: Colors ───────────────────────────────────────────────────────────
 
