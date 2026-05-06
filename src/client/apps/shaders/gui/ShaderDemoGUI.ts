@@ -245,14 +245,16 @@ export function buildShaderDemoGUI(
   // ── Tab: Trees ────────────────────────────────────────────────────────────
 
   const treeParams = {
-    enabled:   terrain.treeEnabled,
-    elevMax:   terrain.treeElevMax,
-    elevMin:   terrain.treeElevMin,
-    slopeMin:  terrain.treeSlopeMin,
-    ridgeMin:  terrain.treeRidgeMin,
-    noiseFreq: terrain.treeNoiseFreq,
-    noisePow:  terrain.treeNoisePow,
-    density:   terrain.treeDensity,
+    enabled:      terrain.treeEnabled,
+    elevMax:      terrain.treeElevMax,
+    elevMin:      terrain.treeElevMin,
+    slopeMin:     terrain.treeSlopeMin,
+    ridgeMin:     terrain.treeRidgeMin,
+    noiseFreq:    terrain.treeNoiseFreq,
+    noisePow:     terrain.treeNoisePow,
+    density:      terrain.treeDensity,
+    bumpStrength: terrain.treeBumpStrength,
+    bumpFreq:     terrain.treeBumpFreq,
   };
 
   treesPage.addBinding(treeParams, 'enabled',   { label: 'Enabled' })
@@ -271,6 +273,12 @@ export function buildShaderDemoGUI(
     .on('change', ({ value }) => { terrain.treeNoisePow = value; updElevation(); });
   treesPage.addBinding(treeParams, 'density',   { label: 'Density',      min: 0.1,  max: 5.0,    step: 0.1   })
     .on('change', ({ value }) => { terrain.treeDensity = value; updElevation(); });
+
+  const treeBumpFolder = treesPage.addFolder({ title: 'Canopy Bump', expanded: true });
+  treeBumpFolder.addBinding(treeParams, 'bumpStrength', { label: 'Strength',  min: 0.0, max: 2.0,   step: 0.05 })
+    .on('change', ({ value }) => { terrain.treeBumpStrength = value; terrain.syncTreeUniforms(); });
+  treeBumpFolder.addBinding(treeParams, 'bumpFreq',     { label: 'Frequency', min: 10,  max: 500.0, step: 5    })
+    .on('change', ({ value }) => { terrain.treeBumpFreq = value; terrain.syncTreeUniforms(); });
 
   // ── Tab: Colors ───────────────────────────────────────────────────────────
 

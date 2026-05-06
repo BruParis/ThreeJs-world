@@ -19,6 +19,8 @@ import {
   DEFAULT_TREE_NOISE_FREQ,
   DEFAULT_TREE_NOISE_POW,
   DEFAULT_TREE_DENSITY,
+  DEFAULT_TREE_BUMP_STRENGTH,
+  DEFAULT_TREE_BUMP_FREQ,
   createTreeUniforms,
   syncTreeUniforms,
   type TreeUniformState,
@@ -102,14 +104,16 @@ export class TerrainMesh {
   terrainColors: TerrainColorState = { ...DEFAULT_TERRAIN_COLORS };
 
   // Trees
-  treeEnabled   = true;
-  treeElevMax   = DEFAULT_TREE_ELEV_MAX;
-  treeElevMin   = DEFAULT_TREE_ELEV_MIN;
-  treeSlopeMin  = DEFAULT_TREE_SLOPE_MIN;
-  treeRidgeMin  = DEFAULT_TREE_RIDGE_MIN;
-  treeNoiseFreq = DEFAULT_TREE_NOISE_FREQ;
-  treeNoisePow  = DEFAULT_TREE_NOISE_POW;
-  treeDensity   = DEFAULT_TREE_DENSITY;
+  treeEnabled      = true;
+  treeElevMax      = DEFAULT_TREE_ELEV_MAX;
+  treeElevMin      = DEFAULT_TREE_ELEV_MIN;
+  treeSlopeMin     = DEFAULT_TREE_SLOPE_MIN;
+  treeRidgeMin     = DEFAULT_TREE_RIDGE_MIN;
+  treeNoiseFreq    = DEFAULT_TREE_NOISE_FREQ;
+  treeNoisePow     = DEFAULT_TREE_NOISE_POW;
+  treeDensity      = DEFAULT_TREE_DENSITY;
+  treeBumpStrength = DEFAULT_TREE_BUMP_STRENGTH;
+  treeBumpFreq     = DEFAULT_TREE_BUMP_FREQ;
 
   /**
    * CPU-accessible elevation grid — use for pathfinding, physics, or any non-rendering query.
