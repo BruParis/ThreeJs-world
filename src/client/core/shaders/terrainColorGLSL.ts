@@ -142,7 +142,7 @@ vec4 attrData = texture2D(uAttrTex, attrUV);
 // attrData.b = trees        float    (direct; isTree when > 0.36)
 // attrData.a = hardness     [0, 1]   (direct)
 float erosionDepth = attrData.g * 2.0 - 1.0;
-float trees        = attrData.b;
+float trees        = clamp01(attrData.b);  // ComputeTreeMap output is unbounded (negative = no trees); clamp once at the read site.
 float hardness     = attrData.a;
 
 // 3. Derive terrain flags from baked data.
@@ -150,9 +150,21 @@ bool isWater = shiftedElev < uSeaLevel;
 bool isTree  = !isWater && trees > 0.36;
 bool isGrass = !isWater && !isTree && shiftedElev < (GRASS_HEIGHT + 0.04) && vTerrainWorldNormal.y > 0.85;
 
-// 4. Perturb the normal — gated by baked hardness so no sharp edge appears
-//    at terrain-type boundaries.
-vec3 terrainNorWorld = normalize(vTerrainWorldNormal + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength * hardness);
+// 4. Perturb the normal — two independent contributions:
+//    - hardness × detail noise: rock/cliff micro-roughness; zero on grass/tree surfaces.
+//    - tree canopy bump: two snoise samples give independent XZ tilt, gated by tree
+//      density. Uses its own uniforms (uTreeBumpFreq, uTreeBumpStrength) and runs
+//      regardless of uDetailNoiseEnabled, so tree shading is always distinct from grass.
+vec3 treeBumpVec = vec3(
+    snoise(vec3(vTerrainWorldPos.xz * uTreeBumpFreq, 0.0)),
+    0.0,
+    snoise(vec3(vTerrainWorldPos.xz * uTreeBumpFreq, 1.7))
+) * trees * uTreeBumpStrength;
+vec3 terrainNorWorld = normalize(
+    vTerrainWorldNormal
+    + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength * hardness
+    + treeBumpVec
+);
 vec3 waterNorWorld   = computeWaterNormal(vTerrainWorldPos.xz);
 vec3 colorNormal = isWater ? waterNorWorld : terrainNorWorld;
 
@@ -244,6 +256,8 @@ uniform float     uWaterNormalStrength;
 uniform float     uWaterNormalFadeDist;
 uniform float     uWaterRoughness;
 uniform int       uDebugMode;
+uniform float     uTreeBumpStrength;
+uniform float     uTreeBumpFreq;
 // Attribute texture (LinearFilter) — four continuous float channels baked in the compute pass.
 // R = ridgeMap, G = erosionDepth (packed), B = trees, A = hardness.
 uniform sampler2D uAttrTex;
@@ -369,7 +383,8 @@ vec3 terrainColor(float elevation, float ridgeMap,
   landColor = mix(landColor, grassMix, grassWeight);
 
   // Tree color
-  landColor = mix(landColor, uTreeColor * pow(trees, 8.0), clamp01(trees * 2.2 - 0.8) * 0.6);
+  // landColor = mix(landColor, uTreeColor * pow(trees, 8.0), clamp01(trees * 2.2 - 0.8) * 0.6);
+  landColor = mix(landColor, uTreeColor * trees, trees);
   landColor *= 1.0 + breakup * 0.5;
 
   // ── Sand beach ────────────────────────────────────────────────────────────
@@ -380,7 +395,7 @@ vec3 terrainColor(float elevation, float ridgeMap,
   // ── Debug modes ─────────────────────────────────────────────────────────────
   if (uDebugMode == TERRAIN_DEBUG_ELEVATION)  return vec3(elevation);
   if (uDebugMode == TERRAIN_DEBUG_RIDGEMAP)   return vec3(max(0.0, ridgeMap), 0.0, max(0.0, -ridgeMap));
-  if (uDebugMode == TERRAIN_DEBUG_TREES)      return vec3(clamp(trees, 0.0, 1.0));
+  if (uDebugMode == TERRAIN_DEBUG_TREES)      return vec3(trees);
   if (uDebugMode == TERRAIN_DEBUG_NORMALS)    return normal * 0.5 + 0.5;
   if (uDebugMode == TERRAIN_DEBUG_STEEPNESS)  return vec3(1.0 - normal.y);
   if (uDebugMode == TERRAIN_DEBUG_EXPOSURE)   return vec3(exposure);

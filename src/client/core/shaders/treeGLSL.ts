@@ -28,11 +28,13 @@ export const TERRAIN_GRASS_HEIGHT = 0.465;
 
 export const DEFAULT_TREE_ELEV_MAX   = TERRAIN_GRASS_HEIGHT + 0.05;  // 0.515
 export const DEFAULT_TREE_ELEV_MIN   = TERRAIN_GRASS_HEIGHT + 0.01;  // 0.475
-export const DEFAULT_TREE_SLOPE_MIN  = 0.95;
+export const DEFAULT_TREE_SLOPE_MIN  = 0.90;
 export const DEFAULT_TREE_RIDGE_MIN  = -1.4;
 export const DEFAULT_TREE_NOISE_FREQ = 200.0;
 export const DEFAULT_TREE_NOISE_POW  = 2.0;
-export const DEFAULT_TREE_DENSITY    = 1.5;
+export const DEFAULT_TREE_DENSITY      = 1.5;
+export const DEFAULT_TREE_BUMP_STRENGTH = 0.4;
+export const DEFAULT_TREE_BUMP_FREQ     = 80.0;
 
 export const treeGLSL = /* glsl */`
 
@@ -95,16 +97,23 @@ float _treesAmount(float height, float normalY, float ridgeMap) {
     ) - 0.5) / 0.6;
 }
 
-// Returns tree coverage density for the given surface.
+// Returns raw tree coverage density for the given surface.
 // Takes individual fields instead of a struct — many WebGL2 drivers reject
 // struct types in function parameter positions.
+//
+// Output range: roughly [-(uTreeDensity * 1.83), +(uTreeDensity * 0.83)].
+//   Positive  → tree cover (threshold for isTree is 0.36).
+//   Negative  → bare ground / water / cliff.
+// The output is NOT clamped to [0, 1] by design — callers must clamp before use.
 float ComputeTreeMap(float elevation, float ridgeMap, float normalY, vec2 worldXZ) {
     if (uTreeEnabled == 0) return 0.0;
 
     float treesAmount = _treesAmount(elevation, normalY, ridgeMap);
 
+    // Noise breaks up the tree boundary organically.
+    // treeNoise ∈ [0, 1]; pow() sharpens the cutoff (higher uTreeNoisePow = patchier).
     float treeNoise = noised_tree(worldXZ * uTreeNoiseFreq).x * 0.5 + 0.5;
-    return (treesAmount + 1.0 - pow(treeNoise, uTreeNoisePow) - 1.0) * uTreeDensity;
+    return (treesAmount - pow(treeNoise, uTreeNoisePow)) * uTreeDensity;
 }
 
 `;
@@ -114,36 +123,42 @@ float ComputeTreeMap(float elevation, float ridgeMap, float normalY, vec2 worldX
 // ── Uniform helpers ───────────────────────────────────────────────────────────
 
 export interface TreeUniformState {
-  treeEnabled:   boolean;
-  treeElevMax:   number;
-  treeElevMin:   number;
-  treeSlopeMin:  number;
-  treeRidgeMin:  number;
-  treeNoiseFreq: number;
-  treeNoisePow:  number;
-  treeDensity:   number;
+  treeEnabled:      boolean;
+  treeElevMax:      number;
+  treeElevMin:      number;
+  treeSlopeMin:     number;
+  treeRidgeMin:     number;
+  treeNoiseFreq:    number;
+  treeNoisePow:     number;
+  treeDensity:      number;
+  treeBumpStrength: number;
+  treeBumpFreq:     number;
 }
 
 export function createTreeUniforms(s: TreeUniformState): Record<string, THREE.IUniform> {
   return {
-    uTreeEnabled:   { value: s.treeEnabled ? 1 : 0 },
-    uTreeElevMax:   { value: s.treeElevMax },
-    uTreeElevMin:   { value: s.treeElevMin },
-    uTreeSlopeMin:  { value: s.treeSlopeMin },
-    uTreeRidgeMin:  { value: s.treeRidgeMin },
-    uTreeNoiseFreq: { value: s.treeNoiseFreq },
-    uTreeNoisePow:  { value: s.treeNoisePow },
-    uTreeDensity:   { value: s.treeDensity },
+    uTreeEnabled:      { value: s.treeEnabled ? 1 : 0 },
+    uTreeElevMax:      { value: s.treeElevMax },
+    uTreeElevMin:      { value: s.treeElevMin },
+    uTreeSlopeMin:     { value: s.treeSlopeMin },
+    uTreeRidgeMin:     { value: s.treeRidgeMin },
+    uTreeNoiseFreq:    { value: s.treeNoiseFreq },
+    uTreeNoisePow:     { value: s.treeNoisePow },
+    uTreeDensity:      { value: s.treeDensity },
+    uTreeBumpStrength: { value: s.treeBumpStrength },
+    uTreeBumpFreq:     { value: s.treeBumpFreq },
   };
 }
 
 export function syncTreeUniforms(u: Record<string, THREE.IUniform>, s: TreeUniformState): void {
-  u.uTreeEnabled.value   = s.treeEnabled ? 1 : 0;
-  u.uTreeElevMax.value   = s.treeElevMax;
-  u.uTreeElevMin.value   = s.treeElevMin;
-  u.uTreeSlopeMin.value  = s.treeSlopeMin;
-  u.uTreeRidgeMin.value  = s.treeRidgeMin;
-  u.uTreeNoiseFreq.value = s.treeNoiseFreq;
-  u.uTreeNoisePow.value  = s.treeNoisePow;
-  u.uTreeDensity.value   = s.treeDensity;
+  u.uTreeEnabled.value      = s.treeEnabled ? 1 : 0;
+  u.uTreeElevMax.value      = s.treeElevMax;
+  u.uTreeElevMin.value      = s.treeElevMin;
+  u.uTreeSlopeMin.value     = s.treeSlopeMin;
+  u.uTreeRidgeMin.value     = s.treeRidgeMin;
+  u.uTreeNoiseFreq.value    = s.treeNoiseFreq;
+  u.uTreeNoisePow.value     = s.treeNoisePow;
+  u.uTreeDensity.value      = s.treeDensity;
+  u.uTreeBumpStrength.value = s.treeBumpStrength;
+  u.uTreeBumpFreq.value     = s.treeBumpFreq;
 }
