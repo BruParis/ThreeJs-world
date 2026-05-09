@@ -41,6 +41,8 @@ export const DEFAULT_WATER_NORMAL_FREQ      = 52.0;  // waves per world unit
 export const DEFAULT_WATER_NORMAL_STRENGTH  = 0.05;  // normal tilt at full strength
 export const DEFAULT_WATER_NORMAL_FADE_DIST = 6.0;   // world units before waves fade out
 export const DEFAULT_WATER_ROUGHNESS        = 0.35;  // PBR roughness — spread specular, not mirror
+export const DRAINAGE_WIDTH                 = 0.3;   // ridge-map threshold below which drainage color appears
+export const DEFAULT_DRAINAGE_COLOR:        [number, number, number] = [1.0, 1.0, 1.0];
 
 export interface TerrainColorState {
   cliffColor:          [number, number, number];
@@ -55,6 +57,7 @@ export interface TerrainColorState {
   waterNormalStrength: number;
   waterNormalFadeDist: number;
   waterRoughness:      number;
+  drainageColor:       [number, number, number];
   debugMode:           number;
 }
 
@@ -71,6 +74,7 @@ export const DEFAULT_TERRAIN_COLORS: TerrainColorState = {
   waterNormalStrength: DEFAULT_WATER_NORMAL_STRENGTH,
   waterNormalFadeDist: DEFAULT_WATER_NORMAL_FADE_DIST,
   waterRoughness:      DEFAULT_WATER_ROUGHNESS,
+  drainageColor:       DEFAULT_DRAINAGE_COLOR,
   debugMode:           0,
 };
 
@@ -88,6 +92,7 @@ export function createTerrainColorUniforms(s: TerrainColorState): Record<string,
     uWaterNormalStrength: { value: s.waterNormalStrength },
     uWaterNormalFadeDist: { value: s.waterNormalFadeDist },
     uWaterRoughness:      { value: s.waterRoughness },
+    uDrainageColor:       { value: new THREE.Color(...s.drainageColor) },
     uDebugMode:           { value: s.debugMode },
   };
 }
@@ -105,6 +110,7 @@ export function syncTerrainColorUniforms(u: Record<string, THREE.IUniform>, s: T
   u.uWaterNormalStrength.value = s.waterNormalStrength;
   u.uWaterNormalFadeDist.value = s.waterNormalFadeDist;
   u.uWaterRoughness.value      = s.waterRoughness;
+  (u.uDrainageColor.value as THREE.Color).setRGB(...s.drainageColor);
   u.uDebugMode.value           = s.debugMode;
 }
 
@@ -231,7 +237,8 @@ ${terrainSampleGLSL}
 ${simplexNoiseGLSL}
 ${shaderUtilsGLSL}
 
-#define GRASS_HEIGHT  ${TERRAIN_GRASS_HEIGHT.toFixed(2)}
+#define GRASS_HEIGHT    ${TERRAIN_GRASS_HEIGHT.toFixed(2)}
+#define DRAINAGE_WIDTH  ${DRAINAGE_WIDTH.toFixed(2)}
 
 uniform float uSeaLevel;
 
@@ -241,6 +248,7 @@ uniform vec3      uGrassColor1;
 uniform vec3      uGrassColor2;
 uniform vec3      uTreeColor;
 uniform vec3      uSandColor;
+uniform vec3      uDrainageColor;
 // Water colors — visible through the semi-transparent WaterMesh plane.
 // uWaterDeepColor  : deep water (high diff from sea level) — dark navy.
 // uWaterShoreColor : shallow water (diff ≈ 0) — lighter teal/blue.
@@ -358,6 +366,9 @@ vec3 terrainColor(float elevation, float ridgeMap,
 
   float breakup = detailNoise.x;
 
+  float ridgeMap01 = clamp01(ridgeMap * 0.5 + 0.5); // Ridge map as [0, 1] value.
+  float drainage = clamp01((1.0 - clamp01(ridgeMap01 / DRAINAGE_WIDTH)) * 1.5);
+
   // Exposure: erosion-derived proxy for how open/exposed the surface is.
   // Eroded gullies (erosionDepth ≈ -1) are concave, sheltered → low exposure.
   // Ridges (erosionDepth ≈ +1) are convex and open → high exposure.
@@ -389,6 +400,9 @@ vec3 terrainColor(float elevation, float ridgeMap,
 
   // ── Sand beach ────────────────────────────────────────────────────────────
   landColor = mix(landColor, uSandColor, smoothstep(uSeaLevel + 0.005, uSeaLevel, elevation + breakup * 0.01));
+
+  // ── Drainage ──────────────────────────────────────────────────────────────
+  landColor = mix(landColor, uDrainageColor, drainage);
 
   vec3 result = clamp(landColor, 0.0, 1.0);
 
