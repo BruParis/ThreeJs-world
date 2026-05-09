@@ -324,16 +324,13 @@ export function buildShaderDemoGUI(
   const waterNormalParams = {
     freq:      terrain.terrainColors.waterNormalFreq,
     strength:  terrain.terrainColors.waterNormalStrength,
-    fadeDist:  terrain.terrainColors.waterNormalFadeDist,
     roughness: terrain.terrainColors.waterRoughness,
   };
-  waterColFolder.addBinding(waterNormalParams, 'freq',      { label: 'Wave Freq',      min: 0.1, max: 200.0, step: 0.5  })
+  waterColFolder.addBinding(waterNormalParams, 'freq',      { label: 'Wave Freq',     min: 0.1, max: 200.0, step: 0.5  })
     .on('change', ({ value }) => { terrain.terrainColors.waterNormalFreq     = value; terrain.syncTerrainColorUniforms(); });
-  waterColFolder.addBinding(waterNormalParams, 'strength',  { label: 'Wave Strength',  min: 0.0, max: 2.0,   step: 0.01 })
+  waterColFolder.addBinding(waterNormalParams, 'strength',  { label: 'Wave Strength', min: 0.0, max: 2.0,   step: 0.01 })
     .on('change', ({ value }) => { terrain.terrainColors.waterNormalStrength = value; terrain.syncTerrainColorUniforms(); });
-  waterColFolder.addBinding(waterNormalParams, 'fadeDist',  { label: 'Wave Fade Dist', min: 0.5, max: 20.0,  step: 0.5  })
-    .on('change', ({ value }) => { terrain.terrainColors.waterNormalFadeDist = value; terrain.syncTerrainColorUniforms(); });
-  waterColFolder.addBinding(waterNormalParams, 'roughness', { label: 'Roughness',      min: 0.0, max: 1.0,   step: 0.01 })
+  waterColFolder.addBinding(waterNormalParams, 'roughness', { label: 'Roughness',     min: 0.0, max: 1.0,   step: 0.01 })
     .on('change', ({ value }) => { terrain.terrainColors.waterRoughness      = value; terrain.syncTerrainColorUniforms(); });
 
   // ── Tab: Lighting ─────────────────────────────────────────────────────────

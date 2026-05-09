@@ -63,6 +63,7 @@ import {
 } from '@core/shaders/erosionGLSL';
 import { TerrainElevationGL } from './TerrainElevationGL';
 import { SuppNoiseGL }        from './SuppNoiseGL';
+import { TerrainBumpGL }      from './TerrainBumpGL';
 
 export class TerrainMesh {
   // Gaussian (input to first elevation layer)
@@ -130,6 +131,7 @@ export class TerrainMesh {
   private attrTexture:      THREE.DataTexture | null = null;
   private elevationGL:      TerrainElevationGL | null = null;
   private suppNoiseGL:      SuppNoiseGL | null = null;
+  private bumpNoiseGL:      TerrainBumpGL | null = null;
 
   // Per-patch uniform objects kept in sync with onBeforeCompile shader refs.
   private _patchUniforms: Record<string, THREE.IUniform>[] = [];
@@ -141,6 +143,7 @@ export class TerrainMesh {
   init(): void {
     this.elevationGL = TerrainElevationGL.create();
     this.suppNoiseGL = new SuppNoiseGL(512);
+    this.bumpNoiseGL = new TerrainBumpGL(512);
     this.recomputeElevation();
     this.rebuildMeshes();
   }
@@ -248,6 +251,8 @@ export class TerrainMesh {
     this.syncElevationTexture();
     this.syncAttrTexture();
     this.suppNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
+    this.bumpNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
+    this.bumpNoiseGL?.setFrequencies(this.terrainColors.waterNormalFreq, this.treeBumpFreq);
   }
 
   /** Update display-only uniforms (wireframe, roughness) without recomputing elevation. */
@@ -275,6 +280,11 @@ export class TerrainMesh {
     if (!this.suppNoiseGL || !this.detailNoiseEnabled) return;
     this.suppNoiseGL.update(renderer);
     this.syncDetailNoiseUniforms();
+  }
+
+  /** Re-render the bump texture if dirty; no-op otherwise. Call once per frame. */
+  updateBumpNoise(renderer: THREE.WebGLRenderer): void {
+    this.bumpNoiseGL?.update(renderer);
   }
 
   /** Toggle detail noise on/off and sync the enabled uniform immediately. */
@@ -308,6 +318,7 @@ export class TerrainMesh {
     for (const u of this._patchUniforms) {
       syncTreeUniforms(u, this as TreeUniformState);
     }
+    this.bumpNoiseGL?.setFrequencies(this.terrainColors.waterNormalFreq, this.treeBumpFreq);
   }
 
   /** Sync terrain color uniforms to all patch materials. */
@@ -315,6 +326,7 @@ export class TerrainMesh {
     for (const u of this._patchUniforms) {
       _syncTerrainColorUniforms(u, this.terrainColors);
     }
+    this.bumpNoiseGL?.setFrequencies(this.terrainColors.waterNormalFreq, this.treeBumpFreq);
   }
 
   /** Sample terrain height at world XZ using the CPU elevation grid. */
@@ -341,6 +353,8 @@ export class TerrainMesh {
     this.elevationGL = null;
     this.suppNoiseGL?.dispose();
     this.suppNoiseGL = null;
+    this.bumpNoiseGL?.dispose();
+    this.bumpNoiseGL = null;
   }
 
   // ── private ──────────────────────────────────────────────────────────────────
@@ -439,6 +453,8 @@ export class TerrainMesh {
         // Attribute texture registered here (alongside elevation texture) because
         // it is produced by the same compute pass and updated on the same cadence.
         { uAttrTex: { value: this.attrTexture } },
+        // Bump texture — baked by TerrainBumpGL (water normal gradient + tree bump).
+        { uBumpTex: { value: this.bumpNoiseGL?.texture ?? null } },
       );
       this._patchUniforms.push(shader.uniforms);
 

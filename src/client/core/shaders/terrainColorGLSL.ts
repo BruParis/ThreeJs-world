@@ -21,7 +21,6 @@
 
 import * as THREE from 'three';
 import { terrainSampleGLSL }  from '@core/shaders/terrainSampleGLSL';
-import { simplexNoiseGLSL }   from '@core/noise/simplexGLSL';
 import { shaderUtilsGLSL }    from '@core/shaders/shaderUtilsGLSL';
 import { TERRAIN_GRASS_HEIGHT } from '@core/shaders/treeGLSL';
 
@@ -39,7 +38,6 @@ export const DEFAULT_WATER_DEEP_COLOR:   [number, number, number] = [0.04, 0.10,
 export const DEFAULT_WATER_SHORE_COLOR:  [number, number, number] = [0.14, 0.32, 0.46];
 export const DEFAULT_WATER_NORMAL_FREQ      = 52.0;  // waves per world unit
 export const DEFAULT_WATER_NORMAL_STRENGTH  = 0.05;  // normal tilt at full strength
-export const DEFAULT_WATER_NORMAL_FADE_DIST = 6.0;   // world units before waves fade out
 export const DEFAULT_WATER_ROUGHNESS        = 0.35;  // PBR roughness — spread specular, not mirror
 export const DRAINAGE_WIDTH                 = 0.3;   // ridge-map threshold below which drainage color appears
 export const DEFAULT_DRAINAGE_COLOR:        [number, number, number] = [1.0, 1.0, 1.0];
@@ -55,7 +53,6 @@ export interface TerrainColorState {
   waterShoreColor:     [number, number, number];
   waterNormalFreq:     number;
   waterNormalStrength: number;
-  waterNormalFadeDist: number;
   waterRoughness:      number;
   drainageColor:       [number, number, number];
   debugMode:           number;
@@ -72,7 +69,6 @@ export const DEFAULT_TERRAIN_COLORS: TerrainColorState = {
   waterShoreColor:     DEFAULT_WATER_SHORE_COLOR,
   waterNormalFreq:     DEFAULT_WATER_NORMAL_FREQ,
   waterNormalStrength: DEFAULT_WATER_NORMAL_STRENGTH,
-  waterNormalFadeDist: DEFAULT_WATER_NORMAL_FADE_DIST,
   waterRoughness:      DEFAULT_WATER_ROUGHNESS,
   drainageColor:       DEFAULT_DRAINAGE_COLOR,
   debugMode:           0,
@@ -90,7 +86,6 @@ export function createTerrainColorUniforms(s: TerrainColorState): Record<string,
     uWaterShoreColor:     { value: new THREE.Color(...s.waterShoreColor) },
     uWaterNormalFreq:     { value: s.waterNormalFreq },
     uWaterNormalStrength: { value: s.waterNormalStrength },
-    uWaterNormalFadeDist: { value: s.waterNormalFadeDist },
     uWaterRoughness:      { value: s.waterRoughness },
     uDrainageColor:       { value: new THREE.Color(...s.drainageColor) },
     uDebugMode:           { value: s.debugMode },
@@ -108,7 +103,6 @@ export function syncTerrainColorUniforms(u: Record<string, THREE.IUniform>, s: T
   (u.uWaterShoreColor.value as THREE.Color).setRGB(...s.waterShoreColor);
   u.uWaterNormalFreq.value     = s.waterNormalFreq;
   u.uWaterNormalStrength.value = s.waterNormalStrength;
-  u.uWaterNormalFadeDist.value = s.waterNormalFadeDist;
   u.uWaterRoughness.value      = s.waterRoughness;
   (u.uDrainageColor.value as THREE.Color).setRGB(...s.drainageColor);
   u.uDebugMode.value           = s.debugMode;
@@ -161,17 +155,17 @@ bool isGrass = !isWater && !isTree && shiftedElev < (GRASS_HEIGHT + 0.04) && vTe
 //    - tree canopy bump: two snoise samples give independent XZ tilt, gated by tree
 //      density. Uses its own uniforms (uTreeBumpFreq, uTreeBumpStrength) and runs
 //      regardless of uDetailNoiseEnabled, so tree shading is always distinct from grass.
-vec3 treeBumpVec = vec3(
-    snoise(vec3(vTerrainWorldPos.xz * uTreeBumpFreq, 0.0)),
-    0.0,
-    snoise(vec3(vTerrainWorldPos.xz * uTreeBumpFreq, 1.7))
-) * trees * uTreeBumpStrength;
+vec4 bumpData    = texture2D(uBumpTex, attrUV);
+vec3 treeBumpVec = vec3(bumpData.b, 0.0, bumpData.a) * trees * uTreeBumpStrength;
 vec3 terrainNorWorld = normalize(
     vTerrainWorldNormal
     + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength * hardness
     + treeBumpVec
 );
-vec3 waterNorWorld   = computeWaterNormal(vTerrainWorldPos.xz);
+vec3 waterNorWorld = computeWaterNormal(
+    bumpData.r * uWaterNormalStrength,
+    bumpData.g * uWaterNormalStrength
+);
 vec3 colorNormal = isWater ? waterNorWorld : terrainNorWorld;
 
 // 5. Output color.
@@ -234,7 +228,6 @@ if (_terrainIsWater) metalnessFactor = 0.0;
 export const terrainColorGLSL = /* glsl */`
 
 ${terrainSampleGLSL}
-${simplexNoiseGLSL}
 ${shaderUtilsGLSL}
 
 #define GRASS_HEIGHT    ${TERRAIN_GRASS_HEIGHT.toFixed(2)}
@@ -257,56 +250,28 @@ uniform vec3      uWaterShoreColor;
 // Water normal perturbation.
 // uWaterNormalFreq     : spatial frequency in world units (e.g. 1.0 = 1 wave per world unit)
 // uWaterNormalStrength : normal tilt at full strength (0 = flat, 0.5 = moderate, 1+ = choppy)
-// uWaterNormalFadeDist : camera distance at which the perturbation fully fades out,
-//                        preventing continent-scale waves when zoomed out
 uniform float     uWaterNormalFreq;
 uniform float     uWaterNormalStrength;
-uniform float     uWaterNormalFadeDist;
 uniform float     uWaterRoughness;
 uniform int       uDebugMode;
 uniform float     uTreeBumpStrength;
-uniform float     uTreeBumpFreq;
 // Attribute texture (LinearFilter) — four continuous float channels baked in the compute pass.
 // R = ridgeMap, G = erosionDepth (packed), B = trees, A = hardness.
 uniform sampler2D uAttrTex;
+// Bump texture (TerrainBumpGL) — baked once, static per terrain build.
+// R = water normal dx, G = water normal dz (gradient at uWaterNormalFreq, strength = 1).
+// B = tree bump X snoise, A = tree bump Z snoise (at uTreeBumpFreq).
+uniform sampler2D uBumpTex;
 
 // ── Water normal perturbation ─────────────────────────────────────────────────
 //
-// Computes a world-space surface normal for water using two octaves of simplex
-// noise evaluated at world XZ.  The gradient is derived via central finite
-// differences (3 snoise calls total after the shared h0 sample).
+// Reconstructs the world-space surface normal for water from the pre-baked
+// gradient stored in uBumpTex.rg (computed by TerrainBumpGL, strength = 1).
+// uWaterNormalStrength scales the tilt at render time without requiring a rebake.
 //
-// Scale is explicit in world units: uWaterNormalFreq = 1.0 means one wave
-// feature per world unit, independent of patchSize or camera zoom.
-//
-// Strength is faded by camera distance so that water seen from far away does
-// not show artificially large waves.  Beyond uWaterNormalFadeDist the normal
-// collapses to vec3(0,1,0) (flat mirror), which looks correct and is cheaper.
-//
-// cameraPosition is a Three.js built-in uniform available in all shaders.
-vec3 computeWaterNormal(vec2 worldXZ) {
-  float camDist = length(cameraPosition - vec3(worldXZ.x, uSeaLevel, worldXZ.y));
-  float lodFade = 1.0 - smoothstep(uWaterNormalFadeDist * 0.5, uWaterNormalFadeDist, camDist);
-  if (lodFade < 1e-3) return vec3(0.0, 1.0, 0.0);
-
-  // 2-octave FBM — inlined so the three sample positions share octave weights.
-  vec2 p = worldXZ * uWaterNormalFreq;
-  float eps = 0.3;  // finite-difference step; keep in the same order as the feature size
-
-  // Sample at centre and two offset positions.
-  #define _WFBM(uv) (snoise(vec3(uv,           0.0)) * 0.65 \
-                   + snoise(vec3((uv) * 2.13,   0.0)) * 0.35)
-  float h0 = _WFBM(p);
-  float hx = _WFBM(p + vec2(eps, 0.0));
-  float hz = _WFBM(p + vec2(0.0, eps));
-  #undef _WFBM
-
-  float scale = uWaterNormalStrength * lodFade / eps;
-  float dx = (hx - h0) * scale;
-  float dz = (hz - h0) * scale;
-  // Clamp tilt so the normal never points below ~18° from vertical (sin18°≈0.3).
-  // Prevents waves from creating lighting black-holes when the normal faces away
-  // from the light — physically, ocean waves don't overhang.
+// Clamps tilt so the normal never points below ~18° from vertical (sin18°≈0.3),
+// preventing waves from creating lighting black-holes.
+vec3 computeWaterNormal(float dx, float dz) {
   vec3 n = normalize(vec3(-dx, 1.0, -dz));
   n.y = max(n.y, 0.3);
   return normalize(n);
