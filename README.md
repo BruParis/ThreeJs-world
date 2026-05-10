@@ -26,3 +26,11 @@ npm run dev
 ```
 
 Starts the dev server at [http://127.0.0.1:8080](http://127.0.0.1:8080) with hot module reloading.
+
+## Demo Videos
+
+### Shaders
+[![Shaders demo](https://img.youtube.com/vi/Qu06Go-bwk8/maxresdefault.jpg)](https://www.youtube.com/watch?v=Qu06Go-bwk8)
+
+### Quadtree LOD
+[![Quadtree LOD demo](https://img.youtube.com/vi/8TBztiv16Ys/maxresdefault.jpg)](https://www.youtube.com/watch?v=8TBztiv16Ys)
