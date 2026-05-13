@@ -88,12 +88,6 @@ float _treesAmount(float height, float normalY, float ridgeMap) {
         * smoothstep(uTreeSlopeMin, 1.0, normalY)
         // Ridge gate: suppress trees along erosion ridges / gullies.
         * smoothstep(uTreeRidgeMin, 0.0, ridgeMap)
-        // Water gate: suppress trees below the water line.
-        * smoothstep(
-            uSeaLevel + 0.000,
-            uSeaLevel + 0.007,
-            height
-        )
     ) - 0.5) / 0.6;
 }
 
@@ -101,12 +95,19 @@ float _treesAmount(float height, float normalY, float ridgeMap) {
 // Takes individual fields instead of a struct — many WebGL2 drivers reject
 // struct types in function parameter positions.
 //
+// isWater — pre-classified water flag from terrainClassificationGLSL; if true,
+//           returns 0 immediately (replaces the per-sample uSeaLevel smoothstep).
+// isGrass — preliminary grass-zone flag (elevation + slope, without !isTree);
+//           gates trees to grass areas for testing.
+//
 // Output range: roughly [-(uTreeDensity * 1.83), +(uTreeDensity * 0.83)].
 //   Positive  → tree cover (threshold for isTree is 0.36).
 //   Negative  → bare ground / water / cliff.
 // The output is NOT clamped to [0, 1] by design — callers must clamp before use.
-float ComputeTreeMap(float elevation, float ridgeMap, float normalY, vec2 worldXZ) {
+float ComputeTreeMap(float elevation, float ridgeMap, float normalY, vec2 worldXZ, bool isWater, bool isGrass) {
     if (uTreeEnabled == 0) return 0.0;
+    if (isWater) return 0.0;
+    if (!isGrass) return 0.0;
 
     float treesAmount = _treesAmount(elevation, normalY, ridgeMap);
 

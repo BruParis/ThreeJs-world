@@ -129,6 +129,9 @@ export class TerrainMesh {
   // Attribute texture (LinearFilter) — four continuous float channels: ridgeMap (R),
   // erosionDepth packed (G), trees (B), hardness (A). All baked in the compute pass.
   private attrTexture:      THREE.DataTexture | null = null;
+  // Classification texture (NearestFilter, RGBA8) — boolean flags baked in the compute pass:
+  // R = isWater, G = isGrass, B = isTree, A = unused.
+  private classifTexture:   THREE.DataTexture | null = null;
   private elevationGL:      TerrainElevationGL | null = null;
   private suppNoiseGL:      SuppNoiseGL | null = null;
   private bumpNoiseGL:      TerrainBumpGL | null = null;
@@ -167,7 +170,7 @@ export class TerrainMesh {
     const halfSize       = this.patchSize / 2;
     const permData       = new PerlinNoise3D(this.noiseParams.seed).getPermutation256();
 
-    const { elevations, packed, attrPacked } = this.elevationGL.compute(
+    const { elevations, packed, attrPacked, classifPacked } = this.elevationGL.compute(
       {
         gridWidth:             totalVerts,
         gridHeight:            totalVerts,
@@ -248,8 +251,22 @@ export class TerrainMesh {
     this.attrTexture.generateMipmaps = false;
     this.attrTexture.needsUpdate    = true;
 
+    // ── Classification texture (NearestFilter) — boolean flags baked by the compute pass ──
+    // RGBA8 / UnsignedByteType: values are 0 or 255 (false/true).
+    // NearestFilter is essential — interpolating between 0 and 255 would corrupt the flags.
+    this.classifTexture?.dispose();
+    this.classifTexture = new THREE.DataTexture(
+      classifPacked, totalVerts, totalVerts,
+      THREE.RGBAFormat, THREE.UnsignedByteType,
+    );
+    this.classifTexture.minFilter      = THREE.NearestFilter;
+    this.classifTexture.magFilter      = THREE.NearestFilter;
+    this.classifTexture.generateMipmaps = false;
+    this.classifTexture.needsUpdate    = true;
+
     this.syncElevationTexture();
     this.syncAttrTexture();
+    this.syncClassifTexture();
     this.suppNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
     this.bumpNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
     this.bumpNoiseGL?.setFrequencies(this.terrainColors.waterNormalFreq, this.treeBumpFreq);
@@ -349,6 +366,8 @@ export class TerrainMesh {
     this.elevationTexture = null;
     this.attrTexture?.dispose();
     this.attrTexture = null;
+    this.classifTexture?.dispose();
+    this.classifTexture = null;
     this.elevationGL?.dispose();
     this.elevationGL = null;
     this.suppNoiseGL?.dispose();
@@ -368,6 +387,12 @@ export class TerrainMesh {
   private syncAttrTexture(): void {
     for (const u of this._patchUniforms) {
       u.uAttrTex.value = this.attrTexture;
+    }
+  }
+
+  private syncClassifTexture(): void {
+    for (const u of this._patchUniforms) {
+      u.uClassifTex.value = this.classifTexture;
     }
   }
 
@@ -450,9 +475,9 @@ export class TerrainMesh {
         }),
         createTreeUniforms(this as TreeUniformState),
         createTerrainColorUniforms(this.terrainColors),
-        // Attribute texture registered here (alongside elevation texture) because
-        // it is produced by the same compute pass and updated on the same cadence.
-        { uAttrTex: { value: this.attrTexture } },
+        // Attribute + classification textures — produced by the same compute pass.
+        { uAttrTex:    { value: this.attrTexture } },
+        { uClassifTex: { value: this.classifTexture } },
         // Bump texture — baked by TerrainBumpGL (water normal gradient + tree bump).
         { uBumpTex: { value: this.bumpNoiseGL?.texture ?? null } },
       );

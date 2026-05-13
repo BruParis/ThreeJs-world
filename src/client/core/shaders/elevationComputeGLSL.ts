@@ -17,6 +17,11 @@
  *     G = erosionDepth [0, 1]   (packed: ×0.5+0.5; unpack: ×2−1)
  *     B = trees        float    (direct; isTree when > 0.36)
  *     A = hardness     [0, 1]   (direct)
+ *   COLOR_ATTACHMENT2 — classification texture (NearestFilter — RGBA8, boolean flags)
+ *     R = isWater  (0 or 1)
+ *     G = isGrass  (0 or 1)
+ *     B = isTree   (0 or 1)
+ *     A = unused
  *
  * Wrapped with `#version 300 es` + `precision` header by TerrainElevationGL.
  */
@@ -79,8 +84,9 @@ uniform float uSeaLevel;
 // GRASS_HEIGHT required by terrainClassificationGLSL.
 #define GRASS_HEIGHT ${TERRAIN_GRASS_HEIGHT.toFixed(2)}
 
-layout(location = 0) out vec4 fragColor;  // elevation texture (COLOR_ATTACHMENT0)
-layout(location = 1) out vec4 fragAttr;   // attribute texture (COLOR_ATTACHMENT1)
+layout(location = 0) out vec4 fragColor;   // elevation texture      (COLOR_ATTACHMENT0)
+layout(location = 1) out vec4 fragAttr;   // attribute texture      (COLOR_ATTACHMENT1)
+layout(location = 2) out vec4 fragClassif; // classification texture (COLOR_ATTACHMENT2)
 
 // ── Library includes ──────────────────────────────────────────────────────────
 // Order matters: each file may call functions defined in earlier files.
@@ -135,5 +141,10 @@ void main() {
   //   B = trees        float    (direct; threshold 0.36 = isTree)
   //   A = hardness     [0, 1]   (direct)
   fragAttr = vec4(ridge, erosionDepth * 0.5 + 0.5, tc.trees, tc.hardness);
+
+  // Classification texture — boolean flags packed as 0/1 floats into RGBA8.
+  // NearestFilter on the CPU side; no interpolation between flags.
+  //   R = isWater, G = isGrass, B = isTree, A = unused
+  fragClassif = vec4(float(tc.isWater), float(tc.isGrass), float(tc.isTree), 0.0);
 }
 `;

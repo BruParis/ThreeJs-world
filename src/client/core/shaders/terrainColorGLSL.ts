@@ -131,9 +131,9 @@ if (uDetailNoiseEnabled == 1) {
   detailNoise = texture2D(uDetailNoiseTex, detailUV).xyz;
 }
 
-// 2. Read elevation and pre-baked classification from the attribute texture.
-//    Trees and hardness were computed in the elevation compute pass (classifyTerrain),
-//    using the exact vertex-shader normalY — no recomputation needed here.
+// 2. Read elevation and pre-baked classification from the attribute and classification textures.
+//    Trees, hardness, and boolean flags were computed in the elevation compute pass
+//    (classifyTerrain), using the exact vertex-shader normalY — no recomputation needed here.
 float shiftedElev = vTerrainElev + uElevOffset;
 vec2 attrUV   = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
 vec4 attrData = texture2D(uAttrTex, attrUV);
@@ -145,10 +145,15 @@ float erosionDepth = attrData.g * 2.0 - 1.0;
 float trees        = clamp01(attrData.b);  // ComputeTreeMap output is unbounded (negative = no trees); clamp once at the read site.
 float hardness     = attrData.a;
 
-// 3. Derive terrain flags from baked data.
+// 3. Read terrain flags from the dedicated classification texture (NearestFilter, RGBA8).
+//    isGrass and isTree come from the exact baked classifyTerrain() result — no drift
+//    from fragment-side recomputation.
+//    isWater is computed dynamically from shiftedElev so it responds to uElevOffset
+//    changes without requiring a full elevation recompute.
+vec4 classif = texture2D(uClassifTex, attrUV);
 bool isWater = shiftedElev < uSeaLevel;
-bool isTree  = !isWater && trees > 0.36;
-bool isGrass = !isWater && !isTree && shiftedElev < (GRASS_HEIGHT + 0.04) && vTerrainWorldNormal.y > 0.85;
+bool isGrass = classif.g > 0.5;
+bool isTree  = classif.b > 0.5;
 
 // 4. Perturb the normal — two independent contributions:
 //    - hardness × detail noise: rock/cliff micro-roughness; zero on grass/tree surfaces.
@@ -258,6 +263,9 @@ uniform float     uTreeBumpStrength;
 // Attribute texture (LinearFilter) — four continuous float channels baked in the compute pass.
 // R = ridgeMap, G = erosionDepth (packed), B = trees, A = hardness.
 uniform sampler2D uAttrTex;
+// Classification texture (NearestFilter, RGBA8) — boolean flags from the compute pass.
+// R = isWater, G = isGrass, B = isTree, A = unused.  Values are 0.0 or 1.0.
+uniform sampler2D uClassifTex;
 // Bump texture (TerrainBumpGL) — baked once, static per terrain build.
 // R = water normal dx, G = water normal dz (gradient at uWaterNormalFreq, strength = 1).
 // B = tree bump X snoise, A = tree bump Z snoise (at uTreeBumpFreq).

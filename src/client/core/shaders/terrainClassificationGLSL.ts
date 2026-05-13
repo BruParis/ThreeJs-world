@@ -42,12 +42,18 @@ struct TerrainClassification {
 
 TerrainClassification classifyTerrain(float elevation, float ridgeMap, float normalY, vec2 worldXZ) {
   TerrainClassification tc;
-  tc.trees   = ComputeTreeMap(elevation, ridgeMap, normalY, worldXZ);
   tc.isWater = elevation < uSeaLevel;
+
+  // Preliminary grass zone: elevation + slope only, without !isTree exclusion.
+  // Passed to ComputeTreeMap so trees can be gated to grass areas.
+  // The final tc.isGrass below re-applies the !isTree exclusion.
+  bool grassZone = !tc.isWater
+                 && elevation < GRASS_HEIGHT + 0.04
+                 && normalY   > 0.85;
+
+  tc.trees   = ComputeTreeMap(elevation, ridgeMap, normalY, worldXZ, tc.isWater, grassZone);
   tc.isTree  = !tc.isWater && tc.trees > 0.36;
-  tc.isGrass = !tc.isWater && !tc.isTree
-             && elevation < GRASS_HEIGHT + 0.04
-             && normalY   > 0.85;
+  tc.isGrass = grassZone && !tc.isTree;
 
   // Smooth version of the rock/soft boundary — mirrors the transition bands
   // used in terrainColor() so the fade-out is invisible against the color blend.
