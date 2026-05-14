@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PerlinNoise3D } from '@core/noise/PerlinNoise';
+import { terrainFinalStateGLSL } from '@core/shaders/terrainFinalStateGLSL';
 import {
-  terrainColorGLSL,
   terrainFragmentMapChunk,
   terrainFragmentNormalChunk,
   terrainFragmentRoughnessChunk,
@@ -533,7 +533,7 @@ export class TerrainMesh {
 
       // ── Fragment shader ──────────────────────────────────────────────────
       shader.fragmentShader =
-        terrainColorGLSL +
+        terrainFinalStateGLSL +
         detailNoiseFragPreamble +
         terrainFragmentVaryings +
         shader.fragmentShader;

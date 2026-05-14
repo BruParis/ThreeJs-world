@@ -15,6 +15,9 @@
  *   terrainSampleGLSL, shaderUtilsGLSL, simplexNoiseGLSL,
  *   treeGLSL, terrainClassificationGLSL
  *
+ * Use terrainFinalStateGLSL as the pipeline entry point — it re-exports this
+ * combined chunk and is the single import consumers should reference.
+ *
  * Colors are exposed as uniforms. Use createTerrainColorUniforms / syncTerrainColorUniforms.
  */
 

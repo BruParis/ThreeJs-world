@@ -4,7 +4,7 @@
  * Supports four color modes via uColorMode:
  *   0 = tile color  (plate category or geology — from per-patch DataTexture)
  *   1 = elevation   (grayscale — black → white)
- *   2 = terrain     (biome coloring from terrainColorGLSL: ocean/grass/snow/cliff)
+ *   2 = terrain     (biome coloring from terrainFinalStateGLSL: ocean/grass/snow/cliff)
  *   3 = LOD level   (flat color per LOD level — skips polygon test, uses uLodColor)
  *
  * Modes 0 and 1 use the polygon containment test to resolve which tile a fragment
@@ -21,17 +21,17 @@
  *
  * Notes
  *   – simplexNoiseGLSL lives only in this fragment program (embedded by
- *     terrainColorGLSL).  Never add it to the vertex shader to avoid redundant
+ *     terrainFinalStateGLSL).  Never add it to the vertex shader to avoid redundant
  *     compilation.
  *   – The vertex shader uses perlinNoiseGLSL + uPermTex; those are not referenced
  *     here.
  */
 
-import { terrainColorGLSL } from '@core/shaders/terrainColorGLSL';
+import { terrainFinalStateGLSL } from '@core/shaders/terrainFinalStateGLSL';
 
 export const tileFragmentShader = /* glsl */`
 
-${terrainColorGLSL}
+${terrainFinalStateGLSL}
 
 uniform highp sampler2D uTileData;
 uniform int uNumTiles;
