@@ -46,6 +46,7 @@ uniform float uTreeRidgeMin;
 uniform float uTreeNoiseFreq;
 uniform float uTreeNoisePow;
 uniform float uTreeDensity;
+uniform float uTreeBumpStrength;
 
 vec2 hash_tree(in vec2 x) {
     const vec2 k = vec2(0.3183099, 0.3678794);

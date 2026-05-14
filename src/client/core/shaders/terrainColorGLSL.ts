@@ -5,24 +5,25 @@
  *   vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth,
  *                     float trees, float hardness, vec3 normal, vec3 detailNoise)
  *   vec3 waterColor(float elevation, vec3 normal, vec3 detailNoise)
- *   vec3 computeWaterNormal(vec2 worldXZ)
+ *   vec3 computeWaterNormal(float dx, float dz)
  *
- * Classification (trees, hardness, isWater, isGrass, isTree) is baked in the
- * elevation compute pass and read from the attribute texture (attrData.g int+fract
- * packing and attrData.b) — NOT recomputed here.
+ * Classification (isWater, isGrass, isTree, trees, hardness) is computed
+ * dynamically in the fragment shader via classifyTerrain() using the shifted
+ * elevation (vTerrainElev), so all flags respond to uElevOffset without recompute.
  *
- * Requires in scope (concatenated before this string):
- *   TerrainSample struct + debug constants — from terrainSampleGLSL
- *   simplexFbm, snoise                    — from simplexGLSL
- *   clamp01                               — from shaderUtilsGLSL
+ * Includes (self-contained — no external GLSL required):
+ *   terrainSampleGLSL, shaderUtilsGLSL, simplexNoiseGLSL,
+ *   treeGLSL, terrainClassificationGLSL
  *
  * Colors are exposed as uniforms. Use createTerrainColorUniforms / syncTerrainColorUniforms.
  */
 
 import * as THREE from 'three';
-import { terrainSampleGLSL }  from '@core/shaders/terrainSampleGLSL';
-import { shaderUtilsGLSL }    from '@core/shaders/shaderUtilsGLSL';
-import { TERRAIN_GRASS_HEIGHT } from '@core/shaders/treeGLSL';
+import { terrainSampleGLSL }          from '@core/shaders/terrainSampleGLSL';
+import { shaderUtilsGLSL }            from '@core/shaders/shaderUtilsGLSL';
+import { simplexNoiseGLSL }           from '@core/noise/simplexGLSL';
+import { treeGLSL, TERRAIN_GRASS_HEIGHT } from '@core/shaders/treeGLSL';
+import { terrainClassificationGLSL }  from '@core/shaders/terrainClassificationGLSL';
 
 export const TERRAIN_WATER_HEIGHT = 0.35;
 
@@ -131,29 +132,21 @@ if (uDetailNoiseEnabled == 1) {
   detailNoise = texture2D(uDetailNoiseTex, detailUV).xyz;
 }
 
-// 2. Read elevation and pre-baked classification from the attribute and classification textures.
-//    Trees, hardness, and boolean flags were computed in the elevation compute pass
-//    (classifyTerrain), using the exact vertex-shader normalY — no recomputation needed here.
-float shiftedElev = vTerrainElev + uElevOffset;
-vec2 attrUV   = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
-vec4 attrData = texture2D(uAttrTex, attrUV);
-// attrData.r = ridgeMap     [-1, 1]  (direct)
-// attrData.g = erosionDepth [0, 1]   (packed: ×0.5+0.5; unpack: ×2−1)
-// attrData.b = trees        float    (direct; isTree when > 0.36)
-// attrData.a = hardness     [0, 1]   (direct)
+// 2. Read erosion attributes from the baked attribute texture.
+//    R = ridgeMap [-1,1], G = erosionDepth [0,1] packed (×0.5+0.5).
+//    Trees and hardness are no longer read here — classifyTerrain provides them dynamically.
+vec2 attrUV    = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
+vec4 attrData  = texture2D(uAttrTex, attrUV);
 float erosionDepth = attrData.g * 2.0 - 1.0;
-float trees        = clamp01(attrData.b);  // ComputeTreeMap output is unbounded (negative = no trees); clamp once at the read site.
-float hardness     = attrData.a;
 
-// 3. Read terrain flags from the dedicated classification texture (NearestFilter, RGBA8).
-//    isGrass and isTree come from the exact baked classifyTerrain() result — no drift
-//    from fragment-side recomputation.
-//    isWater is computed dynamically from shiftedElev so it responds to uElevOffset
-//    changes without requiring a full elevation recompute.
-vec4 classif = texture2D(uClassifTex, attrUV);
-bool isWater = shiftedElev < uSeaLevel;
-bool isGrass = classif.g > 0.5;
-bool isTree  = classif.b > 0.5;
+// 3. Classify terrain. vTerrainTrees was computed once in the vertex shader via
+//    ComputeTreeMap and interpolated here — classifyTerrain uses it directly.
+TerrainClassification tc = classifyTerrain(vTerrainElev, attrData.r, vTerrainWorldNormal.y, vTerrainWorldPos.xz);
+bool  isWater  = tc.isWater;
+bool  isGrass  = tc.isGrass;
+bool  isTree   = tc.isTree;
+float trees    = clamp01(tc.trees);
+float hardness = tc.hardness;
 
 // 4. Perturb the normal — two independent contributions:
 //    - hardness × detail noise: rock/cliff micro-roughness; zero on grass/tree surfaces.
@@ -182,9 +175,9 @@ if (uDebugMode == TERRAIN_DEBUG_CLASSIFICATION) {
   if (isWater) classColor = vec3(0.05, 0.10, 0.45);
   diffuseColor.rgb = classColor;
 } else if (isWater && uDebugMode == TERRAIN_DEBUG_COLOR) {
-  diffuseColor.rgb = waterColor(shiftedElev, colorNormal, detailNoise);
+  diffuseColor.rgb = waterColor(vTerrainElev, colorNormal, detailNoise);
 } else {
-  diffuseColor.rgb = terrainColor(shiftedElev, attrData.r, erosionDepth, trees, hardness, colorNormal, detailNoise);
+  diffuseColor.rgb = terrainColor(vTerrainElev, attrData.r, erosionDepth, trees, hardness, colorNormal, detailNoise);
 }
 `;
 
@@ -238,8 +231,10 @@ ${shaderUtilsGLSL}
 #define GRASS_HEIGHT    ${TERRAIN_GRASS_HEIGHT.toFixed(2)}
 #define DRAINAGE_WIDTH  ${DRAINAGE_WIDTH.toFixed(2)}
 
+// uSeaLevel declared before treeGLSL/terrainClassificationGLSL (required in scope).
 uniform float uSeaLevel;
 
+// ── Color uniforms ────────────────────────────────────────────────────────────
 uniform vec3      uCliffColor;
 uniform vec3      uDirtColor;
 uniform vec3      uGrassColor1;
@@ -247,29 +242,21 @@ uniform vec3      uGrassColor2;
 uniform vec3      uTreeColor;
 uniform vec3      uSandColor;
 uniform vec3      uDrainageColor;
-// Water colors — visible through the semi-transparent WaterMesh plane.
-// uWaterDeepColor  : deep water (high diff from sea level) — dark navy.
-// uWaterShoreColor : shallow water (diff ≈ 0) — lighter teal/blue.
 uniform vec3      uWaterDeepColor;
 uniform vec3      uWaterShoreColor;
-// Water normal perturbation.
-// uWaterNormalFreq     : spatial frequency in world units (e.g. 1.0 = 1 wave per world unit)
-// uWaterNormalStrength : normal tilt at full strength (0 = flat, 0.5 = moderate, 1+ = choppy)
 uniform float     uWaterNormalFreq;
 uniform float     uWaterNormalStrength;
 uniform float     uWaterRoughness;
 uniform int       uDebugMode;
-uniform float     uTreeBumpStrength;
-// Attribute texture (LinearFilter) — four continuous float channels baked in the compute pass.
-// R = ridgeMap, G = erosionDepth (packed), B = trees, A = hardness.
+// Attribute texture (LinearFilter) — R = ridgeMap, G = erosionDepth (packed).
 uniform sampler2D uAttrTex;
-// Classification texture (NearestFilter, RGBA8) — boolean flags from the compute pass.
-// R = isWater, G = isGrass, B = isTree, A = unused.  Values are 0.0 or 1.0.
-uniform sampler2D uClassifTex;
-// Bump texture (TerrainBumpGL) — baked once, static per terrain build.
-// R = water normal dx, G = water normal dz (gradient at uWaterNormalFreq, strength = 1).
-// B = tree bump X snoise, A = tree bump Z snoise (at uTreeBumpFreq).
+// Bump texture — R/G = water normal gradient, B/A = tree bump snoise.
 uniform sampler2D uBumpTex;
+
+// ── Classification pipeline (simplex → trees → classify) ─────────────────────
+${simplexNoiseGLSL}
+${treeGLSL}
+${terrainClassificationGLSL}
 
 // ── Water normal perturbation ─────────────────────────────────────────────────
 //

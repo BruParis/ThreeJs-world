@@ -51,16 +51,6 @@ export interface ElevationComputeParams {
   erosionNormalization:   number;
   erosionRidgeRounding:   number;
   erosionCreaseRounding:  number;
-  // Sea level + tree params — drive classifyTerrain in the elevation compute pass.
-  seaLevel:               number;
-  treeEnabled:            number;
-  treeElevMax:            number;
-  treeElevMin:            number;
-  treeSlopeMin:           number;
-  treeRidgeMin:           number;
-  treeNoiseFreq:          number;
-  treeNoisePow:           number;
-  treeDensity:            number;
 }
 
 // ── Shaders ───────────────────────────────────────────────────────────────────
@@ -108,21 +98,19 @@ export class TerrainElevationGL {
   private readonly canvas:  HTMLCanvasElement;
   private readonly program: WebGLProgram;
   private readonly vao:     WebGLVertexArrayObject;
-  private readonly fbo:        WebGLFramebuffer;
-  private readonly outTex:     WebGLTexture;  // COLOR_ATTACHMENT0 — elevation (LinearFilter in Three.js)
-  private readonly attrTex:    WebGLTexture;  // COLOR_ATTACHMENT1 — continuous attrs (LinearFilter)
-  private readonly classifTex: WebGLTexture;  // COLOR_ATTACHMENT2 — boolean flags (NearestFilter, RGBA8)
-  private permTex:             WebGLTexture | null = null;
-  private texSize           = { w: 0, h: 0 };
+  private readonly fbo:    WebGLFramebuffer;
+  private readonly outTex: WebGLTexture;  // COLOR_ATTACHMENT0 — elevation + tree density
+  private readonly attrTex: WebGLTexture; // COLOR_ATTACHMENT1 — ridgeMap + erosionDepth
+  private permTex:          WebGLTexture | null = null;
+  private texSize         = { w: 0, h: 0 };
 
   private constructor(
     gl: WebGL2RenderingContext, canvas: HTMLCanvasElement,
     program: WebGLProgram, vao: WebGLVertexArrayObject,
-    fbo: WebGLFramebuffer, outTex: WebGLTexture, attrTex: WebGLTexture, classifTex: WebGLTexture,
+    fbo: WebGLFramebuffer, outTex: WebGLTexture, attrTex: WebGLTexture,
   ) {
     this.gl = gl; this.canvas = canvas; this.program = program;
     this.vao = vao; this.fbo = fbo; this.outTex = outTex; this.attrTex = attrTex;
-    this.classifTex = classifTex;
   }
 
   static create(): TerrainElevationGL {
@@ -151,15 +139,13 @@ export class TerrainElevationGL {
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
 
-    const fbo        = gl.createFramebuffer()!;
-    const outTex     = gl.createTexture()!;
-    const attrTex    = gl.createTexture()!;
-    const classifTex = gl.createTexture()!;
+    const fbo     = gl.createFramebuffer()!;
+    const outTex  = gl.createTexture()!;
+    const attrTex = gl.createTexture()!;
 
-    // Attach all three textures to the FBO and configure draw buffers for MRT.
-    // COLOR_ATTACHMENT0 → outTex     (elevation, gradients)       — RGBA32F
-    // COLOR_ATTACHMENT1 → attrTex    (ridgeMap, trees, hardness)  — RGBA32F
-    // COLOR_ATTACHMENT2 → classifTex (boolean classification flags) — RGBA8
+    // MRT: two RGBA32F attachments.
+    // COLOR_ATTACHMENT0 → outTex  (elevation R, gradX G, gradZ B, A unused)
+    // COLOR_ATTACHMENT1 → attrTex (ridgeMap R, erosionDepth G, unused B/A)
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
 
     const attachFloat32Tex = (tex: WebGLTexture, attachment: number) => {
@@ -170,25 +156,15 @@ export class TerrainElevationGL {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, attachment, gl.TEXTURE_2D, tex, 0);
     };
-    const attachUByteTex = (tex: WebGLTexture, attachment: number) => {
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, attachment, gl.TEXTURE_2D, tex, 0);
-    };
-    attachFloat32Tex(outTex,     gl.COLOR_ATTACHMENT0);
-    attachFloat32Tex(attrTex,    gl.COLOR_ATTACHMENT1);
-    attachUByteTex  (classifTex, gl.COLOR_ATTACHMENT2);
+    attachFloat32Tex(outTex,  gl.COLOR_ATTACHMENT0);
+    attachFloat32Tex(attrTex, gl.COLOR_ATTACHMENT1);
 
-    // Tell the driver that all three attachments receive fragment output.
-    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
 
-    return new TerrainElevationGL(gl, canvas, program, vao, fbo, outTex, attrTex, classifTex);
+    return new TerrainElevationGL(gl, canvas, program, vao, fbo, outTex, attrTex);
   }
 
   /**
@@ -199,29 +175,22 @@ export class TerrainElevationGL {
    * @returns
    *   elevations  Float32Array (length w×h) — R channel only, for CPU use (pathfinding, physics).
    *   packed      Float32Array (length w×h×4) — RGBA readback from COLOR_ATTACHMENT0:
-   *                 R = elevation [0,1],  G = dH/dX (norm),  B = dH/dZ (norm),  A = unused.
+   *                 R = rawElev [0,1],  G = dH/dX,  B = dH/dZ,  A = unused (0).
    *               Upload as THREE.RGBAFormat DataTexture with LinearFilter for the vertex shader.
-   *   attrPacked    Float32Array (length w×h×4) — RGBA readback from COLOR_ATTACHMENT1:
-   *                   R = ridgeMap [-1,1],  G = erosionDepth [0,1] (packed ×0.5+0.5),
-   *                   B = trees (float, direct),  A = hardness [0,1] (direct).
-   *                 All channels are continuous floats — upload with LinearFilter.
-   *   classifPacked Uint8Array (length w×h×4) — RGBA readback from COLOR_ATTACHMENT2:
-   *                   R = isWater, G = isGrass, B = isTree, A = unused  (0 or 255).
-   *                 Boolean flags — upload with NearestFilter.
+   *   attrPacked  Float32Array (length w×h×4) — RGBA readback from COLOR_ATTACHMENT1:
+   *                 R = ridgeMap [-1,1],  G = erosionDepth [0,1] (packed ×0.5+0.5),  B/A unused.
+   *               Upload as THREE.RGBAFormat DataTexture with LinearFilter for the fragment shader.
    */
-  compute(params: ElevationComputeParams, permData: number[]): { elevations: Float32Array<ArrayBuffer>; packed: Float32Array<ArrayBuffer>; attrPacked: Float32Array<ArrayBuffer>; classifPacked: Uint8Array<ArrayBuffer> } {
-    const { gl, program, fbo, outTex, attrTex, classifTex, vao } = this;
+  compute(params: ElevationComputeParams, permData: number[]): { elevations: Float32Array<ArrayBuffer>; packed: Float32Array<ArrayBuffer>; attrPacked: Float32Array<ArrayBuffer> } {
+    const { gl, program, fbo, outTex, attrTex, vao } = this;
     const { gridWidth: w, gridHeight: h } = params;
 
-    // ── Resize all three output textures when grid dimensions change ───────
+    // ── Resize output textures when grid dimensions change ─────────────────
     if (this.texSize.w !== w || this.texSize.h !== h) {
       for (const tex of [outTex, attrTex]) {
         gl.bindTexture(gl.TEXTURE_2D, tex);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
       }
-      // classifTex uses RGBA8 (unsigned byte) — boolean flags, no float needed.
-      gl.bindTexture(gl.TEXTURE_2D, classifTex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       gl.bindTexture(gl.TEXTURE_2D, null);
       this.canvas.width  = w;
       this.canvas.height = h;
@@ -248,10 +217,8 @@ export class TerrainElevationGL {
     gl.bindVertexArray(null);
 
     // ── Readback ───────────────────────────────────────────────────────────
-    // Read each MRT attachment separately using gl.readBuffer to select the source.
-    const packed        = new Float32Array(w * h * 4);
-    const attrPacked    = new Float32Array(w * h * 4);
-    const classifPacked = new Uint8Array(w * h * 4);
+    const packed     = new Float32Array(w * h * 4);
+    const attrPacked = new Float32Array(w * h * 4);
 
     gl.readBuffer(gl.COLOR_ATTACHMENT0);
     gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, packed);
@@ -259,23 +226,19 @@ export class TerrainElevationGL {
     gl.readBuffer(gl.COLOR_ATTACHMENT1);
     gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, attrPacked);
 
-    gl.readBuffer(gl.COLOR_ATTACHMENT2);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, classifPacked);
-
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    // Extract R channel (elevation) for CPU use.
+    // Extract R channel (raw elevation) for CPU use.
     const elevations = new Float32Array(w * h);
     for (let i = 0; i < w * h; i++) elevations[i] = packed[i * 4];
 
-    return { elevations, packed, attrPacked, classifPacked };
+    return { elevations, packed, attrPacked };
   }
 
   dispose(): void {
     const { gl } = this;
     gl.deleteTexture(this.outTex);
     gl.deleteTexture(this.attrTex);
-    gl.deleteTexture(this.classifTex);
     gl.deleteTexture(this.permTex);
     gl.deleteFramebuffer(this.fbo);
     gl.deleteVertexArray(this.vao);
@@ -329,14 +292,5 @@ export class TerrainElevationGL {
     gl.uniform1f(u('uErosionNormalization'),  p.erosionNormalization);
     gl.uniform1f(u('uErosionRidgeRounding'),  p.erosionRidgeRounding);
     gl.uniform1f(u('uErosionCreaseRounding'), p.erosionCreaseRounding);
-    gl.uniform1f(u('uSeaLevel'),              p.seaLevel);
-    gl.uniform1i(u('uTreeEnabled'),           p.treeEnabled);
-    gl.uniform1f(u('uTreeElevMax'),           p.treeElevMax);
-    gl.uniform1f(u('uTreeElevMin'),           p.treeElevMin);
-    gl.uniform1f(u('uTreeSlopeMin'),          p.treeSlopeMin);
-    gl.uniform1f(u('uTreeRidgeMin'),          p.treeRidgeMin);
-    gl.uniform1f(u('uTreeNoiseFreq'),         p.treeNoiseFreq);
-    gl.uniform1f(u('uTreeNoisePow'),          p.treeNoisePow);
-    gl.uniform1f(u('uTreeDensity'),           p.treeDensity);
   }
 }

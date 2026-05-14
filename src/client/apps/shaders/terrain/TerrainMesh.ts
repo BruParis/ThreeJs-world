@@ -61,9 +61,10 @@ import {
   DEFAULT_EROSION_RIDGE_ROUNDING,
   DEFAULT_EROSION_CREASE_ROUNDING,
 } from '@core/shaders/erosionGLSL';
-import { TerrainElevationGL } from './TerrainElevationGL';
-import { SuppNoiseGL }        from './SuppNoiseGL';
-import { TerrainBumpGL }      from './TerrainBumpGL';
+import { TerrainElevationGL }              from './TerrainElevationGL';
+import { TreeDensityGL, type TreeDensityParams } from './TreeDensityGL';
+import { SuppNoiseGL }                    from './SuppNoiseGL';
+import { TerrainBumpGL }                  from './TerrainBumpGL';
 
 export class TerrainMesh {
   // Gaussian (input to first elevation layer)
@@ -126,15 +127,17 @@ export class TerrainMesh {
 
   private _meshes:          THREE.Mesh[] = [];
   private elevationTexture: THREE.DataTexture | null = null;
-  // Attribute texture (LinearFilter) — four continuous float channels: ridgeMap (R),
-  // erosionDepth packed (G), trees (B), hardness (A). All baked in the compute pass.
   private attrTexture:      THREE.DataTexture | null = null;
-  // Classification texture (NearestFilter, RGBA8) — boolean flags baked in the compute pass:
-  // R = isWater, G = isGrass, B = isTree, A = unused.
-  private classifTexture:   THREE.DataTexture | null = null;
+  private treeTexture:      THREE.DataTexture | null = null;
   private elevationGL:      TerrainElevationGL | null = null;
+  private treeDensityGL:    TreeDensityGL | null = null;
   private suppNoiseGL:      SuppNoiseGL | null = null;
   private bumpNoiseGL:      TerrainBumpGL | null = null;
+
+  // Cached elevation pass output — reused by recomputeTreeDensity().
+  private _cachedPacked:     Float32Array | null = null;
+  private _cachedAttrPacked: Float32Array | null = null;
+  private _cachedTreeParams: Omit<TreeDensityParams, 'elevOffset'> | null = null;
 
   // Per-patch uniform objects kept in sync with onBeforeCompile shader refs.
   private _patchUniforms: Record<string, THREE.IUniform>[] = [];
@@ -144,9 +147,10 @@ export class TerrainMesh {
   get meshes(): readonly THREE.Mesh[] { return this._meshes; }
 
   init(): void {
-    this.elevationGL = TerrainElevationGL.create();
-    this.suppNoiseGL = new SuppNoiseGL(512);
-    this.bumpNoiseGL = new TerrainBumpGL(512);
+    this.elevationGL   = TerrainElevationGL.create();
+    this.treeDensityGL = TreeDensityGL.create();
+    this.suppNoiseGL   = new SuppNoiseGL(512);
+    this.bumpNoiseGL   = new TerrainBumpGL(512);
     this.recomputeElevation();
     this.rebuildMeshes();
   }
@@ -170,7 +174,7 @@ export class TerrainMesh {
     const halfSize       = this.patchSize / 2;
     const permData       = new PerlinNoise3D(this.noiseParams.seed).getPermutation256();
 
-    const { elevations, packed, attrPacked, classifPacked } = this.elevationGL.compute(
+    const { elevations, packed, attrPacked } = this.elevationGL.compute(
       {
         gridWidth:             totalVerts,
         gridHeight:            totalVerts,
@@ -203,15 +207,6 @@ export class TerrainMesh {
         erosionNormalization:   this.erosionNormalization,
         erosionRidgeRounding:   this.erosionRidgeRounding,
         erosionCreaseRounding:  this.erosionCreaseRounding,
-        seaLevel:               this.seaLevel,
-        treeEnabled:            this.treeEnabled ? 1 : 0,
-        treeElevMax:            this.treeElevMax,
-        treeElevMin:            this.treeElevMin,
-        treeSlopeMin:           this.treeSlopeMin,
-        treeRidgeMin:           this.treeRidgeMin,
-        treeNoiseFreq:          this.treeNoiseFreq,
-        treeNoisePow:           this.treeNoisePow,
-        treeDensity:            this.treeDensity,
       },
       permData,
     );
@@ -251,35 +246,85 @@ export class TerrainMesh {
     this.attrTexture.generateMipmaps = false;
     this.attrTexture.needsUpdate    = true;
 
-    // ── Classification texture (NearestFilter) — boolean flags baked by the compute pass ──
-    // RGBA8 / UnsignedByteType: values are 0 or 255 (false/true).
-    // NearestFilter is essential — interpolating between 0 and 255 would corrupt the flags.
-    this.classifTexture?.dispose();
-    this.classifTexture = new THREE.DataTexture(
-      classifPacked, totalVerts, totalVerts,
-      THREE.RGBAFormat, THREE.UnsignedByteType,
-    );
-    this.classifTexture.minFilter      = THREE.NearestFilter;
-    this.classifTexture.magFilter      = THREE.NearestFilter;
-    this.classifTexture.generateMipmaps = false;
-    this.classifTexture.needsUpdate    = true;
-
     this.syncElevationTexture();
     this.syncAttrTexture();
-    this.syncClassifTexture();
     this.suppNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
     this.bumpNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
     this.bumpNoiseGL?.setFrequencies(this.terrainColors.waterNormalFreq, this.treeBumpFreq);
+
+    // Cache elevation data and grid params for recomputeTreeDensity().
+    const step = this.patchSize / (totalVerts - 1);
+    this._cachedPacked     = packed;
+    this._cachedAttrPacked = attrPacked;
+    this._cachedTreeParams = {
+      gridWidth: totalVerts, gridHeight: totalVerts,
+      originX: -halfSize, originZ: -halfSize,
+      stepX: step, stepZ: step,
+      seaLevel: this.seaLevel,
+      treeEnabled:   this.treeEnabled   ? 1 : 0,
+      treeElevMax:   this.treeElevMax,
+      treeElevMin:   this.treeElevMin,
+      treeSlopeMin:  this.treeSlopeMin,
+      treeRidgeMin:  this.treeRidgeMin,
+      treeNoiseFreq: this.treeNoiseFreq,
+      treeNoisePow:  this.treeNoisePow,
+      treeDensity:   this.treeDensity,
+    };
+    this.recomputeTreeDensity();
+  }
+
+  /**
+   * Re-run the tree density compute pass with the current elevation offset and tree params.
+   * Fast — does not re-run the elevation pass. Call when elevationOffset or any tree param changes.
+   */
+  recomputeTreeDensity(): void {
+    if (!this.treeDensityGL || !this._cachedPacked || !this._cachedAttrPacked || !this._cachedTreeParams) return;
+
+    // Always read tree params from `this` so GUI changes are reflected immediately.
+    // Only grid layout (gridWidth/Height, origin, step) is stable enough to cache.
+    const params: TreeDensityParams = {
+      ...this._cachedTreeParams,
+      elevOffset:    this.elevationOffset,
+      seaLevel:      this.seaLevel,
+      treeEnabled:   this.treeEnabled   ? 1 : 0,
+      treeElevMax:   this.treeElevMax,
+      treeElevMin:   this.treeElevMin,
+      treeSlopeMin:  this.treeSlopeMin,
+      treeRidgeMin:  this.treeRidgeMin,
+      treeNoiseFreq: this.treeNoiseFreq,
+      treeNoisePow:  this.treeNoisePow,
+      treeDensity:   this.treeDensity,
+    };
+    const treePacked = this.treeDensityGL.compute(this._cachedPacked, this._cachedAttrPacked, params);
+
+    this.treeTexture?.dispose();
+    this.treeTexture = new THREE.DataTexture(
+      treePacked as unknown as Float32Array<ArrayBuffer>, params.gridWidth, params.gridHeight,
+      THREE.RGBAFormat, THREE.FloatType,
+    );
+    this.treeTexture.minFilter      = THREE.LinearFilter;
+    this.treeTexture.magFilter      = THREE.LinearFilter;
+    this.treeTexture.generateMipmaps = false;
+    this.treeTexture.needsUpdate    = true;
+
+    this.syncTreeDensityTexture();
+  }
+
+  private syncTreeDensityTexture(): void {
+    for (const u of this._patchUniforms) {
+      u.uTreeDensityTex.value = this.treeTexture;
+    }
   }
 
   /** Update display-only uniforms (wireframe, roughness) without recomputing elevation. */
   updateUniforms(): void {
     for (const u of this._patchUniforms) {
       syncTerrainVertexUniforms(u, {
-        elevationTexture: this.elevationTexture,
-        patchHalfSize:    this.patchSize / 2,
-        elevationOffset:  this.elevationOffset,
-        seaLevel:         this.seaLevel,
+        elevationTexture:   this.elevationTexture,
+        treeDensityTexture: this.treeTexture,
+        patchHalfSize:      this.patchSize / 2,
+        elevationOffset:    this.elevationOffset,
+        seaLevel:           this.seaLevel,
       });
     }
     for (const mesh of this._meshes) {
@@ -356,7 +401,7 @@ export class TerrainMesh {
     const h = this.elevationGridHeight;
     const col   = Math.max(0, Math.min(w - 1, Math.floor(u * (w - 1))));
     const row   = Math.max(0, Math.min(h - 1, Math.floor(v * (h - 1))));
-    const noise = this.elevationData[row * w + col];
+    const noise = this.elevationData[row * w + col];  // raw elevation (uElevOffset applied at runtime)
     return Math.max(0, (noise + this.elevationOffset - this.seaLevel) / (1 - this.seaLevel));
   }
 
@@ -366,8 +411,6 @@ export class TerrainMesh {
     this.elevationTexture = null;
     this.attrTexture?.dispose();
     this.attrTexture = null;
-    this.classifTexture?.dispose();
-    this.classifTexture = null;
     this.elevationGL?.dispose();
     this.elevationGL = null;
     this.suppNoiseGL?.dispose();
@@ -387,12 +430,6 @@ export class TerrainMesh {
   private syncAttrTexture(): void {
     for (const u of this._patchUniforms) {
       u.uAttrTex.value = this.attrTexture;
-    }
-  }
-
-  private syncClassifTexture(): void {
-    for (const u of this._patchUniforms) {
-      u.uClassifTex.value = this.classifTexture;
     }
   }
 
@@ -463,10 +500,11 @@ export class TerrainMesh {
       // Register custom uniforms — stored for later sync calls.
       Object.assign(shader.uniforms,
         createTerrainVertexUniforms({
-          elevationTexture: this.elevationTexture,
-          patchHalfSize:    this.patchSize / 2,
-          elevationOffset:  this.elevationOffset,
-          seaLevel:         this.seaLevel,
+          elevationTexture:   this.elevationTexture,
+          treeDensityTexture: this.treeTexture,
+          patchHalfSize:      this.patchSize / 2,
+          elevationOffset:    this.elevationOffset,
+          seaLevel:           this.seaLevel,
         }),
         createDetailNoiseUniforms({
           detailNoiseTexture:  this.suppNoiseGL?.texture ?? null,
@@ -475,9 +513,8 @@ export class TerrainMesh {
         }),
         createTreeUniforms(this as TreeUniformState),
         createTerrainColorUniforms(this.terrainColors),
-        // Attribute + classification textures — produced by the same compute pass.
-        { uAttrTex:    { value: this.attrTexture } },
-        { uClassifTex: { value: this.classifTexture } },
+        // Attribute texture — produced by the compute pass.
+        { uAttrTex: { value: this.attrTexture } },
         // Bump texture — baked by TerrainBumpGL (water normal gradient + tree bump).
         { uBumpTex: { value: this.bumpNoiseGL?.texture ?? null } },
       );

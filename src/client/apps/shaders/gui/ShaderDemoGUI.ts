@@ -146,7 +146,7 @@ export function buildShaderDemoGUI(
   terrainPage.addBinding(terrainParams, 'subdivision', { label: 'Subdivision', options: SUBDIVISION_OPTIONS })
     .on('change', ({ value }) => { terrain.subdivisions = Number(value); updGeometry(); });
   terrainPage.addBinding(terrainParams, 'elevationOffset', { label: 'Elev. Offset', min: -0.4, max: 0.5, step: 0.01 })
-    .on('change', ({ value }) => { terrain.elevationOffset = value; updDisplay(); updOverlay(); });
+    .on('change', ({ value }) => { terrain.elevationOffset = value; updDisplay(); updOverlay(); terrain.recomputeTreeDensity(); });
 
   // ── Tab: Elevation ───────────────────────────────────────────────────────
 
@@ -257,22 +257,24 @@ export function buildShaderDemoGUI(
     bumpFreq:     terrain.treeBumpFreq,
   };
 
+  const updTrees = () => { terrain.syncTreeUniforms(); terrain.recomputeTreeDensity(); };
+
   treesPage.addBinding(treeParams, 'enabled',   { label: 'Enabled' })
-    .on('change', ({ value }) => { terrain.treeEnabled = value; updElevation(); });
+    .on('change', ({ value }) => { terrain.treeEnabled = value; updTrees(); });
   treesPage.addBinding(treeParams, 'elevMax',   { label: 'Elev. Max',    min: 0.3,  max: 0.9,    step: 0.005 })
-    .on('change', ({ value }) => { terrain.treeElevMax = value; updElevation(); });
+    .on('change', ({ value }) => { terrain.treeElevMax = value; updTrees(); });
   treesPage.addBinding(treeParams, 'elevMin',   { label: 'Elev. Min',    min: 0.3,  max: 0.9,    step: 0.005 })
-    .on('change', ({ value }) => { terrain.treeElevMin = value; updElevation(); });
+    .on('change', ({ value }) => { terrain.treeElevMin = value; updTrees(); });
   treesPage.addBinding(treeParams, 'slopeMin',  { label: 'Slope Min',    min: 0.5,  max: 1.0,    step: 0.01  })
-    .on('change', ({ value }) => { terrain.treeSlopeMin = value; updElevation(); });
+    .on('change', ({ value }) => { terrain.treeSlopeMin = value; updTrees(); });
   treesPage.addBinding(treeParams, 'ridgeMin',  { label: 'Ridge Min',    min: -3.0, max: 0.0,    step: 0.05  })
-    .on('change', ({ value }) => { terrain.treeRidgeMin = value; updElevation(); });
+    .on('change', ({ value }) => { terrain.treeRidgeMin = value; updTrees(); });
   treesPage.addBinding(treeParams, 'noiseFreq', { label: 'Noise Freq',   min: 10,   max: 1000,   step: 10    })
-    .on('change', ({ value }) => { terrain.treeNoiseFreq = value; updElevation(); });
+    .on('change', ({ value }) => { terrain.treeNoiseFreq = value; updTrees(); });
   treesPage.addBinding(treeParams, 'noisePow',  { label: 'Noise Power',  min: 0.5,  max: 8.0,    step: 0.1   })
-    .on('change', ({ value }) => { terrain.treeNoisePow = value; updElevation(); });
+    .on('change', ({ value }) => { terrain.treeNoisePow = value; updTrees(); });
   treesPage.addBinding(treeParams, 'density',   { label: 'Density',      min: 0.1,  max: 5.0,    step: 0.1   })
-    .on('change', ({ value }) => { terrain.treeDensity = value; updElevation(); });
+    .on('change', ({ value }) => { terrain.treeDensity = value; updTrees(); });
 
   const treeBumpFolder = treesPage.addFolder({ title: 'Canopy Bump', expanded: true });
   treeBumpFolder.addBinding(treeParams, 'bumpStrength', { label: 'Strength',  min: 0.0, max: 2.0,   step: 0.05 })
