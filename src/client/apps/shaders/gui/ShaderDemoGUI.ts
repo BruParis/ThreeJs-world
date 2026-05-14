@@ -216,29 +216,46 @@ export function buildShaderDemoGUI(
 
   // ── Tab: Trees ────────────────────────────────────────────────────────────
 
+  // elevTop / fadeWidth replace the old elevMax / elevMin pair.
+  // elevMax = elevTop, elevMin = elevTop - fadeWidth — always consistent, can't cross.
   const treeParams = {
-    enabled:      terrain.treeEnabled,
-    elevMax:      terrain.treeElevMax,
-    elevMin:      terrain.treeElevMin,
-    slopeMin:     terrain.treeSlopeMin,
-    ridgeMin:     terrain.treeRidgeMin,
-    noiseFreq:    terrain.treeNoiseFreq,
-    noisePow:     terrain.treeNoisePow,
-    density:      terrain.treeDensity,
+    enabled:    terrain.treeEnabled,
+    elevTop:    terrain.treeElevMax,
+    fadeWidth:  terrain.treeElevMax - terrain.treeElevMin,
+    // Exposed as "max slope" (0=flat, 0.5=moderate steepness).
+    // Internally stored as normalY minimum (flat=1, cliff=0), so inverted.
+    maxSlope:   1.0 - terrain.treeSlopeMin,
+    ridgeMin:   terrain.treeRidgeMin,
+    noiseFreq:  terrain.treeNoiseFreq,
+    noisePow:   terrain.treeNoisePow,
+    density:    terrain.treeDensity,
     bumpStrength: terrain.treeBumpStrength,
     bumpFreq:     terrain.treeBumpFreq,
   };
 
   const updTrees = () => { terrain.syncTreeUniforms(); terrain.recomputeTreeDensity(); };
 
+  const applyElevParams = () => {
+    terrain.treeElevMax = treeParams.elevTop;
+    terrain.treeElevMin = treeParams.elevTop - treeParams.fadeWidth;
+    updTrees();
+  };
+
   treesPage.addBinding(treeParams, 'enabled',   { label: 'Enabled' })
     .on('change', ({ value }) => { terrain.treeEnabled = value; updTrees(); });
-  treesPage.addBinding(treeParams, 'elevMax',   { label: 'Elev. Max',    min: 0.3,  max: 0.9,    step: 0.005 })
-    .on('change', ({ value }) => { terrain.treeElevMax = value; updTrees(); });
-  treesPage.addBinding(treeParams, 'elevMin',   { label: 'Elev. Min',    min: 0.3,  max: 0.9,    step: 0.005 })
-    .on('change', ({ value }) => { terrain.treeElevMin = value; updTrees(); });
-  treesPage.addBinding(treeParams, 'slopeMin',  { label: 'Slope Min',    min: 0.5,  max: 1.0,    step: 0.01  })
-    .on('change', ({ value }) => { terrain.treeSlopeMin = value; updTrees(); });
+  // elevTop: hard upper cutoff in offset-adjusted normalised elevation [0,1].
+  // Effective ceiling ~0.505 from the grass-zone bake gate, so values above that
+  // have no additional effect.
+  treesPage.addBinding(treeParams, 'elevTop',   { label: 'Elev. Top',    min: 0.45, max: 0.56, step: 0.005 })
+    .on('change', applyElevParams);
+  // fadeWidth: width of the smoothstep transition zone below elevTop.
+  // Always > 0, so elevMin = elevTop - fadeWidth never crosses elevMax.
+  treesPage.addBinding(treeParams, 'fadeWidth', { label: 'Elev. Fade',   min: 0.005, max: 0.08, step: 0.005 })
+    .on('change', applyElevParams);
+  // maxSlope: 0 = only flat terrain, 0.5 = up to ~60° slope.
+  // Internally converted to normalY minimum (normalY = dot(normal, up); flat → 1, cliff → 0).
+  treesPage.addBinding(treeParams, 'maxSlope', { label: 'Max Slope',     min: 0.0,  max: 0.5,  step: 0.01  })
+    .on('change', ({ value }) => { terrain.treeSlopeMin = 1.0 - value; updTrees(); });
   treesPage.addBinding(treeParams, 'ridgeMin',  { label: 'Ridge Min',    min: -3.0, max: 0.0,    step: 0.05  })
     .on('change', ({ value }) => { terrain.treeRidgeMin = value; updTrees(); });
   treesPage.addBinding(treeParams, 'noiseFreq', { label: 'Noise Freq',   min: 10,   max: 1000,   step: 10    })
