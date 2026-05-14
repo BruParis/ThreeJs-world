@@ -6,8 +6,9 @@
  *   TerrainClassification classifyTerrain(float elevation, float ridgeMap,
  *                                         float normalY, vec2 worldXZ)
  *
- * Called once per fragment in the dynamic pass. All classification —
- * isWater, isGrass, isTree, trees, hardness — is computed here and nowhere else.
+ * Called once per fragment in the rendering pass.
+ * The tree density compute pass (treeDensityComputeGLSL) also classifies isWater
+ * and grassZone independently to bake per-texel density into uTreeDensityTex.
  *
  * Requires in scope:
  *   ComputeTreeMap — from treeGLSL

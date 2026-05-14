@@ -13,7 +13,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TabApplication } from '../../tabs/TabManager';
 import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from './terrain/TerrainMesh';
-import { LayerOverlay } from './terrain/LayerOverlay';
 import { buildShaderDemoGUI, ShaderDemoGUIHandle } from './gui/ShaderDemoGUI';
 
 export class ShaderDemoApplication implements TabApplication {
@@ -25,7 +24,6 @@ export class ShaderDemoApplication implements TabApplication {
   private gui:         ShaderDemoGUIHandle | null = null;
 
   private terrain:      TerrainMesh  | null = null;
-  private overlay:      LayerOverlay | null = null;
   private sunLight:     THREE.DirectionalLight | null = null;
   private ambientLight: THREE.AmbientLight | null = null;
 
@@ -48,7 +46,6 @@ export class ShaderDemoApplication implements TabApplication {
     }
     if (this.renderer) this.renderer.domElement.style.display = 'block';
     this.gui?.show();
-    this.overlay?.showLabel();
     window.addEventListener('resize', this.boundOnResize);
     this.clock.start();
     this.active = true;
@@ -58,7 +55,6 @@ export class ShaderDemoApplication implements TabApplication {
     if (this.flyCam?.isEnabled()) this.flyCam.disable();
     if (this.renderer) this.renderer.domElement.style.display = 'none';
     this.gui?.hide();
-    this.overlay?.hideLabel();
     window.removeEventListener('resize', this.boundOnResize);
     this.clock.stop();
     this.active = false;
@@ -87,12 +83,6 @@ export class ShaderDemoApplication implements TabApplication {
     }
 
     this.renderer.render(this.scene, renderCam);
-
-    if (this.overlay?.showLayers) {
-      this.renderer.autoClear = false;
-      this.renderer.render(this.overlay.scene, this.overlay.camera);
-      this.renderer.autoClear = true;
-    }
   }
 
   public dispose(): void {
@@ -101,8 +91,6 @@ export class ShaderDemoApplication implements TabApplication {
     this.flyCam = null;
     this.terrain?.dispose();
     this.terrain = null;
-    this.overlay?.dispose();
-    this.overlay = null;
     this.controls?.dispose();
     if (this.renderer) {
       this.renderer.domElement.remove();
@@ -170,38 +158,13 @@ export class ShaderDemoApplication implements TabApplication {
 
   private initTerrain(): void {
     const contentArea = this.getContentArea();
-    const w = contentArea.clientWidth;
-    const h = contentArea.clientHeight;
 
     this.terrain = new TerrainMesh(this.scene!);
     this.terrain.init();
 
-    this.overlay = new LayerOverlay(w, h, contentArea, {
-      noiseParams:           this.terrain.noiseParams,
-      fractalNoiseParams:    this.terrain.fractalNoiseParams,
-      noiseType:             this.terrain.noiseType,
-      gaussSigma:            this.terrain.gaussianParams.sigma,
-      gaussAmplitude:        this.terrain.gaussianParams.amplitude,
-      patchHalfSize:         this.terrain.patchSize / 2,
-      elevationOffset:       this.terrain.elevationOffset,
-      erosionEnabled:         this.terrain.erosionEnabled,
-      erosionOctaves:         this.terrain.erosionOctaves,
-      erosionScale:           this.terrain.erosionScale,
-      erosionStrength:        this.terrain.erosionStrength,
-      erosionGullyWeight:     this.terrain.erosionGullyWeight,
-      erosionDetail:          this.terrain.erosionDetail,
-      erosionGain:            this.terrain.erosionGain,
-      erosionLacunarity:      this.terrain.erosionLacunarity,
-      erosionCellScale:       this.terrain.erosionCellScale,
-      erosionNormalization:   this.terrain.erosionNormalization,
-      erosionRidgeRounding:   this.terrain.erosionRidgeRounding,
-      erosionCreaseRounding:  this.terrain.erosionCreaseRounding,
-    });
-
     this.gui = buildShaderDemoGUI(
       contentArea,
       this.terrain,
-      this.overlay,
       this.controls!,
       this.flyCam!,
       this.sunLight!,
@@ -227,6 +190,5 @@ export class ShaderDemoApplication implements TabApplication {
     this.orbitCamera.aspect = w / h;
     this.orbitCamera.updateProjectionMatrix();
     this.flyCam?.updateAspect(w / h);
-    this.overlay?.updateCamera(w, h);
   }
 }

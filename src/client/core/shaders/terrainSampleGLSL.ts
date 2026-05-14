@@ -12,7 +12,7 @@
  *                                         ↓ (baked into two textures)
  *                               unpackElevationChannel (vertex shader)
  *                                         ↓
- *                               terrainColor → s.trees filled   (fragment)
+ *                               classifyTerrain() → TerrainClassification (fragment)
  *
  * The compute pass writes two textures (MRT):
  *
@@ -22,7 +22,7 @@
  *     B = dDisplNorm/dZ
  *     A = unused
  *
- *   Attribute texture  (NearestFilter — discrete per-vertex data, must NOT be interpolated)
+ *   Attribute texture  (NearestFilter — discrete per-texel data, must NOT be interpolated)
  *     R = ridgeMap     [-1, 1]
  *     G = erosionDepth  [0, 1]  (packed from [-1,1] with * 0.5 + 0.5; unpack with * 2.0 - 1.0)
  *     BA = unused
@@ -59,14 +59,12 @@ export const TERRAIN_DEBUG_CLASSIFICATION = 8; // terrain type: water/grass/tree
 
 export const terrainSampleGLSL = /* glsl */`
 
-// Terrain pipeline data carrier — populated incrementally across stages.
+// Terrain pipeline data carrier — populated by the compute pass.
 //   elevation : eroded elevation [0, 1]
 //   ridgeMap  : erosion ridge signal [-1, 1]  (negative = gully / crease)
-//   trees     : tree coverage density [0, 1], filled during the fragment stage
 struct TerrainSample {
   float elevation;
   float ridgeMap;
-  float trees;
 };
 
 // ── Elevation texture — pack / unpack ────────────────────────────────────────

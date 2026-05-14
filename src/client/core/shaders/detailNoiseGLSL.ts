@@ -2,7 +2,7 @@
  * Detail noise — reusable GLSL + uniform helpers.
  *
  * This module is the two-sided contract for the supplemental noise feature:
- *   - Producer side: suppNoiseVert / suppNooseFrag are the shaders used by
+ *   - Producer side: suppNoiseVert / suppNoiseFrag are the shaders used by
  *     SuppNoiseGL to bake an FBM value-noise texture into a render target.
  *   - Consumer side: detailNoiseFragPreamble is injected into the terrain
  *     fragment shader to sample that texture and perturb surface normals.

@@ -142,8 +142,8 @@ vec2 attrUV    = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0)
 vec4 attrData  = texture2D(uAttrTex, attrUV);
 float erosionDepth = attrData.g * 2.0 - 1.0;
 
-// 3. Classify terrain. vTerrainTrees was computed once in the vertex shader via
-//    ComputeTreeMap and interpolated here — classifyTerrain uses it directly.
+// 3. Classify terrain dynamically. classifyTerrain() runs ComputeTreeMap in
+//    the fragment shader using vTerrainElev and vTerrainWorldPos.xz.
 TerrainClassification tc = classifyTerrain(vTerrainElev, attrData.r, vTerrainWorldNormal.y, vTerrainWorldPos.xz);
 bool  isWater  = tc.isWater;
 bool  isGrass  = tc.isGrass;
@@ -251,7 +251,7 @@ uniform float     uWaterNormalFreq;
 uniform float     uWaterNormalStrength;
 uniform float     uWaterRoughness;
 uniform int       uDebugMode;
-// Attribute texture (LinearFilter) — R = ridgeMap, G = erosionDepth (packed).
+// Attribute texture (NearestFilter) — R = ridgeMap, G = erosionDepth (packed).
 uniform sampler2D uAttrTex;
 // Bump texture — R/G = water normal gradient, B/A = tree bump snoise.
 uniform sampler2D uBumpTex;

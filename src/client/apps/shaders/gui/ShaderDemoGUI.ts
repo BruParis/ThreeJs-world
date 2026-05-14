@@ -3,7 +3,6 @@ import { DirectionalLight, AmbientLight } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from '../terrain/TerrainMesh';
-import { LayerOverlay } from '../terrain/LayerOverlay';
 import { SUBDIVISION_OPTIONS, PATCH_OPTIONS } from '../terrain/TerrainConstants';
 import {
   TERRAIN_DEBUG_COLOR,
@@ -26,7 +25,6 @@ export interface ShaderDemoGUIHandle {
 export function buildShaderDemoGUI(
   contentArea: HTMLElement,
   terrain: TerrainMesh,
-  overlay: LayerOverlay,
   controls: OrbitControls,
   flyCam: FlyCam,
   sunLight: DirectionalLight,
@@ -59,28 +57,6 @@ export function buildShaderDemoGUI(
 
   const updDisplay = () => terrain.updateUniforms();
 
-  const updOverlay = () => overlay.updateUniforms({
-    noiseParams:            terrain.noiseParams,
-    fractalNoiseParams:     terrain.fractalNoiseParams,
-    noiseType:              terrain.noiseType,
-    gaussSigma:             terrain.gaussianParams.sigma,
-    gaussAmplitude:         terrain.gaussianParams.amplitude,
-    patchHalfSize:          terrain.patchSize / 2,
-    elevationOffset:        terrain.elevationOffset,
-    erosionEnabled:         terrain.erosionEnabled,
-    erosionOctaves:         terrain.erosionOctaves,
-    erosionScale:           terrain.erosionScale,
-    erosionStrength:        terrain.erosionStrength,
-    erosionGullyWeight:     terrain.erosionGullyWeight,
-    erosionDetail:          terrain.erosionDetail,
-    erosionGain:            terrain.erosionGain,
-    erosionLacunarity:      terrain.erosionLacunarity,
-    erosionCellScale:       terrain.erosionCellScale,
-    erosionNormalization:   terrain.erosionNormalization,
-    erosionRidgeRounding:   terrain.erosionRidgeRounding,
-    erosionCreaseRounding:  terrain.erosionCreaseRounding,
-  });
-
   function debounce(fn: () => void, ms: number): () => void {
     let timer: ReturnType<typeof setTimeout> | null = null;
     return () => {
@@ -89,10 +65,9 @@ export function buildShaderDemoGUI(
     };
   }
 
-  const _recomputeAndSync = () => { terrain.recomputeElevation(); updOverlay(); };
-  const updElevation = debounce(_recomputeAndSync, 150);
-  const updNoise     = debounce(_recomputeAndSync, 150);
-  const updGeometry  = () => { terrain.rebuild(); updOverlay(); };
+  const updElevation = debounce(() => terrain.recomputeElevation(), 150);
+  const updNoise     = debounce(() => terrain.recomputeElevation(), 150);
+  const updGeometry  = () => terrain.rebuild();
 
   // ── Tab: View ─────────────────────────────────────────────────────────────
 
@@ -104,14 +79,11 @@ export function buildShaderDemoGUI(
     });
 
   const displayParams = {
-    wireframe:  terrain.wireframe,
-    showLayers: overlay.showLayers,
-    debugMode:  terrain.terrainColors.debugMode,
+    wireframe: terrain.wireframe,
+    debugMode: terrain.terrainColors.debugMode,
   };
   viewPage.addBinding(displayParams, 'wireframe', { label: 'Wireframe' })
     .on('change', ({ value }) => { terrain.wireframe = value; updDisplay(); });
-  viewPage.addBinding(displayParams, 'showLayers', { label: 'Show Layer Panels' })
-    .on('change', ({ value }) => overlay.setVisible(value));
   viewPage.addBinding(displayParams, 'debugMode', {
     label: 'Debug View',
     options: {
@@ -146,7 +118,7 @@ export function buildShaderDemoGUI(
   terrainPage.addBinding(terrainParams, 'subdivision', { label: 'Subdivision', options: SUBDIVISION_OPTIONS })
     .on('change', ({ value }) => { terrain.subdivisions = Number(value); updGeometry(); });
   terrainPage.addBinding(terrainParams, 'elevationOffset', { label: 'Elev. Offset', min: -0.4, max: 0.5, step: 0.01 })
-    .on('change', ({ value }) => { terrain.elevationOffset = value; updDisplay(); updOverlay(); terrain.recomputeTreeDensity(); });
+    .on('change', ({ value }) => { terrain.elevationOffset = value; updDisplay(); terrain.recomputeTreeDensity(); });
 
   // ── Tab: Elevation ───────────────────────────────────────────────────────
 

@@ -228,8 +228,7 @@ float applyErosion(
   // Range [-1, 1]: negative in eroded gullies, positive on deposited ridges.
   erosionDepth = (h.w > 0.0) ? clamp(h.x / h.w, -1.0, 1.0) : 0.0;
 
-  // Height offset: pull terrain down slightly (TERRAIN_HEIGHT_OFFSET.x = -0.65).
-  // float offset = mix(TERRAIN_HEIGHT_OFFSET.x, -fadeTarget, TERRAIN_HEIGHT_OFFSET.y) * h.w;
+  // Height offset: pull terrain down slightly by a fixed -0.65 bias.
   float offset = mix(-0.65, -fadeTarget, 0.0) * h.w;
   return h.x + offset;
 }

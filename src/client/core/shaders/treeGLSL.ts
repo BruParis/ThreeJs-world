@@ -2,23 +2,23 @@
  * Tree coverage — reusable GLSL fragment.
  *
  * Exposes:
- *   float GetTreesAmount(float height, float normalY, float exposure, float ridgeMap, vec3 detailNoise)
+ *   float ComputeTreeMap(float elevation, float ridgeMap, float normalY,
+ *                        vec2 worldXZ, bool isWater, bool isGrass)
  *
- * Returns a density value centred on zero: positive = tree-covered, negative =
- * bare ground.  Callers typically remap or clamp before use.
+ * Returns an unclamped tree density value.  Positive = tree-covered, negative =
+ * bare ground.  Callers must clamp before use (threshold for isTree is 0.36).
  *
  * Parameters:
- *   height    – normalised elevation [0, 1]
+ *   elevation – normalised elevation [0, 1]
+ *   ridgeMap  – erosion ridge signal [-1, 1]; negative values indicate gullies
  *   normalY   – world-space Y component of the surface normal (flat = 1, cliff = 0)
- *   exposure – ambient exposure / cavity in [0, 1]  (0 = fully occluded, 1 = open sky)
- *   ridgeMap  – erosion ridge signal; negative values indicate gullies / ridges
- *   detailNoise – pre-sampled supplemental noise RGB, shared with the caller
- *   worldPos  – displaced world-space position (used for high-frequency tree noise)
+ *   worldXZ   – world-space XZ position (used for high-frequency tree noise)
+ *   isWater   – pre-classified water flag; returns 0 immediately if true
+ *   isGrass   – preliminary grass-zone flag (elevation + slope, without !isTree)
  *
  * Requirements before including this snippet:
  *   GRASS_HEIGHT  must be defined (upper elevation limit for trees)
  *   uSeaLevel     uniform must be in scope (declared in the fragment shader)
- *   Define WATER to enable the below-water suppression term.
  */
 // import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
 
@@ -99,7 +99,7 @@ float _treesAmount(float height, float normalY, float ridgeMap) {
 // isWater — pre-classified water flag from terrainClassificationGLSL; if true,
 //           returns 0 immediately (replaces the per-sample uSeaLevel smoothstep).
 // isGrass — preliminary grass-zone flag (elevation + slope, without !isTree);
-//           gates trees to grass areas for testing.
+//           gates trees to grass-zone areas by design.
 //
 // Output range: roughly [-(uTreeDensity * 1.83), +(uTreeDensity * 0.83)].
 //   Positive  → tree cover (threshold for isTree is 0.36).
