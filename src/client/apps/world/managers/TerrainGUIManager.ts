@@ -77,7 +77,7 @@ export class TerrainGUIManager {
     const elevOffsetParams = { offset: patchOperation.getElevOffset() };
     terrainPage.addBinding(elevOffsetParams, 'offset', {
       label: 'Elev. Offset', min: -0.5, max: 0.5, step: 0.01,
-    }).on('change', ({ value }) => {
+    }).on('change', ({ value }: { value: number }) => {
       patchOperation.setElevOffset(value);
       invalidate();
     });
