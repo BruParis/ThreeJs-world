@@ -1,9 +1,10 @@
 /**
  * Shader Demo tab — flat heightfield terrain.
  *
- * Elevation is computed by a WebGL2 offscreen fragment shader (TerrainElevationGL)
- * and returned as a Float32Array accessible on the CPU.  That same data is uploaded
- * to a texture that the Three.js vertex shader reads for displacement.
+ * The patch shows, flattened, the terrain the planet has around an anchor point;
+ * one scene unit is one terrain unit (see shared/terrain/TerrainParams).
+ * Elevation is baked on the GPU by TerrainPatchBaker into textures the terrain
+ * material reads for displacement and shading; the plane y = 0 is sea level.
  *
  * Camera: OrbitControls by default; switch to free FlyCam via the GUI.
  */
@@ -67,9 +68,6 @@ export class ShaderDemoApplication implements TabApplication {
 
     const dt = this.clock.getDelta();
 
-    this.terrain.updateBumpNoise(this.renderer!);
-    this.terrain.updateDetailNoise(this.renderer!);
-
     let renderCam: THREE.PerspectiveCamera;
     if (this.flyCam?.isEnabled()) {
       this.flyCam.update(dt);
@@ -113,7 +111,10 @@ export class ShaderDemoApplication implements TabApplication {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x1a1a2e);
-    this.scene.add(new THREE.GridHelper(4, 16, 0x333355, 0x222244));
+    // Sea level is the plane y = 0; keep the grid just below it so the two do not z-fight.
+    const grid = new THREE.GridHelper(4, 16, 0x333355, 0x222244);
+    grid.position.y = -0.002;
+    this.scene.add(grid);
     this.scene.add(new THREE.AxesHelper(1.2));
 
     // Lights — off by default; the Lighting GUI folder enables/configures them.
@@ -159,7 +160,7 @@ export class ShaderDemoApplication implements TabApplication {
   private initTerrain(): void {
     const contentArea = this.getContentArea();
 
-    this.terrain = new TerrainMesh(this.scene!);
+    this.terrain = new TerrainMesh(this.scene!, this.renderer!);
     this.terrain.init();
 
     this.gui = buildShaderDemoGUI(

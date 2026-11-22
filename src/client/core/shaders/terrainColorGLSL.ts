@@ -4,12 +4,12 @@
  * Exposes:
  *   vec3 terrainColor(float elevation, float ridgeMap, float erosionDepth,
  *                     float trees, float hardness, vec3 normal, vec3 detailNoise)
- *   vec3 waterColor(float elevation, vec3 normal, vec3 detailNoise)
- *   vec3 computeWaterNormal(float dx, float dz)
+ *   vec3 waterColor(float elevation, float normalY, vec3 detailNoise)
+ *   vec3 computeWaterNormal(vec3 up, vec3 grad)
  *
  * Classification (isWater, isGrass, isTree, trees, hardness) is computed
  * dynamically in the fragment shader via classifyTerrain() using the shifted
- * elevation (vTerrainElev), so all flags respond to uElevOffset without recompute.
+ * elevation, so all flags respond to uElevOffset without recompute.
  *
  * Includes (self-contained — no external GLSL required):
  *   terrainSampleGLSL, shaderUtilsGLSL, simplexNoiseGLSL,
@@ -124,27 +124,55 @@ export function syncTerrainColorUniforms(u: Record<string, THREE.IUniform>, s: T
  * fragment shader — rather than being read in the vertex shader and passed as
  * varyings.  Varyings are linearly interpolated across triangles, which would
  * re-introduce the same blending artefacts that the NearestFilter is meant to
- * prevent.  Sampling directly in the fragment shader with the world-space UV
+ * prevent.  Sampling directly in the fragment shader with the patch UV
  * guarantees exact per-texel values with no cross-boundary mixing.
+ *
+ * Elevation and its gradient are read per fragment too, so the shading keeps
+ * the full resolution of the baked textures even when the mesh is coarser.
  */
 export const terrainFragmentMapChunk = /* glsl */`
-// 1. Sample detail noise.
-vec3 detailNoise = vec3(0.0);
-if (uDetailNoiseEnabled == 1) {
-  vec2 detailUV = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
-  detailNoise = texture2D(uDetailNoiseTex, detailUV).xyz;
-}
+// 0. Per-fragment terrain state, read from the baked elevation texture.
+//    Everything below is expressed in the domain (planet) frame; "up" is the
+//    normal of the undisplaced surface, so no axis is assumed to be vertical.
+vec3  terrain_up       = normalize(vTerrainUp);
+vec2  terrain_elevUv   = terrainTexelUv(vTerrainUv, vec2(textureSize(uElevationTex, 0)));
+vec2  terrain_treeUv   = terrainTexelUv(vTerrainUv, vec2(textureSize(uTreeDensityTex, 0)));
+vec4  terrain_elevData = texture2D(uElevationTex, terrain_elevUv);
+float terrain_elev     = terrain_elevData.r + uElevOffset
+                       + texture2D(uTreeDensityTex, terrain_treeUv).r / 100.0;
+vec3  terrain_grad     = terrain_elevData.gba;
+bool  terrain_underwater = terrain_elev < uSeaLevel;
 
-// 2. Read erosion attributes from the baked attribute texture.
-//    R = ridgeMap [-1,1], G = erosionDepth [0,1] packed (×0.5+0.5).
-//    Trees and hardness are no longer read here — classifyTerrain provides them dynamically.
-vec2 attrUV    = (vTerrainWorldPos.xz + uPatchHalfSize) / (uPatchHalfSize * 2.0);
-vec4 attrData  = texture2D(uAttrTex, attrUV);
+// Shape-space slope: cosine between the normal and "up" for a relief of one
+// terrain unit per unit of elevation.  Classification uses it so that the look
+// of the terrain does not depend on the vertical exaggeration.
+float terrain_slopeY = terrain_underwater ? 1.0 : inversesqrt(1.0 + dot(terrain_grad, terrain_grad));
+
+// Geometric normal of the displayed (exaggerated) surface — used for lighting.
+vec3 terrain_baseNormal = terrain_underwater
+  ? terrain_up
+  : normalize(terrain_up - uVerticalScale * terrain_grad);
+
+// 1. Sample detail noise: .x = FBM value, .yzw = its surface gradient.
+vec4 detailTex = vec4(0.0);
+if (uDetailNoiseEnabled == 1) {
+  vec2 detailUV = terrainTexelUv(vTerrainUv, vec2(textureSize(uDetailNoiseTex, 0)));
+  detailTex = texture2D(uDetailNoiseTex, detailUV);
+}
+vec3 detailNoise = vec3(detailTex.x, 0.0, 0.0);
+vec3 detailGrad  = detailTex.yzw;
+
+// 2. Read erosion attributes from the baked attribute texture (same size as the
+//    elevation texture).  R = ridgeMap [-1,1], G = erosionDepth [0,1] packed (×0.5+0.5).
+vec4 attrData  = texture2D(uAttrTex, terrain_elevUv);
 float erosionDepth = attrData.g * 2.0 - 1.0;
 
 // 3. Classify terrain dynamically. classifyTerrain() runs ComputeTreeMap in
-//    the fragment shader using vTerrainElev and vTerrainWorldPos.xz.
-TerrainClassification tc = classifyTerrain(vTerrainElev, attrData.r, vTerrainWorldNormal.y, vTerrainWorldPos.xz);
+//    the fragment shader.  The tree noise is faded out when it becomes finer
+//    than a pixel, so distant forests do not shimmer.
+float terrain_footprint = length(fwidth(vTerrainDomainPos));
+float terrain_treeFade  = clamp01(1.0 / max(terrain_footprint * uTreeNoiseFreq, 1e-6) - 1.0);
+TerrainClassification tc = classifyTerrain(terrain_elev, attrData.r, terrain_slopeY, vTerrainDomainPos, terrain_treeFade);
 bool  isWater  = tc.isWater;
 bool  isGrass  = tc.isGrass;
 bool  isTree   = tc.isTree;
@@ -153,21 +181,29 @@ float hardness = tc.hardness;
 
 // 4. Perturb the normal — two independent contributions:
 //    - hardness × detail noise: rock/cliff micro-roughness; zero on grass/tree surfaces.
-//    - tree canopy bump: two snoise samples give independent XZ tilt, gated by tree
-//      density. Uses its own uniforms (uTreeBumpFreq, uTreeBumpStrength) and runs
+//    - tree canopy bump: a baked tangent tilt vector, gated by tree density.
+//      Uses its own uniforms (uTreeBumpFreq, uTreeBumpStrength) and runs
 //      regardless of uDetailNoiseEnabled, so tree shading is always distinct from grass.
-vec4 bumpData    = texture2D(uBumpTex, attrUV);
-vec3 treeBumpVec = vec3(bumpData.b, 0.0, bumpData.a) * trees * uTreeBumpStrength;
-vec3 terrainNorWorld = normalize(
-    vTerrainWorldNormal
-    + vec3(detailNoise.y, 0.0, detailNoise.z) * uDetailNoiseStrength * hardness
+vec2 bumpUV      = terrainTexelUv(vTerrainUv, vec2(textureSize(uBumpWaterTex, 0)));
+vec3 treeBumpVec = texture2D(uBumpTreeTex, bumpUV).xyz * trees * uTreeBumpStrength;
+vec3 terrainNorDomain = normalize(
+    terrain_baseNormal
+    + detailGrad * uDetailNoiseStrength * hardness
     + treeBumpVec
 );
-vec3 waterNorWorld = computeWaterNormal(
-    bumpData.r * uWaterNormalStrength,
-    bumpData.g * uWaterNormalStrength
+vec3 waterNorDomain = computeWaterNormal(
+    terrain_up,
+    texture2D(uBumpWaterTex, bumpUV).xyz * uWaterNormalStrength
 );
-vec3 colorNormal = isWater ? waterNorWorld : terrainNorWorld;
+vec3  colorNormal  = isWater ? waterNorDomain : terrainNorDomain;
+float colorNormalY = dot(colorNormal, terrain_up);
+// Normal as seen from the surface (x, up, z) — for the debug views.
+vec3 colorNormalLocal;
+{
+  vec3 terrain_t1, terrain_t2;
+  terrainTangentBasis(terrain_up, terrain_t1, terrain_t2);
+  colorNormalLocal = vec3(dot(colorNormal, terrain_t1), colorNormalY, dot(colorNormal, terrain_t2));
+}
 
 // 5. Output color.
 bool _terrainIsWater = isWater;   // shared with roughness/metalness chunks below
@@ -178,19 +214,20 @@ if (uDebugMode == TERRAIN_DEBUG_CLASSIFICATION) {
   if (isWater) classColor = vec3(0.05, 0.10, 0.45);
   diffuseColor.rgb = classColor;
 } else if (isWater && uDebugMode == TERRAIN_DEBUG_COLOR) {
-  diffuseColor.rgb = waterColor(vTerrainElev, colorNormal, detailNoise);
+  diffuseColor.rgb = waterColor(terrain_elev, colorNormalY, detailNoise);
 } else {
-  diffuseColor.rgb = terrainColor(vTerrainElev, attrData.r, erosionDepth, trees, hardness, colorNormal, detailNoise);
+  diffuseColor.rgb = terrainColor(terrain_elev, attrData.r, erosionDepth, trees, hardness, colorNormalLocal, detailNoise);
 }
 `;
 
 /**
  * Replaces Three.js `#include <normal_fragment_begin>`.
- * Transforms the terrain world-space normal into view space for lighting.
+ * Rotates the terrain normal from the domain frame to the world frame of the
+ * scene, then into view space for lighting.
  * `colorNormal` is defined in terrainFragmentMapChunk (chunks share scope).
  */
 export const terrainFragmentNormalChunk = /* glsl */`
-vec3 normal = normalize(mat3(viewMatrix) * colorNormal);
+vec3 normal = normalize(mat3(viewMatrix) * (uDomainToWorld * colorNormal));
 vec3 nonPerturbedNormal = normal;
 `;
 
@@ -253,8 +290,9 @@ uniform float     uWaterRoughness;
 uniform int       uDebugMode;
 // Attribute texture (NearestFilter) — R = ridgeMap, G = erosionDepth (packed).
 uniform sampler2D uAttrTex;
-// Bump texture — R/G = water normal gradient, B/A = tree bump snoise.
-uniform sampler2D uBumpTex;
+// Bump textures — 3D tangent vectors baked by the bump pass.
+uniform sampler2D uBumpWaterTex;  // xyz = gradient of the wave height field
+uniform sampler2D uBumpTreeTex;   // xyz = canopy tilt vector
 
 // ── Classification pipeline (simplex → trees → classify) ─────────────────────
 ${simplexNoiseGLSL}
@@ -263,15 +301,19 @@ ${terrainClassificationGLSL}
 
 // ── Water normal perturbation ─────────────────────────────────────────────────
 //
-// Reconstructs the world-space surface normal for water from the pre-baked
-// gradient stored in uBumpTex.rg (computed by TerrainBumpGL, strength = 1).
-// uWaterNormalStrength scales the tilt at render time without requiring a rebake.
+// Reconstructs the surface normal for water from the pre-baked gradient stored
+// in uBumpWaterTex (strength = 1).  The caller scales the gradient by
+// uWaterNormalStrength, so the tilt changes at render time without a rebake.
 //
-// Clamps tilt so the normal never points below ~18° from vertical (sin18°≈0.3),
+//   up   – unit normal of the undisturbed water surface
+//   grad – gradient of the wave height field (tangent to the surface)
+//
+// Clamps tilt so the normal never points below ~18° from the surface (sin18°≈0.3),
 // preventing waves from creating lighting black-holes.
-vec3 computeWaterNormal(float dx, float dz) {
-  vec3 n = normalize(vec3(-dx, 1.0, -dz));
-  n.y = max(n.y, 0.3);
+vec3 computeWaterNormal(vec3 up, vec3 grad) {
+  vec3  n  = normalize(up - grad);
+  float ny = dot(n, up);
+  n += up * (max(ny, 0.3) - ny);
   return normalize(n);
 }
 
@@ -288,14 +330,14 @@ vec3 computeWaterNormal(float dx, float dz) {
 //
 // Parameters:
 //   elevation   [0, 1]   terrain elevation (< uSeaLevel for water)
-//   normal               world-space surface normal (flat vec3(0,1,0) for water)
-//   detailNoise  vec3    suppNoise sample: .x = FBM [-1,1], .yz = derivatives
-vec3 waterColor(float elevation, vec3 normal, vec3 detailNoise) {
+//   normalY              cosine between the surface normal and "up"
+//   detailNoise  vec3    detail noise sample: .x = FBM [-1,1]
+vec3 waterColor(float elevation, float normalY, vec3 detailNoise) {
   float breakup = detailNoise.x;
   float diff    = max(0.0, uSeaLevel - elevation);  // depth below sea level [0, uSeaLevel]
 
-  float shore = normal.y > 1e-2 ? exp(-diff * 60.0)                           : 0.0;
-  float foam  = normal.y > 1e-2 ? smoothstep(0.005, 0.0, diff + breakup * 0.005) : 0.0;
+  float shore = normalY > 1e-2 ? exp(-diff * 60.0)                           : 0.0;
+  float foam  = normalY > 1e-2 ? smoothstep(0.005, 0.0, diff + breakup * 0.005) : 0.0;
 
   vec3 color = mix(uWaterDeepColor, uWaterShoreColor, shore);
   color = mix(color, vec3(1.0), foam);
@@ -318,8 +360,9 @@ vec3 waterColor(float elevation, vec3 normal, vec3 detailNoise) {
 //   hardness     [0, 1]    smooth rock/soft boundary from classifyTerrain() — 0 = grass/tree,
 //                          1 = rock/cliff/snow.  Grass blend weight is derived from this so
 //                          the color boundary stays aligned with the normal-perturbation boundary.
-//   normal                surface normal in world space (may be perturbed by detail noise)
-//   detailNoise  vec3      suppNoise texture sample: .x = FBM value [-1,1], .yz = derivatives
+//   normal                surface normal in the local frame of the surface, y = "up"
+//                          (may be perturbed by detail noise)
+//   detailNoise  vec3      detail noise texture sample: .x = FBM value [-1,1]
 //
 // Also handles all debug visualisations (elevation, ridgeMap, trees, normals, etc.) so
 // they apply universally to land and — when not in TERRAIN_DEBUG_COLOR — water pixels too.

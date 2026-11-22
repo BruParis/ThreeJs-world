@@ -3,7 +3,7 @@
  *
  * Exposes:
  *   float ComputeTreeMap(float elevation, float ridgeMap, float normalY,
- *                        vec2 worldXZ, bool isWater, bool isGrass)
+ *                        vec3 P, bool isWater, bool isGrass, float noiseFade)
  *
  * Returns an unclamped tree density value.  Positive = tree-covered, negative =
  * bare ground.  Callers must clamp before use (threshold for isTree is 0.36).
@@ -11,18 +11,19 @@
  * Parameters:
  *   elevation – normalised elevation [0, 1]
  *   ridgeMap  – erosion ridge signal [-1, 1]; negative values indicate gullies
- *   normalY   – world-space Y component of the surface normal (flat = 1, cliff = 0)
- *   worldXZ   – world-space XZ position (used for high-frequency tree noise)
+ *   normalY   – cosine between the surface normal and "up" (flat = 1, cliff = 0)
+ *   P         – 3D position in terrain units (used for high-frequency tree noise)
  *   isWater   – pre-classified water flag; returns 0 immediately if true
  *   isGrass   – preliminary grass-zone flag (elevation + slope, without !isTree)
+ *   noiseFade – 1 = full tree noise, 0 = noise replaced by its mean; lower it when
+ *               the noise is finer than the sampling footprint (distant terrain)
  *
  * Requirements before including this snippet:
  *   GRASS_HEIGHT  must be defined (upper elevation limit for trees)
  *   uSeaLevel     uniform must be in scope (declared in the fragment shader)
  */
-// import { simplexNoiseGLSL } from '@core/noise/simplexGLSL';
-
 import * as THREE from 'three';
+import { fractalNoise3GLSL } from '@core/noise/fractalNoise3GLSL';
 
 export const TERRAIN_GRASS_HEIGHT = 0.465;
 
@@ -38,6 +39,8 @@ export const DEFAULT_TREE_BUMP_FREQ     = 80.0;
 
 export const treeGLSL = /* glsl */`
 
+${fractalNoise3GLSL}
+
 uniform int   uTreeEnabled;
 uniform float uTreeElevMax;
 uniform float uTreeElevMin;
@@ -47,37 +50,6 @@ uniform float uTreeNoiseFreq;
 uniform float uTreeNoisePow;
 uniform float uTreeDensity;
 uniform float uTreeBumpStrength;
-
-vec2 hash_tree(in vec2 x) {
-    const vec2 k = vec2(0.3183099, 0.3678794);
-    x = x * k + k.yx;
-    return -1.0 + 2.0 * fract(16.0 * k * fract(x.x * x.y * (x.x + x.y)));
-}
-
-
-// Returns gradient noise (in x) and its derivatives (in yz).
-// From https://www.shadertoy.com/view/XdXBRH
-vec3 noised_tree(in vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-
-    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0); 
-    
-    vec2 ga = hash_tree(i + vec2(0.0, 0.0));
-    vec2 gb = hash_tree(i + vec2(1.0, 0.0));
-    vec2 gc = hash_tree(i + vec2(0.0, 1.0));
-    vec2 gd = hash_tree(i + vec2(1.0, 1.0));
-    
-    float va = dot(ga, f - vec2(0.0, 0.0));
-    float vb = dot(gb, f - vec2(1.0, 0.0));
-    float vc = dot(gc, f - vec2(0.0, 1.0));
-    float vd = dot(gd, f - vec2(1.0, 1.0));
-
-    return vec3(va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * (va - vb - vc + vd),
-        ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) +
-        du * (u.yx * (va - vb - vc + vd) + vec2(vb, vc) - va));
-}
 
 // Returns a signed tree-density value.
 // Positive  → trees present; negative → no trees (bare ground / water / cliff).
@@ -105,7 +77,7 @@ float _treesAmount(float height, float normalY, float ridgeMap) {
 //   Positive  → tree cover (threshold for isTree is 0.36).
 //   Negative  → bare ground / water / cliff.
 // The output is NOT clamped to [0, 1] by design — callers must clamp before use.
-float ComputeTreeMap(float elevation, float ridgeMap, float normalY, vec2 worldXZ, bool isWater, bool isGrass) {
+float ComputeTreeMap(float elevation, float ridgeMap, float normalY, vec3 P, bool isWater, bool isGrass, float noiseFade) {
     if (uTreeEnabled == 0) return 0.0;
     if (isWater) return 0.0;
     if (!isGrass) return 0.0;
@@ -114,7 +86,10 @@ float ComputeTreeMap(float elevation, float ridgeMap, float normalY, vec2 worldX
 
     // Noise breaks up the tree boundary organically.
     // treeNoise ∈ [0, 1]; pow() sharpens the cutoff (higher uTreeNoisePow = patchier).
-    float treeNoise = noised_tree(worldXZ * uTreeNoiseFreq).x * 0.5 + 0.5;
+    float treeNoise = 0.5;
+    if (noiseFade > 0.0) {
+        treeNoise = mix(0.5, noised3(P * uTreeNoiseFreq).x * 0.5 + 0.5, noiseFade);
+    }
     return (treesAmount - pow(treeNoise, uTreeNoisePow)) * uTreeDensity;
 }
 

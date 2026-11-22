@@ -147,6 +147,18 @@ The project implements a spherical tectonic plate simulation:
     - `computeTectonicDynamics`: Assigns random rotation axes to plates, computes tile motion vectors
     - `caracterizeBoundaryEdge`: Classifies boundary edges by relative motion (convergent, divergent, transform)
 
+### Terrain Shader Pipeline (Shaders tab + World tab)
+
+The Shaders tab (flat patch) and the World tab (sphere LOD, Terrain / Elevation color modes) render the same terrain from the same parameters:
+
+- `shared/terrain/TerrainParams.ts`: the single parameter store (noise, erosion, trees, colors, real-world scale). Controls write to it and call `notify(kind)`; both tabs listen.
+- Scale: noise positions are in terrain units, `P = position_km / kmPerUnit`; relief is `(elevation - seaLevel) * elevationAmplitudeKm`, exaggerated by `elevationDisplayScale`. Helpers are in `shared/world/World.ts`.
+- The terrain is a function of the 3D position on the planet (`core/noise/fractalNoise3GLSL.ts`, `core/shaders/erosion3GLSL.ts`), so it is seamless across patches, LOD levels and cube faces.
+- `core/terrain/PatchDomain.ts`: maps a patch square onto the planet as a grid of directions (`spherePatchDomain` for quadtree cells, `tangentPatchDomain` for the flat patch).
+- `core/terrain/TerrainPatchBaker.ts`: bakes a patch's textures (elevation + 3D gradient, erosion attributes, tree density, bump, detail) on the tab's own renderer.
+- `core/terrain/TerrainMaterial.ts`: the patched `MeshStandardMaterial` used by both tabs. Geometry contract: `position` = undisplaced position, `normal` = direction on the planet, `uv` = patch coordinate.
+- World: `apps/world/lod/TerrainPatchOperation.ts` (terrain) and `TileShaderPatchOperation.ts` (flat plate / geology / LOD overlays), switched by `LODTileRenderer.setPatchOperation`.
+
 ### Path Aliasing
 
 Both webpack and TypeScript use `@core/*` alias:

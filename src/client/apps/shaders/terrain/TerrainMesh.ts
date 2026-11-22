@@ -1,359 +1,138 @@
 import * as THREE from 'three';
-import { PerlinNoise3D } from '@core/noise/PerlinNoise';
-import { terrainFinalStateGLSL } from '@core/shaders/terrainFinalStateGLSL';
+import { TerrainPatchBaker, type BakedPatch } from '@core/terrain/TerrainPatchBaker';
+import { TerrainMaterial } from '@core/terrain/TerrainMaterial';
 import {
-  terrainFragmentMapChunk,
-  terrainFragmentNormalChunk,
-  terrainFragmentRoughnessChunk,
-  terrainFragmentMetalnessChunk,
-  createTerrainColorUniforms,
-  syncTerrainColorUniforms as _syncTerrainColorUniforms,
-  DEFAULT_TERRAIN_COLORS,
-  type TerrainColorState,
-} from '@core/shaders/terrainColorGLSL';
+  tangentFrameFromLatLon,
+  tangentFrameRotation,
+  tangentPatchDomain,
+  tangentPlaneDir,
+  type TangentFrame,
+} from '@core/terrain/PatchDomain';
+import { terrainParams, type TerrainParams, type TerrainChange } from '../../../shared/terrain/TerrainParams';
 import {
-  DEFAULT_TREE_ELEV_MAX,
-  DEFAULT_TREE_ELEV_MIN,
-  DEFAULT_TREE_SLOPE_MIN,
-  DEFAULT_TREE_RIDGE_MIN,
-  DEFAULT_TREE_NOISE_FREQ,
-  DEFAULT_TREE_NOISE_POW,
-  DEFAULT_TREE_DENSITY,
-  DEFAULT_TREE_BUMP_STRENGTH,
-  DEFAULT_TREE_BUMP_FREQ,
-  createTreeUniforms,
-  syncTreeUniforms,
-  type TreeUniformState,
-} from '@core/shaders/treeGLSL';
-import {
-  detailNoiseFragPreamble,
-  createDetailNoiseUniforms,
-  syncDetailNoiseUniforms,
-} from '@core/shaders/detailNoiseGLSL';
-import {
-  terrainVertexPreamble,
-  terrainVertexNormalChunk,
-  terrainVertexPositionChunk,
-  terrainFragmentVaryings,
-  createTerrainVertexUniforms,
-  syncTerrainVertexUniforms,
-  TERRAIN_SEA_LEVEL,
-} from '@core/shaders/terrainVertexGLSL';
-import {
-  DEFAULT_NOISE_PARAMS,
-  DEFAULT_GAUSSIAN_PARAMS,
-  DEFAULT_FRACTAL_NOISE_PARAMS,
-  DEFAULT_PATCH_SIZE,
   DEFAULT_SUBDIVISION,
   DEFAULT_NUM_PATCHES,
-  DEFAULT_ELEV_OFFSET,
+  DIRECTION_GRID_RES,
+  BUMP_TEXTURE_RES,
+  DETAIL_TEXTURE_RES,
 } from './TerrainConstants';
-import {
-  DEFAULT_EROSION_OCTAVES,
-  DEFAULT_EROSION_SCALE,
-  DEFAULT_EROSION_STRENGTH,
-  DEFAULT_EROSION_GULLY_WEIGHT,
-  DEFAULT_EROSION_DETAIL,
-  DEFAULT_EROSION_GAIN,
-  DEFAULT_EROSION_LACUNARITY,
-  DEFAULT_EROSION_CELL_SCALE,
-  DEFAULT_EROSION_NORMALIZATION,
-  DEFAULT_EROSION_RIDGE_ROUNDING,
-  DEFAULT_EROSION_CREASE_ROUNDING,
-} from '@core/shaders/erosionGLSL';
-import { TerrainElevationGL }              from './TerrainElevationGL';
-import { TreeDensityGL, type TreeDensityParams } from './TreeDensityGL';
-import { SuppNoiseGL }                    from './SuppNoiseGL';
-import { TerrainBumpGL }                  from './TerrainBumpGL';
 
+/**
+ * The flat terrain patch of the Shaders tab.
+ *
+ * The patch is a square of the plane tangent to the planet at the anchor point
+ * of the shared terrain parameters: it shows, flattened, the terrain the planet
+ * has around that point.  One scene unit is one terrain unit, so the patch is
+ * `params.patchSize` units wide, i.e. `params.patchSizeKm` kilometres.
+ *
+ * All terrain parameters live in the shared TerrainParams store; this class
+ * only owns what is specific to this view (mesh resolution, wireframe…) and
+ * reacts to parameter changes.
+ */
 export class TerrainMesh {
-  // Gaussian (input to first elevation layer)
-  gaussianParams = { ...DEFAULT_GAUSSIAN_PARAMS };
-
-  // Noise
-  noiseParams        = { ...DEFAULT_NOISE_PARAMS };
-  fractalNoiseParams = { ...DEFAULT_FRACTAL_NOISE_PARAMS };
-  noiseType          = 4; // 0 = simplex, 1 = perlin, 2 = heightmap, 3 = gaussian, 4 = fractalNoise
-
-  // Geometry / rendering
-  elevationOffset = DEFAULT_ELEV_OFFSET;
-  seaLevel        = TERRAIN_SEA_LEVEL;
-  patchSize    = DEFAULT_PATCH_SIZE;
+  // ── View-only settings ──────────────────────────────────────────────────────
   subdivisions = DEFAULT_SUBDIVISION;
   numPatches   = DEFAULT_NUM_PATCHES;
   wireframe    = false;
   roughness    = 0.85;
 
-  // Detail noise
-  detailNoiseEnabled  = false;
-  detailNoiseStrength = 0.3;
-
-  // Erosion
-  erosionEnabled        = false;
-  erosionOctaves        = DEFAULT_EROSION_OCTAVES;
-  erosionScale          = DEFAULT_EROSION_SCALE;
-  erosionStrength       = DEFAULT_EROSION_STRENGTH;
-  erosionGullyWeight    = DEFAULT_EROSION_GULLY_WEIGHT;
-  erosionDetail         = DEFAULT_EROSION_DETAIL;
-  erosionGain           = DEFAULT_EROSION_GAIN;
-  erosionLacunarity     = DEFAULT_EROSION_LACUNARITY;
-  erosionCellScale      = DEFAULT_EROSION_CELL_SCALE;
-  erosionNormalization  = DEFAULT_EROSION_NORMALIZATION;
-  erosionRidgeRounding  = DEFAULT_EROSION_RIDGE_ROUNDING;
-  erosionCreaseRounding = DEFAULT_EROSION_CREASE_ROUNDING;
-
-  // Terrain colors
-  terrainColors: TerrainColorState = { ...DEFAULT_TERRAIN_COLORS };
-
-  // Trees
-  treeEnabled      = true;
-  treeElevMax      = DEFAULT_TREE_ELEV_MAX;
-  treeElevMin      = DEFAULT_TREE_ELEV_MIN;
-  treeSlopeMin     = DEFAULT_TREE_SLOPE_MIN;
-  treeRidgeMin     = DEFAULT_TREE_RIDGE_MIN;
-  treeNoiseFreq    = DEFAULT_TREE_NOISE_FREQ;
-  treeNoisePow     = DEFAULT_TREE_NOISE_POW;
-  treeDensity      = DEFAULT_TREE_DENSITY;
-  treeBumpStrength = DEFAULT_TREE_BUMP_STRENGTH;
-  treeBumpFreq     = DEFAULT_TREE_BUMP_FREQ;
-
   /**
-   * CPU-accessible elevation grid — use for pathfinding, physics, or any non-rendering query.
-   * Index: row * elevationGridWidth + col  →  normalised elevation in [0, 1].
+   * CPU copy of the elevation texture — use for camera collision, pathfinding,
+   * physics, or any non-rendering query.
+   * RGBA floats, index (row * elevationGridWidth + col) * 4:
+   *   R = raw elevation [0, 1] (before the elevation offset), GBA = surface gradient.
    */
   elevationData:       Float32Array | null = null;
   elevationGridWidth   = 0;
   elevationGridHeight  = 0;
 
-  private _meshes:          THREE.Mesh[] = [];
-  private elevationTexture: THREE.DataTexture | null = null;
-  private attrTexture:      THREE.DataTexture | null = null;
-  private treeTexture:      THREE.DataTexture | null = null;
-  private elevationGL:      TerrainElevationGL | null = null;
-  private treeDensityGL:    TreeDensityGL | null = null;
-  private suppNoiseGL:      SuppNoiseGL | null = null;
-  private bumpNoiseGL:      TerrainBumpGL | null = null;
+  private readonly baker: TerrainPatchBaker;
+  private patch:  BakedPatch | null = null;
+  private frame:  TangentFrame | null = null;
+  private readonly domainToWorld = new THREE.Matrix3();
 
-  // Cached elevation pass output — reused by recomputeTreeDensity().
-  private _cachedPacked:     Float32Array | null = null;
-  private _cachedAttrPacked: Float32Array | null = null;
-  private _cachedTreeParams: Omit<TreeDensityParams, 'elevOffset'> | null = null;
+  private _meshes:    THREE.Mesh[] = [];
+  private _materials: TerrainMaterial[] = [];
 
-  // Per-patch uniform objects kept in sync with onBeforeCompile shader refs.
-  private _patchUniforms: Record<string, THREE.IUniform>[] = [];
+  /** Signature of everything that defines the patch grid; a change means a full rebuild. */
+  private gridSignature = '';
+  private unsubscribe: (() => void) | null = null;
 
-  constructor(private readonly scene: THREE.Scene) {}
+  constructor(
+    private readonly scene: THREE.Scene,
+    renderer: THREE.WebGLRenderer,
+    readonly params: TerrainParams = terrainParams,
+  ) {
+    this.baker = new TerrainPatchBaker(renderer);
+  }
 
   get meshes(): readonly THREE.Mesh[] { return this._meshes; }
 
   init(): void {
-    this.elevationGL   = TerrainElevationGL.create();
-    this.treeDensityGL = TreeDensityGL.create();
-    this.suppNoiseGL   = new SuppNoiseGL(512);
-    this.bumpNoiseGL   = new TerrainBumpGL(512);
-    this.recomputeElevation();
-    this.rebuildMeshes();
+    this.rebuild();
+    this.unsubscribe = this.params.onChange((change) => this.onParamsChanged(change));
   }
 
-  /** Full rebuild: recompute elevation then recreate patch geometry. */
+  /** Full rebuild: new patch grid, all textures baked, patch meshes recreated. */
   rebuild(): void {
-    this.recomputeElevation();
-    this.rebuildMeshes();
-  }
+    this.disposeMeshes();
+    this.disposePatch();
 
-  /**
-   * Re-run the elevation compute pass on the GPU with current parameters.
-   * Call when any noise or erosion parameter changes.
-   * Updates both elevationData (CPU) and the elevation texture (GPU/render).
-   */
-  recomputeElevation(): void {
-    if (!this.elevationGL) return;
-
+    const p = this.params;
     const patchesPerSide = Math.round(Math.sqrt(this.numPatches));
     const totalVerts     = patchesPerSide * this.subdivisions + 1;
-    const halfSize       = this.patchSize / 2;
-    const permData       = new PerlinNoise3D(this.noiseParams.seed).getPermutation256();
 
-    const { elevations, packed, attrPacked } = this.elevationGL.compute(
-      {
-        gridWidth:             totalVerts,
-        gridHeight:            totalVerts,
-        originX:              -halfSize,
-        originZ:              -halfSize,
-        stepX:                 this.patchSize / (totalVerts - 1),
-        stepZ:                 this.patchSize / (totalVerts - 1),
-        noiseScale:            this.noiseParams.scale,
-        noiseOctaves:          this.noiseParams.octaves,
-        noisePersistence:      this.noiseParams.persistence,
-        noiseLacunarity:       this.noiseParams.lacunarity,
-        patchHalfSize:         halfSize,
-        noiseType:             this.noiseType,
-        gaussSigma:            this.gaussianParams.sigma,
-        gaussAmplitude:        this.gaussianParams.amplitude,
-        fractalFreq:           this.fractalNoiseParams.freq,
-        fractalOctaves:        this.fractalNoiseParams.octaves,
-        fractalLacunarity:     this.fractalNoiseParams.lacunarity,
-        fractalGain:           this.fractalNoiseParams.gain,
-        fractalAmp:            this.fractalNoiseParams.amp,
-        erosionEnabled:         this.erosionEnabled ? 1 : 0,
-        erosionOctaves:         this.erosionOctaves,
-        erosionScale:           this.erosionScale,
-        erosionStrength:        this.erosionStrength,
-        erosionGullyWeight:     this.erosionGullyWeight,
-        erosionDetail:          this.erosionDetail,
-        erosionGain:            this.erosionGain,
-        erosionLacunarity:      this.erosionLacunarity,
-        erosionCellScale:       this.erosionCellScale,
-        erosionNormalization:   this.erosionNormalization,
-        erosionRidgeRounding:   this.erosionRidgeRounding,
-        erosionCreaseRounding:  this.erosionCreaseRounding,
-      },
-      permData,
-    );
+    this.frame = tangentFrameFromLatLon(p.anchorLatDeg, p.anchorLonDeg);
+    tangentFrameRotation(this.frame, this.domainToWorld);
 
-    // ── CPU-side data (app logic: pathfinding, physics, …) ─────────────────
-    this.elevationData       = elevations;
-    this.elevationGridWidth  = totalVerts;
-    this.elevationGridHeight = totalVerts;
+    // Patch size as a fraction of the planet radius — the unit of the tangent plane.
+    const sizeInRadii = p.patchSize / p.planetRadiusUnits;
+    const domain = tangentPatchDomain(this.frame, sizeInRadii, DIRECTION_GRID_RES);
 
-    // ── Elevation texture (LinearFilter) — geometry data read by the vertex shader ──
-    // LinearFilter is correct here: elevation and gradients are continuous signals
-    // whose smooth interpolation produces correct normals and displacement.
-    this.elevationTexture?.dispose();
-    this.elevationTexture = new THREE.DataTexture(
-      packed, totalVerts, totalVerts,
-      THREE.RGBAFormat, THREE.FloatType,
-    );
-    this.elevationTexture.minFilter      = THREE.LinearFilter;
-    this.elevationTexture.magFilter      = THREE.LinearFilter;
-    this.elevationTexture.generateMipmaps = false;
-    this.elevationTexture.needsUpdate    = true;
+    this.patch = this.baker.createPatch(domain, {
+      elevation: totalVerts,
+      bump:      BUMP_TEXTURE_RES,
+      detail:    DETAIL_TEXTURE_RES,
+    });
+    this.baker.bakeAll(this.patch, p);
+    this.readElevationToCpu();
 
-    // ── Attribute texture (NearestFilter) — shading signals read by the fragment shader ──
-    // NearestFilter: ridgeMap and erosionDepth are discrete per-vertex
-    // values.  Linear interpolation across texel boundaries would blend adjacent
-    // quantisation steps and corrupt the signal (producing the noisy black/cliff
-    // artefact).  The fragment shader samples this with the same world-space UV as
-    // the elevation texture — no vertex varying is involved, so NearestFilter holds.
-    // check visually which filter (nearest, or linear) looks best.
-    this.attrTexture?.dispose();
-    this.attrTexture = new THREE.DataTexture(
-      attrPacked, totalVerts, totalVerts,
-      THREE.RGBAFormat, THREE.FloatType,
-    );
-    this.attrTexture.minFilter      = THREE.LinearFilter;
-    this.attrTexture.magFilter      = THREE.LinearFilter;
-    this.attrTexture.generateMipmaps = false;
-    this.attrTexture.needsUpdate    = true;
-
-    this.syncElevationTexture();
-    this.syncAttrTexture();
-    this.suppNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
-    this.bumpNoiseGL?.setWorldParams(-halfSize, -halfSize, this.patchSize);
-    this.bumpNoiseGL?.setFrequencies(this.terrainColors.waterNormalFreq, this.treeBumpFreq);
-
-    // Cache elevation data and grid params for recomputeTreeDensity().
-    const step = this.patchSize / (totalVerts - 1);
-    this._cachedPacked     = packed;
-    this._cachedAttrPacked = attrPacked;
-    this._cachedTreeParams = {
-      gridWidth: totalVerts, gridHeight: totalVerts,
-      originX: -halfSize, originZ: -halfSize,
-      stepX: step, stepZ: step,
-      seaLevel: this.seaLevel,
-      treeEnabled:   this.treeEnabled   ? 1 : 0,
-      treeElevMax:   this.treeElevMax,
-      treeElevMin:   this.treeElevMin,
-      treeSlopeMin:  this.treeSlopeMin,
-      treeRidgeMin:  this.treeRidgeMin,
-      treeNoiseFreq: this.treeNoiseFreq,
-      treeNoisePow:  this.treeNoisePow,
-      treeDensity:   this.treeDensity,
-    };
-    this.recomputeTreeDensity();
+    this.gridSignature = this.computeGridSignature();
+    this.rebuildMeshes();
   }
 
   /**
-   * Re-run the tree density compute pass with the current elevation offset and tree params.
-   * Fast — does not re-run the elevation pass. Call when elevationOffset or any tree param changes.
+   * Re-run the elevation pass (and the tree density pass) with the current
+   * parameters.  Rebuilds everything instead when the patch grid itself changed.
+   */
+  recomputeElevation(): void {
+    if (!this.patch || this.computeGridSignature() !== this.gridSignature) {
+      this.rebuild();
+      return;
+    }
+    this.baker.bakeElevation(this.patch, this.params);
+    this.readElevationToCpu();
+    this.syncMaterials();
+  }
+
+  /**
+   * Re-run the tree density pass with the current elevation offset and tree params.
+   * Fast — does not re-run the elevation pass.
    */
   recomputeTreeDensity(): void {
-    if (!this.treeDensityGL || !this._cachedPacked || !this._cachedAttrPacked || !this._cachedTreeParams) return;
-
-    // Always read tree params from `this` so GUI changes are reflected immediately.
-    // Only grid layout (gridWidth/Height, origin, step) is stable enough to cache.
-    const params: TreeDensityParams = {
-      ...this._cachedTreeParams,
-      elevOffset:    this.elevationOffset,
-      seaLevel:      this.seaLevel,
-      treeEnabled:   this.treeEnabled   ? 1 : 0,
-      treeElevMax:   this.treeElevMax,
-      treeElevMin:   this.treeElevMin,
-      treeSlopeMin:  this.treeSlopeMin,
-      treeRidgeMin:  this.treeRidgeMin,
-      treeNoiseFreq: this.treeNoiseFreq,
-      treeNoisePow:  this.treeNoisePow,
-      treeDensity:   this.treeDensity,
-    };
-    const treePacked = this.treeDensityGL.compute(this._cachedPacked, this._cachedAttrPacked, params);
-
-    this.treeTexture?.dispose();
-    this.treeTexture = new THREE.DataTexture(
-      treePacked as unknown as Float32Array<ArrayBuffer>, params.gridWidth, params.gridHeight,
-      THREE.RGBAFormat, THREE.FloatType,
-    );
-    this.treeTexture.minFilter      = THREE.LinearFilter;
-    this.treeTexture.magFilter      = THREE.LinearFilter;
-    this.treeTexture.generateMipmaps = false;
-    this.treeTexture.needsUpdate    = true;
-
-    this.syncTreeDensityTexture();
+    if (!this.patch) return;
+    this.baker.bakeTreeDensity(this.patch, this.params);
+    this.syncMaterials();
   }
 
-  private syncTreeDensityTexture(): void {
-    for (const u of this._patchUniforms) {
-      u.uTreeDensityTex.value = this.treeTexture;
-    }
-  }
-
-  /** Update display-only uniforms (wireframe, roughness) without recomputing elevation. */
+  /** Push every parameter to the materials, plus the view-only display settings. */
   updateUniforms(): void {
-    for (const u of this._patchUniforms) {
-      syncTerrainVertexUniforms(u, {
-        elevationTexture:   this.elevationTexture,
-        treeDensityTexture: this.treeTexture,
-        patchHalfSize:      this.patchSize / 2,
-        elevationOffset:    this.elevationOffset,
-        seaLevel:           this.seaLevel,
-      });
-    }
+    this.syncMaterials();
     for (const mesh of this._meshes) {
       const mat = mesh.material as THREE.MeshStandardMaterial;
       mat.wireframe = this.wireframe;
       mat.roughness = this.roughness;
     }
-  }
-
-  /**
-   * Re-render the supplemental noise texture if needed and sync it to all patch materials.
-   * Call once per frame before the main scene render — is a no-op when nothing has changed.
-   */
-  updateDetailNoise(renderer: THREE.WebGLRenderer): void {
-    if (!this.suppNoiseGL || !this.detailNoiseEnabled) return;
-    this.suppNoiseGL.update(renderer);
-    this.syncDetailNoiseUniforms();
-  }
-
-  /** Re-render the bump texture if dirty; no-op otherwise. Call once per frame. */
-  updateBumpNoise(renderer: THREE.WebGLRenderer): void {
-    this.bumpNoiseGL?.update(renderer);
-  }
-
-  /** Toggle detail noise on/off and sync the enabled uniform immediately. */
-  setDetailNoiseEnabled(enabled: boolean): void {
-    this.detailNoiseEnabled = enabled;
-    if (enabled) this.suppNoiseGL?.markDirty();
-    this.syncDetailNoiseUniforms();
   }
 
   /** Set surface roughness (PBR) and apply to all patch materials immediately. */
@@ -364,114 +143,171 @@ export class TerrainMesh {
     }
   }
 
-  /** Sync detail noise uniforms (enabled, strength, texture) to all patch materials. */
-  syncDetailNoiseUniforms(): void {
-    for (const u of this._patchUniforms) {
-      syncDetailNoiseUniforms(u, {
-        detailNoiseTexture:  this.suppNoiseGL?.texture ?? null,
-        detailNoiseEnabled:  this.detailNoiseEnabled,
-        detailNoiseStrength: this.detailNoiseStrength,
-      });
-    }
-  }
-
-  /** Sync tree uniforms to all patch materials. */
-  syncTreeUniforms(): void {
-    for (const u of this._patchUniforms) {
-      syncTreeUniforms(u, this as TreeUniformState);
-    }
-    this.bumpNoiseGL?.setFrequencies(this.terrainColors.waterNormalFreq, this.treeBumpFreq);
-  }
-
-  /** Sync terrain color uniforms to all patch materials. */
-  syncTerrainColorUniforms(): void {
-    for (const u of this._patchUniforms) {
-      _syncTerrainColorUniforms(u, this.terrainColors);
-    }
-    this.bumpNoiseGL?.setFrequencies(this.terrainColors.waterNormalFreq, this.treeBumpFreq);
-  }
-
-  /** Sample terrain height at world XZ using the CPU elevation grid. */
+  /**
+   * Height of the displayed terrain above the sea-level plane (y = 0) at the
+   * given scene XZ, in scene units.  Uses the CPU elevation copy.
+   */
   sampleTerrainHeight(wx: number, wz: number): number {
     if (!this.elevationData) return 0;
-    const halfSize = this.patchSize / 2;
-    const u = (wx + halfSize) / this.patchSize;
-    const v = (wz + halfSize) / this.patchSize;
+    const p = this.params;
+    const halfSize = p.patchSize / 2;
+    const u = (wx + halfSize) / p.patchSize;
+    const v = (wz + halfSize) / p.patchSize;
     const w = this.elevationGridWidth;
     const h = this.elevationGridHeight;
-    const col   = Math.max(0, Math.min(w - 1, Math.floor(u * (w - 1))));
-    const row   = Math.max(0, Math.min(h - 1, Math.floor(v * (h - 1))));
-    const noise = this.elevationData[row * w + col];  // raw elevation (uElevOffset applied at runtime)
-    return Math.max(0, (noise + this.elevationOffset - this.seaLevel) / (1 - this.seaLevel));
+    const col  = Math.max(0, Math.min(w - 1, Math.round(u * (w - 1))));
+    const row  = Math.max(0, Math.min(h - 1, Math.round(v * (h - 1))));
+    const elev = this.elevationData[(row * w + col) * 4] + p.elevationOffset;
+    return (Math.max(elev, p.seaLevel) - p.seaLevel) * p.verticalScale;
   }
 
   dispose(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     this.disposeMeshes();
-    this.elevationTexture?.dispose();
-    this.elevationTexture = null;
-    this.attrTexture?.dispose();
-    this.attrTexture = null;
-    this.elevationGL?.dispose();
-    this.elevationGL = null;
-    this.suppNoiseGL?.dispose();
-    this.suppNoiseGL = null;
-    this.bumpNoiseGL?.dispose();
-    this.bumpNoiseGL = null;
+    this.disposePatch();
+    this.baker.dispose();
   }
 
   // ── private ──────────────────────────────────────────────────────────────────
 
-  private syncElevationTexture(): void {
-    for (const u of this._patchUniforms) {
-      u.uElevationTex.value = this.elevationTexture;
+  private onParamsChanged(change: TerrainChange): void {
+    if (!this.patch) return;
+    switch (change) {
+      case 'elevation':
+        this.recomputeElevation();
+        break;
+      case 'trees':
+        this.recomputeTreeDensity();
+        break;
+      case 'bump':
+        this.baker.bakeBump(this.patch, this.params);
+        this.syncMaterials();
+        break;
+      case 'detail':
+        if (this.params.detailNoiseEnabled) this.baker.bakeDetail(this.patch, this.params);
+        this.syncMaterials();
+        break;
+      case 'display':
+        this.syncMaterials();
+        break;
     }
   }
 
-  private syncAttrTexture(): void {
-    for (const u of this._patchUniforms) {
-      u.uAttrTex.value = this.attrTexture;
-    }
+  private computeGridSignature(): string {
+    const p = this.params;
+    return [
+      p.patchSize, p.kmPerUnit, p.anchorLatDeg, p.anchorLonDeg,
+      this.subdivisions, this.numPatches,
+    ].join('|');
+  }
+
+  private readElevationToCpu(): void {
+    if (!this.patch) return;
+    this.elevationData       = this.baker.readElevation(this.patch);
+    this.elevationGridWidth  = this.patch.resolution.elevation;
+    this.elevationGridHeight = this.patch.resolution.elevation;
+  }
+
+  private syncMaterials(): void {
+    for (const m of this._materials) m.sync(this.params);
+  }
+
+  private disposePatch(): void {
+    if (this.patch) this.baker.disposePatch(this.patch);
+    this.patch = null;
+    this.elevationData = null;
   }
 
   private disposeMeshes(): void {
     for (const mesh of this._meshes) {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
-      (mesh.material as THREE.MeshStandardMaterial).dispose();
     }
-    this._meshes = [];
-    this._patchUniforms = [];
+    for (const m of this._materials) m.dispose();
+    this._meshes    = [];
+    this._materials = [];
   }
 
   private rebuildMeshes(): void {
     this.disposeMeshes();
+    if (!this.patch || !this.frame) return;
 
     const patchesPerSide = Math.round(Math.sqrt(this.numPatches));
-    const cellSize       = this.patchSize / patchesPerSide;
-    const half           = this.patchSize / 2;
+    const size           = this.params.patchSize;
+    const cellSize       = size / patchesPerSide;
+    const half           = size / 2;
 
     for (let row = 0; row < patchesPerSide; row++) {
       for (let col = 0; col < patchesPerSide; col++) {
-        const mesh = new THREE.Mesh(
-          this.buildPatchGeometry(cellSize),
-          this.buildMaterial(),
+        const originX = -half + col * cellSize;
+        const originZ = -half + row * cellSize;
+
+        const material = new TerrainMaterial(
+          this.params,
+          this.patch,
+          {
+            unitToLocal:   1,                         // one scene unit = one terrain unit
+            flatUp:        new THREE.Vector3(0, 1, 0),
+            domainToWorld: this.domainToWorld,
+          },
+          { wireframe: this.wireframe, roughness: this.roughness },
         );
-        mesh.position.set(-half + col * cellSize, 0, -half + row * cellSize);
+
+        const mesh = new THREE.Mesh(
+          this.buildPatchGeometry(originX, originZ, cellSize),
+          material.material,
+        );
+        mesh.position.set(originX, 0, originZ);
         this.scene.add(mesh);
         this._meshes.push(mesh);
+        this._materials.push(material);
       }
     }
   }
 
-  private buildPatchGeometry(cellSize: number): THREE.BufferGeometry {
-    const n = this.subdivisions;
-    const positions: number[] = [];
+  /**
+   * Geometry of one sub-patch.  Follows the terrain geometry contract:
+   *   position — flat, on the sea-level plane, relative to the sub-patch origin
+   *   normal   — direction on the planet of the point under the vertex
+   *   uv       — coordinate in the whole patch, addressing the baked textures
+   */
+  private buildPatchGeometry(originX: number, originZ: number, cellSize: number): THREE.BufferGeometry {
+    const n     = this.subdivisions;
+    const size  = this.params.patchSize;
+    const half  = size / 2;
+    const toRadii = 1 / this.params.planetRadiusUnits;
+    const frame = this.frame!;
+    const dir   = new THREE.Vector3();
+
+    const count     = (n + 1) * (n + 1);
+    const positions = new Float32Array(count * 3);
+    const normals   = new Float32Array(count * 3);
+    const uvs       = new Float32Array(count * 2);
+
+    let k = 0;
     for (let i = 0; i <= n; i++) {
       const x = cellSize * (i / n);
       for (let j = 0; j <= n; j++) {
-        positions.push(x, 0, cellSize * (j / n));
+        const z  = cellSize * (j / n);
+        const wx = originX + x;
+        const wz = originZ + z;
+
+        positions[k * 3]     = x;
+        positions[k * 3 + 1] = 0;
+        positions[k * 3 + 2] = z;
+
+        tangentPlaneDir(frame, wx * toRadii, wz * toRadii, dir);
+        normals[k * 3]     = dir.x;
+        normals[k * 3 + 1] = dir.y;
+        normals[k * 3 + 2] = dir.z;
+
+        uvs[k * 2]     = (wx + half) / size;
+        uvs[k * 2 + 1] = (wz + half) / size;
+        k++;
       }
     }
+
     const indices: number[] = [];
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
@@ -482,82 +318,12 @@ export class TerrainMesh {
         indices.push(tl, tr, bl, tr, br, bl);
       }
     }
+
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('normal',   new THREE.BufferAttribute(normals, 3));
+    geo.setAttribute('uv',       new THREE.BufferAttribute(uvs, 2));
     geo.setIndex(indices);
     return geo;
-  }
-
-  private buildMaterial(): THREE.MeshStandardMaterial {
-    const mat = new THREE.MeshStandardMaterial({
-      roughness: this.roughness,
-      metalness: 0.0,
-      side:      THREE.FrontSide,
-      wireframe: this.wireframe,
-    });
-
-    mat.onBeforeCompile = (shader) => {
-      // Register custom uniforms — stored for later sync calls.
-      Object.assign(shader.uniforms,
-        createTerrainVertexUniforms({
-          elevationTexture:   this.elevationTexture,
-          treeDensityTexture: this.treeTexture,
-          patchHalfSize:      this.patchSize / 2,
-          elevationOffset:    this.elevationOffset,
-          seaLevel:           this.seaLevel,
-        }),
-        createDetailNoiseUniforms({
-          detailNoiseTexture:  this.suppNoiseGL?.texture ?? null,
-          detailNoiseEnabled:  this.detailNoiseEnabled,
-          detailNoiseStrength: this.detailNoiseStrength,
-        }),
-        createTreeUniforms(this as TreeUniformState),
-        createTerrainColorUniforms(this.terrainColors),
-        // Attribute texture — produced by the compute pass.
-        { uAttrTex: { value: this.attrTexture } },
-        // Bump texture — baked by TerrainBumpGL (water normal gradient + tree bump).
-        { uBumpTex: { value: this.bumpNoiseGL?.texture ?? null } },
-      );
-      this._patchUniforms.push(shader.uniforms);
-
-      // ── Vertex shader ────────────────────────────────────────────────────
-      shader.vertexShader = terrainVertexPreamble + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <beginnormal_vertex>',
-        terrainVertexNormalChunk,
-      );
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <begin_vertex>',
-        terrainVertexPositionChunk,
-      );
-
-      // ── Fragment shader ──────────────────────────────────────────────────
-      shader.fragmentShader =
-        terrainFinalStateGLSL +
-        detailNoiseFragPreamble +
-        terrainFragmentVaryings +
-        shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <map_fragment>',
-        terrainFragmentMapChunk,
-      );
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <normal_fragment_begin>',
-        terrainFragmentNormalChunk,
-      );
-      // Roughness / metalness overrides — water pixels get low roughness so
-      // MeshStandardMaterial produces specular highlights.  Set scene.environment
-      // (via PMREMGenerator) for full PBR reflections on water.
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <roughnessmap_fragment>',
-        terrainFragmentRoughnessChunk,
-      );
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <metalnessmap_fragment>',
-        terrainFragmentMetalnessChunk,
-      );
-    };
-
-    return mat;
   }
 }

@@ -10,8 +10,11 @@ import { InteractionHandler } from './handlers/InteractionHandler';
 import { GeometryBuilder } from './builders/GeometryBuilder';
 import { FlyCam } from '@core/FlyCam';
 import { LODTileRenderer } from './lod/LODTileRenderer';
-import { TileShaderPatchOperation, SURFACE_OFFSET } from './lod/TileShaderPatchOperation';
+import { TileShaderPatchOperation, LODColorMode, SURFACE_OFFSET } from './lod/TileShaderPatchOperation';
+import { TerrainPatchOperation } from './lod/TerrainPatchOperation';
 import { kmToDistance } from '../../shared/world/World';
+import { terrainParams, type TerrainChange } from '../../shared/terrain/TerrainParams';
+import { TERRAIN_DEBUG_ELEVATION } from '@core/shaders/terrainSampleGLSL';
 
 /**
  * World application - the main tectonic plate simulation.
@@ -34,8 +37,12 @@ export class WorldApplication implements TabApplication {
   private terrainGUIManager: TerrainGUIManager | null = null;
 
   private flyCam: FlyCam | null = null;
+  /** Flat tectonic overlays (plate / geology / LOD level colors). */
   private patchOperation: TileShaderPatchOperation | null = null;
+  /** The shader terrain — same pipeline and parameters as the Shaders tab. */
+  private terrainPatchOperation: TerrainPatchOperation | null = null;
   private lodTileRenderer: LODTileRenderer | null = null;
+  private unsubscribeTerrainParams: (() => void) | null = null;
   private readonly clock = new THREE.Clock();
   private readonly _footDir = new THREE.Vector3(); // reused each frame for terrain floor query
   private boundOnResize: () => void;
@@ -109,6 +116,46 @@ export class WorldApplication implements TabApplication {
     this.guiManager?.refresh();
   }
 
+  /** True when the LOD view currently shows the shader terrain. */
+  private isTerrainActive(): boolean {
+    return this.terrainPatchOperation !== null
+        && this.lodTileRenderer?.getPatchOperation() === this.terrainPatchOperation;
+  }
+
+  /**
+   * Selects what the LOD view shows.  Terrain and Elevation are rendered by the
+   * terrain operation (Elevation being its grayscale debug view); the other
+   * modes are flat tectonic overlays rendered by the tile operation.
+   */
+  private onColorModeChange(mode: LODColorMode): void {
+    if (!this.lodTileRenderer || !this.patchOperation || !this.terrainPatchOperation) return;
+
+    if (mode === LODColorMode.TERRAIN || mode === LODColorMode.ELEVATION) {
+      this.terrainPatchOperation.setDebugMode(mode === LODColorMode.ELEVATION ? TERRAIN_DEBUG_ELEVATION : null);
+      this.lodTileRenderer.setPatchOperation(this.terrainPatchOperation);
+    } else {
+      this.patchOperation.setColorMode(mode);
+      this.lodTileRenderer.setPatchOperation(this.patchOperation);
+      this.lodTileRenderer.invalidate();
+    }
+  }
+
+  /** Reacts to edits of the shared terrain parameters (made in either tab). */
+  private onTerrainParamsChanged(change: TerrainChange): void {
+    if (!this.isTerrainActive()) return;
+    const applied = this.terrainPatchOperation!.applyParamsChange(change);
+    if (!applied) this.lodTileRenderer!.invalidate();
+  }
+
+  /** Lights for the terrain material; the other materials of this scene are unlit. */
+  private addTerrainLights(): void {
+    const scene = this.sceneManager.getScene();
+    const sun = new THREE.DirectionalLight(0xfff5e6, 2.0);
+    sun.position.set(1.0, 0.6, 0.8);
+    scene.add(sun);
+    scene.add(new THREE.AmbientLight(0x334d80, 0.8));
+  }
+
   private onFlyCamToggle(enabled: boolean): void {
     if (!this.flyCam) return;
     if (enabled) {
@@ -148,9 +195,12 @@ export class WorldApplication implements TabApplication {
         }
       );
 
-      // Create patch operation and LOD tile renderer
+      // Create patch operations and LOD tile renderer
       this.patchOperation = new TileShaderPatchOperation();
+      this.terrainPatchOperation = new TerrainPatchOperation(this.sceneManager.getRenderer(), terrainParams);
       this.lodTileRenderer = new LODTileRenderer(this.sceneManager.getScene(), this.patchOperation);
+      this.addTerrainLights();
+      this.unsubscribeTerrainParams = terrainParams.onChange((change) => this.onTerrainParamsChanged(change));
 
       // First-time initialization (also builds tectonic system + tile quad tree)
       this.reset();
@@ -168,16 +218,12 @@ export class WorldApplication implements TabApplication {
       this.guiManager.setupLODFolder(
         this.flyCam,
         this.lodTileRenderer,
-        this.patchOperation,
+        (mode) => this.onColorModeChange(mode),
         (enabled) => this.onFlyCamToggle(enabled)
       );
 
-      // Terrain shader GUI (separate pane for per-patch noise/erosion controls)
-      this.terrainGUIManager = new TerrainGUIManager(
-        this.patchOperation,
-        this.lodTileRenderer,
-        contentArea,
-      );
+      // Terrain GUI (separate pane; the terrain itself is edited in the Shaders tab)
+      this.terrainGUIManager = new TerrainGUIManager(terrainParams, contentArea);
 
       this.initialized = true;
     }
@@ -230,10 +276,12 @@ export class WorldApplication implements TabApplication {
     // The camera eye must sit at least GROUND_CLEARANCE above the terrain so
     // the near-clip plane cannot intersect the surface at any viewing angle.
     // This is the classical "pilot eye height" technique used in terrain engines.
-    if (this.flyCam && this.patchOperation) {
+    if (this.flyCam && this.patchOperation && this.terrainPatchOperation) {
       const cam = this.flyCam.camera;
       this._footDir.copy(cam.position).normalize();
-      const terrainRadius  = this.patchOperation.sampleSurfaceRadiusAt(this._footDir);
+      const terrainRadius  = this.isTerrainActive()
+        ? this.terrainPatchOperation.sampleSurfaceRadiusAt(this._footDir)
+        : this.patchOperation.sampleSurfaceRadiusAt(this._footDir);
       const floorRadius    = terrainRadius + kmToDistance(WorldApplication.GROUND_CLEARANCE_KM);
       if (cam.position.length() < floorRadius) {
         cam.position.setLength(floorRadius);
@@ -256,8 +304,13 @@ export class WorldApplication implements TabApplication {
       this.guiManager.dispose();
     }
 
+    this.unsubscribeTerrainParams?.();
+    this.unsubscribeTerrainParams = null;
+    this.terrainGUIManager?.dispose();
+
     this.flyCam?.dispose();
     this.lodTileRenderer?.dispose();
+    this.terrainPatchOperation?.dispose();
 
     this.noiseManager.clear();
     this.tectonicManager.clear();

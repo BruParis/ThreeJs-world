@@ -1,15 +1,16 @@
 /**
  * Shader-based LOD patch operation for tectonic tile visualization.
  *
+ * Renders the tectonic data (plate, geology) as a flat overlay on the sphere.
+ * Terrain relief is the job of TerrainPatchOperation.
+ *
  * For each visible quadrant, this operation:
  *   1. Queries TileQuadTree.queryCell() once to get the small set of tiles
  *      overlapping the patch — O(tiles), not O(vertices).
  *   2. Packs those tiles' polygon vertices and colors into a per-patch
  *      DataTexture that is uploaded to the GPU once.
- *   3. Creates a ShaderMaterial whose vertex shader applies simplex-noise
- *      elevation (via the same terrainGLSL pipeline as the flat Shaders tab)
- *      and whose fragment shader resolves tile membership via exact spherical
- *      polygon containment — all per-fragment work on the GPU.
+ *   3. Creates a ShaderMaterial whose fragment shader resolves tile membership
+ *      via exact spherical polygon containment — all per-fragment work on the GPU.
  *
  * DataTexture layout  (width = numTiles, height = 1 + MAX_VERTS, RGBA Float32)
  *   Row 0 :  (r, g, b, numVertices)
@@ -20,30 +21,20 @@ import * as THREE from 'three';
 import { QuadrantSpec } from '@core/quadtree';
 import { CubeFace, ProjectionManager } from '@core/geometry/SphereProjection';
 import { TileQuadTree } from '../tectonics/TileQuadTree';
-import { Tile, GeologicalType, PlateCategory } from '../tectonics/data/Plate';
+import { Tile } from '../tectonics/data/Plate';
 import { getPlateColor } from '../visualization/PlateColors';
 import { getGeologicalColor } from '../visualization/GeologyColors';
 import { IPatchOperation } from './IPatchOperation';
 import { tileVertexShader } from './shaders/tileVert';
 import { tileFragmentShader } from './shaders/tileFrag';
-import { realElevKmToApparent, apparentElevKmToDistance } from '../../../shared/world/World';
-import { PerlinNoise3D } from '@core/noise/PerlinNoise';
-import {
-  DEFAULT_EROSION_OCTAVES,
-  DEFAULT_EROSION_SCALE,
-  DEFAULT_EROSION_STRENGTH,
-  DEFAULT_EROSION_GULLY_WEIGHT,
-  DEFAULT_EROSION_DETAIL,
-  DEFAULT_EROSION_LACUNARITY,
-  DEFAULT_EROSION_GAIN,
-  DEFAULT_EROSION_CELL_SCALE,
-  DEFAULT_EROSION_NORMALIZATION,
-  DEFAULT_EROSION_RIDGE_ROUNDING,
-  DEFAULT_EROSION_CREASE_ROUNDING,
-} from '@core/shaders/erosionGLSL';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/**
+ * What the LOD view shows.
+ *   PLATE / GEOLOGY / LOD  — flat data overlays, rendered by TileShaderPatchOperation
+ *   TERRAIN / ELEVATION    — the shader terrain, rendered by TerrainPatchOperation
+ */
 export enum LODColorMode {
   PLATE      = 'plate',
   GEOLOGY    = 'geology',
@@ -63,10 +54,6 @@ const MAX_VERTS = 8;
 /** Radial offset above the dual mesh to prevent z-fighting. */
 export const SURFACE_OFFSET = 1.003;
 
-// ── Default terrain noise parameters ─────────────────────────────────────────
-
-const DEFAULT_TERRAIN_NOISE = { scale: 2.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
-
 // ── TileShaderPatchOperation ──────────────────────────────────────────────────
 
 export class TileShaderPatchOperation implements IPatchOperation {
@@ -74,164 +61,12 @@ export class TileShaderPatchOperation implements IPatchOperation {
   private colorMode: LODColorMode = LODColorMode.PLATE;
   private subdivisionFactor = 8;
 
-  // ── Terrain noise state ────────────────────────────────────────────────────
-  private noiseScale       = DEFAULT_TERRAIN_NOISE.scale;
-  private noiseOctaves     = DEFAULT_TERRAIN_NOISE.octaves;
-  private noisePersistence = DEFAULT_TERRAIN_NOISE.persistence;
-  private noiseLacunarity  = DEFAULT_TERRAIN_NOISE.lacunarity;
-
-  // ── Elevation amplitude ────────────────────────────────────────────────────
-  /** Apparent (visually exaggerated) elevation amplitude in km. */
-  private elevationAmplitudeApparentKm = realElevKmToApparent(10); // default: 10 km real → 100 km apparent
-
-  // ── Elevation offset ───────────────────────────────────────────────────────
-  /** Uniform shift applied to elevation [0,1] before the sea-level test. */
-  private elevOffset = 0.0;
-
-  // ── Erosion parameters ─────────────────────────────────────────────────────
-  private erosionEnabled        = 0;
-  private erosionOctaves        = DEFAULT_EROSION_OCTAVES;
-  private erosionScale          = DEFAULT_EROSION_SCALE;
-  private erosionStrength       = DEFAULT_EROSION_STRENGTH;
-  private erosionGullyWeight    = DEFAULT_EROSION_GULLY_WEIGHT;
-  private erosionDetail         = DEFAULT_EROSION_DETAIL;
-  private erosionLacunarity     = DEFAULT_EROSION_LACUNARITY;
-  private erosionGain           = DEFAULT_EROSION_GAIN;
-  private erosionCellScale      = DEFAULT_EROSION_CELL_SCALE;
-  private erosionNormalization  = DEFAULT_EROSION_NORMALIZATION;
-  private erosionRidgeRounding  = DEFAULT_EROSION_RIDGE_ROUNDING;
-  private erosionCreaseRounding = DEFAULT_EROSION_CREASE_ROUNDING;
-
-  // CPU-side Perlin noise for approximate terrain floor queries (sampleSurfaceRadiusAt).
-  // Uses a fixed seed — the visual uses simplex noise but this approximation is
-  // close enough to floor the fly camera above the terrain.
-  private readonly cpuNoise = new PerlinNoise3D(42);
-
-  // ── Terrain noise API ──────────────────────────────────────────────────────
-
   /**
-   * Update terrain simplex noise parameters used by the LOD elevation shader.
-   * The caller is responsible for invalidating the LOD renderer afterwards.
+   * Radius of the rendered surface in the given direction.  Tile patches are
+   * flat, so this is the sphere offset everywhere.
    */
-  setTerrainNoiseParams(
-    scale: number,
-    octaves: number,
-    persistence: number,
-    lacunarity: number
-  ): void {
-    this.noiseScale       = scale;
-    this.noiseOctaves     = octaves;
-    this.noisePersistence = persistence;
-    this.noiseLacunarity  = lacunarity;
-  }
-
-  // ── Elevation amplitude API ────────────────────────────────────────────────
-
-  /**
-   * Set the apparent (visually exaggerated) elevation amplitude in km.
-   * The caller is responsible for invalidating the LOD renderer afterwards.
-   */
-  setElevationAmplitudeApparentKm(apparentKm: number): void {
-    this.elevationAmplitudeApparentKm = apparentKm;
-  }
-
-  getElevationAmplitudeApparentKm(): number {
-    return this.elevationAmplitudeApparentKm;
-  }
-
-  /** Set the elevation offset (uniform shift before sea-level test). */
-  setElevOffset(v: number): void {
-    this.elevOffset = v;
-  }
-
-  getElevOffset(): number {
-    return this.elevOffset;
-  }
-
-  // ── Erosion API ────────────────────────────────────────────────────────────
-
-  /**
-   * Update erosion parameters used by the LOD elevation shader.
-   * The caller is responsible for invalidating the LOD renderer afterwards.
-   */
-  setErosionParams(
-    enabled: boolean,
-    octaves: number,
-    scale: number,
-    strength: number,
-    gullyWeight: number,
-    detail: number,
-    lacunarity: number,
-    gain: number,
-    cellScale: number,
-    normalization: number,
-    ridgeRounding: number,
-    creaseRounding: number,
-  ): void {
-    this.erosionEnabled        = enabled ? 1 : 0;
-    this.erosionOctaves        = octaves;
-    this.erosionScale          = scale;
-    this.erosionStrength       = strength;
-    this.erosionGullyWeight    = gullyWeight;
-    this.erosionDetail         = detail;
-    this.erosionLacunarity     = lacunarity;
-    this.erosionGain           = gain;
-    this.erosionCellScale      = cellScale;
-    this.erosionNormalization  = normalization;
-    this.erosionRidgeRounding  = ridgeRounding;
-    this.erosionCreaseRounding = creaseRounding;
-  }
-
-  getErosionEnabled(): boolean { return this.erosionEnabled === 1; }
-
-  /**
-   * Returns the terrain surface radius (distance from world origin) at the
-   * given unit-sphere direction, matching approximately what the GPU vertex
-   * shader displaces to.  Used to floor the fly camera above the terrain.
-   *
-   * Note: uses CPU Perlin noise as an approximation of the GPU simplex noise —
-   * sufficient for camera-floor queries.
-   *
-   * @param normalizedDir - Unit-length direction vector pointing at the surface.
-   */
-  sampleSurfaceRadiusAt(normalizedDir: THREE.Vector3): number {
-    // Resolve tile elevation weight (0 = oceanic/flat, 1 = continental)
-    let elevWeight = 1.0; // conservative default: assume raised terrain
-    const candidates = this.tileTree?.queryPoint(normalizedDir) ?? [];
-    if (candidates.length > 0) {
-      let best = candidates[0];
-      let bestDot = best.centroid.dot(normalizedDir);
-      for (let i = 1; i < candidates.length; i++) {
-        const d = candidates[i].centroid.dot(normalizedDir);
-        if (d > bestDot) { bestDot = d; best = candidates[i]; }
-      }
-      elevWeight = this.tileElevWeight(best);
-    }
-
-    // Mirror the vertex shader: project to cube-face UV, sample 2D noise
-    const ax = Math.abs(normalizedDir.x);
-    const ay = Math.abs(normalizedDir.y);
-    const az = Math.abs(normalizedDir.z);
-    let pu: number, pv: number;
-    if (ax >= ay && ax >= az) {
-      pu = normalizedDir.y / ax * this.noiseScale;
-      pv = normalizedDir.z / ax * this.noiseScale;
-    } else if (ay >= ax && ay >= az) {
-      pu = normalizedDir.x / ay * this.noiseScale;
-      pv = normalizedDir.z / ay * this.noiseScale;
-    } else {
-      pu = normalizedDir.x / az * this.noiseScale;
-      pv = normalizedDir.y / az * this.noiseScale;
-    }
-    const fbmVal = this.cpuNoise.fbm(pu, 0, pv,
-      this.noiseOctaves, this.noisePersistence, this.noiseLacunarity);
-    const elevation = fbmVal * 0.5 + 0.5;
-    const shiftedElev = Math.min(1, Math.max(0, elevation + this.elevOffset));
-    const TERRAIN_SEA = 0.35;
-    const displH = Math.max(0, (shiftedElev - TERRAIN_SEA) / (1 - TERRAIN_SEA));
-    const elev = displH * apparentElevKmToDistance(this.elevationAmplitudeApparentKm) * elevWeight;
-
-    return SURFACE_OFFSET + elev;
+  sampleSurfaceRadiusAt(_normalizedDir: THREE.Vector3): number {
+    return SURFACE_OFFSET;
   }
 
   dispose(): void {
@@ -299,7 +134,6 @@ export class TileShaderPatchOperation implements IPatchOperation {
     for (let i = 0; i < numTiles; i++) {
       const tile = tiles[i];
       const [r, g, b] = this.tileColor(tile);
-      const ownWeight = this.tileElevWeight(tile);
 
       const verts: THREE.Vector3[] = [];
       for (const he of tile.loop()) {
@@ -308,12 +142,12 @@ export class TileShaderPatchOperation implements IPatchOperation {
       }
       const nv = verts.length;
 
-      // Row 0: (r, g, b, nv + ownWeight * 0.1)
+      // Row 0: (r, g, b, nv)
       const r0 = (0 * texWidth + i) * 4;
       texData[r0 + 0] = r;
       texData[r0 + 1] = g;
       texData[r0 + 2] = b;
-      texData[r0 + 3] = nv + ownWeight * 0.1;
+      texData[r0 + 3] = nv;
 
       for (let j = 0; j < MAX_VERTS; j++) {
         const rj = ((1 + j) * texWidth + i) * 4;
@@ -373,32 +207,11 @@ export class TileShaderPatchOperation implements IPatchOperation {
     const mat = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: {
-        uTileData:             { value: tileData },
-        uNumTiles:             { value: numTiles },
-        uNoiseScale:           { value: this.noiseScale },
-        uNoiseOctaves:         { value: this.noiseOctaves },
-        uNoisePersistence:     { value: this.noisePersistence },
-        uNoiseLacunarity:      { value: this.noiseLacunarity },
-        uElevationAmplitude:   { value: apparentElevKmToDistance(this.elevationAmplitudeApparentKm) },
-        uSphereOffset:         { value: SURFACE_OFFSET },
-        uElevOffset:           { value: this.elevOffset },
-        uColorMode:            { value: this.colorMode === LODColorMode.ELEVATION ? 1
-                                         : this.colorMode === LODColorMode.TERRAIN   ? 2
-                                         : this.colorMode === LODColorMode.LOD       ? 3
-                                         : 0 },
-        uLodColor:             { value: this.levelColor(spec.level) },
-        uErosionEnabled:       { value: this.erosionEnabled },
-        uErosionOctaves:       { value: this.erosionOctaves },
-        uErosionScale:         { value: this.erosionScale },
-        uErosionStrength:      { value: this.erosionStrength },
-        uErosionGullyWeight:   { value: this.erosionGullyWeight },
-        uErosionDetail:        { value: this.erosionDetail },
-        uErosionLacunarity:    { value: this.erosionLacunarity },
-        uErosionGain:          { value: this.erosionGain },
-        uErosionCellScale:     { value: this.erosionCellScale },
-        uErosionNormalization: { value: this.erosionNormalization },
-        uErosionRidgeRounding: { value: this.erosionRidgeRounding },
-        uErosionCreaseRounding:{ value: this.erosionCreaseRounding },
+        uTileData:     { value: tileData },
+        uNumTiles:     { value: numTiles },
+        uSphereOffset: { value: SURFACE_OFFSET },
+        uColorMode:    { value: this.colorMode === LODColorMode.LOD ? 3 : 0 },
+        uLodColor:     { value: this.levelColor(spec.level) },
       },
       vertexShader:   tileVertexShader,
       fragmentShader: tileFragmentShader,
@@ -436,13 +249,6 @@ export class TileShaderPatchOperation implements IPatchOperation {
       ((hex >>  8) & 0xff) / 255,
        (hex        & 0xff) / 255,
     );
-  }
-
-  private tileElevWeight(tile: Tile): number {
-    if (!tile.hasPlate) return 1.0;
-    if (tile.plate.category === PlateCategory.OCEANIC) return 0.0;
-    if (tile.geologicalType === GeologicalType.OCEANIC_CRUST) return 0.0;
-    return 1.0;
   }
 
   private tileColor(tile: Tile): [number, number, number] {

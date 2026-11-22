@@ -11,6 +11,29 @@ import { QuadrantSpec } from '@core/quadtree';
  */
 export interface IPatchOperation {
   /**
+   * Upper bound on the number of patches created in one frame.
+   * Set it when creating a patch is expensive (e.g. GPU bakes); the renderer
+   * then spreads the work over several frames and keeps the patches being
+   * replaced on screen until their replacements exist.
+   * Unlimited when omitted.
+   */
+  readonly maxPatchesPerFrame?: number;
+
+  /**
+   * Deepest quadtree level this operation can render meaningfully.
+   * Unlimited (the LOD system's own cap) when omitted.
+   */
+  readonly maxLevel?: number;
+
+  /**
+   * Factor applied to the target screen-space size of a patch.
+   * Operations whose patches carry a lot of detail (dense meshes, baked
+   * textures) can cover more pixels each, hence need fewer patches.
+   * 1 when omitted.
+   */
+  readonly screenSizeScale?: number;
+
+  /**
    * Create a renderable Object3D for the given quadrant spec.
    * Returns null if the patch cannot be created yet (e.g. data not ready).
    *

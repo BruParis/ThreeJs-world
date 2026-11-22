@@ -1,41 +1,40 @@
 /**
- * Elevation compute shader body — GPU compute pass (GLSL ES 3.0 fragment).
+ * Elevation compute shader body — GPU bake pass (GLSL ES 3.0 fragment).
  *
  * Static pass: elevation data only — no classification, no tree density.
  *
+ * Each texel is evaluated at a 3D position on the planet (see patchBakeGLSL),
+ * so the result does not depend on the shape of the patch grid.
+ *
  * MRT output:
- *   COLOR_ATTACHMENT0 — elevation texture (LinearFilter)
- *     R = rawElev [0,1]  G = dH/dX  B = dH/dZ  A = unused (0)
- *   COLOR_ATTACHMENT1 — attribute texture (NearestFilter)
+ *   location 0 — elevation texture
+ *     R = rawElev [0,1]   GBA = surface gradient (3D tangent vector, per terrain unit)
+ *   location 1 — attribute texture
  *     R = ridgeMap [-1,1]  G = erosionDepth packed (×0.5+0.5)  B,A = unused
  *
- * Wrapped with `#version 300 es` + `precision` header by TerrainElevationGL.
+ * Used as the fragment shader of a GLSL3 THREE.ShaderMaterial (TerrainPatchBaker).
  */
 
 import { terrainSampleGLSL }  from '@core/shaders/terrainSampleGLSL';
+import { patchBakeGLSL }      from '@core/shaders/patchBakeGLSL';
 import { simplexNoiseGLSL }   from '@core/noise/simplexGLSL';
 import { perlinNoiseGLSL }    from '@core/noise/perlinGLSL';
-import { shaderUtilsGLSL }   from '@core/shaders/shaderUtilsGLSL';
-import { erosionGLSL }        from '@core/shaders/erosionGLSL';
+import { fractalNoise3GLSL }  from '@core/noise/fractalNoise3GLSL';
+import { erosion3GLSL }       from '@core/shaders/erosion3GLSL';
 import { terrainGLSL }        from '@core/shaders/terrainGLSL';
-import { heightmapGLSL }      from '@core/noise/heightmapGLSL';
-import { fractalNoiseGLSL }   from '@core/noise/fractalNoiseGLSL';
 import { terrainNoiseGLSL }   from '@core/shaders/terrainNoiseGLSL';
 
 export const elevationComputeGLSL = /* glsl */`
 
 ${terrainSampleGLSL}
+${patchBakeGLSL}
 
-uniform float uOriginX;
-uniform float uOriginZ;
-uniform float uStepX;
-uniform float uStepZ;
-uniform float uPatchHalfSize;
 uniform int   uNoiseType;
 uniform float uNoiseScale;
 uniform int   uNoiseOctaves;
 uniform float uNoisePersistence;
 uniform float uNoiseLacunarity;
+uniform vec3  uGaussCenter;
 uniform float uGaussSigma;
 uniform float uGaussAmplitude;
 uniform float uFractalFreq;
@@ -61,29 +60,30 @@ layout(location = 1) out vec4 fragAttr;
 
 ${simplexNoiseGLSL}
 ${perlinNoiseGLSL}
-${shaderUtilsGLSL}
-${erosionGLSL}
+${fractalNoise3GLSL}
+${erosion3GLSL}
 ${terrainGLSL}
-${heightmapGLSL}
-${fractalNoiseGLSL}
 ${terrainNoiseGLSL}
 
 void main() {
-  float worldX = uOriginX + (gl_FragCoord.x - 0.5) * uStepX;
-  float worldZ = uOriginZ + (gl_FragCoord.y - 0.5) * uStepZ;
-  vec3 wPos = vec3(worldX, 0.0, worldZ);
+  vec3 up = patchBakeDir();
+  vec3 P  = up * uPlanetRadius;
 
   float rawElev, ridge, erosionDepth;
-  computeElevation(wPos, rawElev, ridge, erosionDepth);
+  computeElevation(P, up, rawElev, ridge, erosionDepth);
 
-  float dL = displNorm(wPos - vec3(uStepX, 0.0, 0.0));
-  float dR = displNorm(wPos + vec3(uStepX, 0.0, 0.0));
-  float dD = displNorm(wPos - vec3(0.0, 0.0, uStepZ));
-  float dU = displNorm(wPos + vec3(0.0, 0.0, uStepZ));
-  float gradX = (dR - dL) / (2.0 * uStepX);
-  float gradZ = (dU - dD) / (2.0 * uStepZ);
+  // Surface gradient by central differences along an orthonormal tangent basis.
+  // The step is the texel footprint, so the gradient matches what the grid resolves.
+  vec3 t1, t2;
+  terrainTangentBasis(up, t1, t2);
+  float h  = max(uTexelSize, 1e-6);
+  float dL = displNorm(P - t1 * h, up);
+  float dR = displNorm(P + t1 * h, up);
+  float dD = displNorm(P - t2 * h, up);
+  float dU = displNorm(P + t2 * h, up);
+  vec3 grad = (t1 * (dR - dL) + t2 * (dU - dD)) / (2.0 * h);
 
-  fragColor = packElevationChannel(rawElev, gradX, gradZ); // A = 0
+  fragColor = packElevationChannel(rawElev, grad);
   fragAttr  = vec4(ridge, erosionDepth * 0.5 + 0.5, 0.0, 0.0);
 }
 `;

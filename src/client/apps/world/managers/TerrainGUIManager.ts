@@ -1,159 +1,93 @@
 /**
- * Separate Tweakpane for per-patch terrain shader controls.
+ * Separate Tweakpane for the terrain controls of the World tab.
  *
  * Positioned on the left side of the screen so it is visually distinct from
  * the main GUIManager pane (which sits on the right and holds global/tectonic
  * controls).
  *
- * Tab layout mirrors ShaderDemoGUI:
- *   Terrain  — elevation amplitude and offset
- *   Noise    — simplex FBM parameters (scale, octaves, persistence, lacunarity)
- *   Erosion  — erosion toggle + all tuning knobs
+ * The terrain itself (noise, erosion, vegetation, colors) is edited in the
+ * Shaders tab: both tabs render from the same shared parameters, so anything
+ * tuned there on the flat patch is what the planet shows here.  This pane only
+ * exposes the few controls worth having at hand while looking at the planet.
  */
 
 import { Pane } from 'tweakpane';
-import { TileShaderPatchOperation } from '../lod/TileShaderPatchOperation';
-import { LODTileRenderer } from '../lod/LODTileRenderer';
-import { apparentElevKmToReal } from '../../../shared/world/World';
-import {
-  DEFAULT_EROSION_OCTAVES,
-  DEFAULT_EROSION_SCALE,
-  DEFAULT_EROSION_STRENGTH,
-  DEFAULT_EROSION_GULLY_WEIGHT,
-  DEFAULT_EROSION_DETAIL,
-  DEFAULT_EROSION_LACUNARITY,
-  DEFAULT_EROSION_GAIN,
-  DEFAULT_EROSION_CELL_SCALE,
-  DEFAULT_EROSION_NORMALIZATION,
-  DEFAULT_EROSION_RIDGE_ROUNDING,
-  DEFAULT_EROSION_CREASE_ROUNDING,
-} from '@core/shaders/erosionGLSL';
+import { type TerrainParams } from '../../../shared/terrain/TerrainParams';
 
 export class TerrainGUIManager {
   private pane: Pane;
+  private readonly unsubscribe: () => void;
 
-  constructor(
-    patchOperation: TileShaderPatchOperation,
-    lodRenderer: LODTileRenderer,
-    contentArea: HTMLElement,
-  ) {
-    this.pane = new Pane({ title: 'Terrain Shader' });
+  constructor(params: TerrainParams, contentArea: HTMLElement) {
+    this.pane = new Pane({ title: 'Terrain' });
     this.pane.element.style.position = 'absolute';
     this.pane.element.style.top      = '0';
     this.pane.element.style.left     = '0';
     this.pane.element.style.width    = '280px';
     contentArea.appendChild(this.pane.element);
 
-    const invalidate = () => lodRenderer.invalidate();
-
-    const tab = this.pane.addTab({
-      pages: [
-        { title: 'Terrain'  },
-        { title: 'Noise'    },
-        { title: 'Erosion'  },
-      ],
-    });
-    const [terrainPage, noisePage, erosionPage] = tab.pages;
-
-    // ── Tab: Terrain ──────────────────────────────────────────────────────────
-
-    const elevParams = {
-      apparentKm: patchOperation.getElevationAmplitudeApparentKm(),
-      realKm:     apparentElevKmToReal(patchOperation.getElevationAmplitudeApparentKm()),
+    const state = {
+      amplitudeKm:  params.elevationAmplitudeKm,
+      exaggeration: params.elevationDisplayScale,
+      shownKm:      0,
+      offset:       params.elevationOffset,
+      kmPerUnit:    params.kmPerUnit,
+      more:         'Shaders tab',
     };
 
-    const elevRealBinding = terrainPage.addBinding(elevParams, 'realKm', {
-      label: 'Amplitude real (km)', readonly: true,
-    });
-    terrainPage.addBinding(elevParams, 'apparentKm', {
-      label: 'Amplitude (km)', min: 10, max: 500, step: 5,
+    // True while the pane is being refreshed from the store, so that the
+    // refresh does not write the same values back and notify again.
+    let syncing = false;
+    const refreshDerived = () => {
+      state.shownKm = (1 - params.seaLevel) * params.elevationAmplitudeApparentKm;
+    };
+    refreshDerived();
+
+    this.pane.addBinding(state, 'amplitudeKm', {
+      label: 'Relief (km)', min: 0.5, max: 30, step: 0.5,
     }).on('change', ({ value }) => {
-      elevParams.realKm = apparentElevKmToReal(value);
-      elevRealBinding.refresh();
-      patchOperation.setElevationAmplitudeApparentKm(value);
-      invalidate();
+      if (syncing) return;
+      params.elevationAmplitudeKm = value;
+      params.notify('display');
     });
 
-    const elevOffsetParams = { offset: patchOperation.getElevOffset() };
-    terrainPage.addBinding(elevOffsetParams, 'offset', {
-      label: 'Elev. Offset', min: -0.5, max: 0.5, step: 0.01,
-    }).on('change', ({ value }: { value: number }) => {
-      patchOperation.setElevOffset(value);
-      invalidate();
+    this.pane.addBinding(state, 'exaggeration', {
+      label: 'Exaggeration', min: 1, max: 30, step: 0.5,
+    }).on('change', ({ value }) => {
+      if (syncing) return;
+      params.elevationDisplayScale = value;
+      params.notify('display');
     });
 
-    // ── Tab: Noise ────────────────────────────────────────────────────────────
+    this.pane.addBinding(state, 'shownKm', {
+      label: 'Shown height (km)', readonly: true, format: (v: number) => v.toFixed(1),
+    });
 
-    const noiseParams = { scale: 10.0, octaves: 4, persistence: 0.5, lacunarity: 2.0 };
+    this.pane.addBinding(state, 'offset', {
+      label: 'Elev. Offset', min: -0.4, max: 0.5, step: 0.01,
+    }).on('change', ({ value }) => {
+      if (syncing) return;
+      params.elevationOffset = value;
+      params.notify('trees');
+    });
 
-    // Sync initial value so the shader starts at scale=10
-    patchOperation.setTerrainNoiseParams(
-      noiseParams.scale, noiseParams.octaves,
-      noiseParams.persistence, noiseParams.lacunarity,
-    );
+    this.pane.addBinding(state, 'kmPerUnit', {
+      label: 'km / unit', readonly: true, format: (v: number) => v.toFixed(0),
+    });
 
-    const syncNoise = () => {
-      patchOperation.setTerrainNoiseParams(
-        noiseParams.scale, noiseParams.octaves,
-        noiseParams.persistence, noiseParams.lacunarity,
-      );
-      invalidate();
-    };
+    this.pane.addBinding(state, 'more', { label: 'Other settings', readonly: true });
 
-    noisePage.addBinding(noiseParams, 'scale',       { label: 'Scale',       min: 10,  max: 100, step: 1    }).on('change', syncNoise);
-    noisePage.addBinding(noiseParams, 'octaves',     { label: 'Octaves',     min: 1,   max: 8,   step: 1    }).on('change', syncNoise);
-    noisePage.addBinding(noiseParams, 'persistence', { label: 'Persistence', min: 0.1, max: 1.0, step: 0.05 }).on('change', syncNoise);
-    noisePage.addBinding(noiseParams, 'lacunarity',  { label: 'Lacunarity',  min: 1.0, max: 4.0, step: 0.1  }).on('change', syncNoise);
-
-    // ── Tab: Erosion ──────────────────────────────────────────────────────────
-
-    const erosionParams = {
-      enabled:        patchOperation.getErosionEnabled(),
-      scale:          DEFAULT_EROSION_SCALE,
-      strength:       DEFAULT_EROSION_STRENGTH,
-      gullyWeight:    DEFAULT_EROSION_GULLY_WEIGHT,
-      detail:         DEFAULT_EROSION_DETAIL,
-      octaves:        DEFAULT_EROSION_OCTAVES,
-      lacunarity:     DEFAULT_EROSION_LACUNARITY,
-      gain:           DEFAULT_EROSION_GAIN,
-      cellScale:      DEFAULT_EROSION_CELL_SCALE,
-      normalization:  DEFAULT_EROSION_NORMALIZATION,
-      ridgeRounding:  DEFAULT_EROSION_RIDGE_ROUNDING,
-      creaseRounding: DEFAULT_EROSION_CREASE_ROUNDING,
-    };
-
-    const syncErosion = () => {
-      patchOperation.setErosionParams(
-        erosionParams.enabled,
-        erosionParams.octaves,
-        erosionParams.scale,
-        erosionParams.strength,
-        erosionParams.gullyWeight,
-        erosionParams.detail,
-        erosionParams.lacunarity,
-        erosionParams.gain,
-        erosionParams.cellScale,
-        erosionParams.normalization,
-        erosionParams.ridgeRounding,
-        erosionParams.creaseRounding,
-      );
-      invalidate();
-    };
-
-    erosionPage.addBinding(erosionParams, 'enabled',     { label: 'Enabled'       }).on('change', syncErosion);
-    erosionPage.addBinding(erosionParams, 'scale',       { label: 'Scale',        min: 0.02, max: 0.5,  step: 0.01 }).on('change', syncErosion);
-    erosionPage.addBinding(erosionParams, 'strength',    { label: 'Strength',     min: 0.0,  max: 0.5,  step: 0.01 }).on('change', syncErosion);
-    erosionPage.addBinding(erosionParams, 'gullyWeight', { label: 'Gully Weight', min: 0.0,  max: 1.0,  step: 0.01 }).on('change', syncErosion);
-    erosionPage.addBinding(erosionParams, 'detail',      { label: 'Detail',       min: 0.3,  max: 3.0,  step: 0.05 }).on('change', syncErosion);
-    erosionPage.addBinding(erosionParams, 'octaves',     { label: 'Octaves',      min: 1,    max: 8,    step: 1    }).on('change', syncErosion);
-    erosionPage.addBinding(erosionParams, 'lacunarity',  { label: 'Lacunarity',   min: 1.0,  max: 4.0,  step: 0.1  }).on('change', syncErosion);
-    erosionPage.addBinding(erosionParams, 'gain',        { label: 'Gain',         min: 0.1,  max: 1.0,  step: 0.05 }).on('change', syncErosion);
-
-    const advFolder = erosionPage.addFolder({ title: 'Advanced', expanded: false });
-    advFolder.addBinding(erosionParams, 'cellScale',      { label: 'Cell Scale',      min: 0.2, max: 2.0, step: 0.05 }).on('change', syncErosion);
-    advFolder.addBinding(erosionParams, 'normalization',  { label: 'Normalization',   min: 0.0, max: 1.0, step: 0.05 }).on('change', syncErosion);
-    advFolder.addBinding(erosionParams, 'ridgeRounding',  { label: 'Ridge Rounding',  min: 0.0, max: 1.0, step: 0.05 }).on('change', syncErosion);
-    advFolder.addBinding(erosionParams, 'creaseRounding', { label: 'Crease Rounding', min: 0.0, max: 1.0, step: 0.05 }).on('change', syncErosion);
+    // Keep the pane in step with edits made in the Shaders tab.
+    this.unsubscribe = params.onChange(() => {
+      state.amplitudeKm  = params.elevationAmplitudeKm;
+      state.exaggeration = params.elevationDisplayScale;
+      state.offset       = params.elevationOffset;
+      state.kmPerUnit    = params.kmPerUnit;
+      refreshDerived();
+      syncing = true;
+      this.pane.refresh();
+      syncing = false;
+    });
   }
 
   public show(): void {
@@ -165,6 +99,7 @@ export class TerrainGUIManager {
   }
 
   public dispose(): void {
+    this.unsubscribe();
     this.pane.dispose();
     this.pane.element.remove();
   }

@@ -4,7 +4,7 @@
  * Exposes:
  *   struct TerrainClassification
  *   TerrainClassification classifyTerrain(float elevation, float ridgeMap,
- *                                         float normalY, vec2 worldXZ)
+ *                                         float normalY, vec3 P, float treeNoiseFade)
  *
  * Called once per fragment in the rendering pass.
  * The tree density compute pass (treeDensityComputeGLSL) also classifies isWater
@@ -27,7 +27,7 @@ struct TerrainClassification {
   bool  isTree;
 };
 
-TerrainClassification classifyTerrain(float elevation, float ridgeMap, float normalY, vec2 worldXZ) {
+TerrainClassification classifyTerrain(float elevation, float ridgeMap, float normalY, vec3 P, float treeNoiseFade) {
   TerrainClassification tc;
   tc.isWater = elevation < uSeaLevel;
 
@@ -35,7 +35,7 @@ TerrainClassification classifyTerrain(float elevation, float ridgeMap, float nor
                  && elevation < GRASS_HEIGHT + 0.04
                  && normalY   > 0.85;
 
-  tc.trees   = ComputeTreeMap(elevation, ridgeMap, normalY, worldXZ, tc.isWater, grassZone);
+  tc.trees   = ComputeTreeMap(elevation, ridgeMap, normalY, P, tc.isWater, grassZone, treeNoiseFade);
   tc.isTree  = !tc.isWater && tc.trees > 0.36;
   tc.isGrass = grassZone && !tc.isTree;
 

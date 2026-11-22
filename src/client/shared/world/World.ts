@@ -182,3 +182,68 @@ export function apparentElevKmToReal(apparentKm: number, displayScale: number = 
 export function apparentElevKmToDistance(apparentKm: number): number {
   return kmToDistance(apparentKm);
 }
+
+// ============================================================================
+// Terrain Units
+// ============================================================================
+//
+// The terrain shader pipeline works in "terrain units": a horizontal length
+// unit shared by the Shaders tab (flat patch) and the World tab (sphere LOD).
+// All noise / erosion / vegetation frequencies are expressed per terrain unit,
+// so one number (km per terrain unit) fixes the real-world size of every
+// terrain feature.
+
+/**
+ * Default number of kilometers covered by one terrain unit.
+ */
+export const DEFAULT_KM_PER_TERRAIN_UNIT = 100;
+
+/**
+ * Arc length of one cube-face edge on the sphere, in kilometers
+ * (a quarter of a great circle).
+ */
+export const CUBE_FACE_ARC_KM = (Math.PI / 2) * WORLD_RADIUS_KM;
+
+/**
+ * Converts kilometers to terrain units.
+ */
+export function kmToTerrainUnits(km: number, kmPerUnit: number = DEFAULT_KM_PER_TERRAIN_UNIT): number {
+  return km / kmPerUnit;
+}
+
+/**
+ * Converts terrain units to kilometers.
+ */
+export function terrainUnitsToKm(units: number, kmPerUnit: number = DEFAULT_KM_PER_TERRAIN_UNIT): number {
+  return units * kmPerUnit;
+}
+
+/**
+ * World radius expressed in terrain units.
+ */
+export function worldRadiusInTerrainUnits(kmPerUnit: number = DEFAULT_KM_PER_TERRAIN_UNIT): number {
+  return WORLD_RADIUS_KM / kmPerUnit;
+}
+
+/**
+ * Approximate edge length (km) of a quadtree cell at the given level.
+ * Level 0 is a whole cube face; each level halves the edge.
+ */
+export function cellSizeKmAtLevel(level: number): number {
+  return CUBE_FACE_ARC_KM / Math.pow(2, level);
+}
+
+/**
+ * Fractional quadtree level whose cell edge equals the given size in km.
+ * The inverse of cellSizeKmAtLevel.
+ */
+export function lodLevelForSizeKm(sizeKm: number): number {
+  return Math.log2(CUBE_FACE_ARC_KM / sizeKm);
+}
+
+/**
+ * Angle (degrees) subtended at the world centre by an arc of the given length.
+ */
+export function kmToArcDegrees(km: number): number {
+  return (km / WORLD_RADIUS_KM) * (180 / Math.PI);
+}

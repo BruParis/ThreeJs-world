@@ -6,7 +6,7 @@ import { InteractionHandler, BoundaryDisplayMode } from '../handlers/Interaction
 import { PlateDisplayMode, PLATE_VISUALIZATION_LEGEND } from '../visualization/PlateColors';
 import { GEOLOGY_TYPE_LEGEND, getGeologicalTypeColor } from '../visualization/GeologyColors';
 import { LODTileRenderer } from '../lod/LODTileRenderer';
-import { TileShaderPatchOperation, LODColorMode } from '../lod/TileShaderPatchOperation';
+import { LODColorMode } from '../lod/TileShaderPatchOperation';
 import { FlyCam } from '@core/FlyCam';
 
 const MIN_DEGREE = 0;
@@ -32,7 +32,7 @@ export class GUIManager {
   private onResetCallback: (degree: number) => void;
   private netRotationParams = { x: 0, y: 0, z: 0, magnitude: 0 };
   private lodRenderer: LODTileRenderer | null = null;
-  private patchOperation: TileShaderPatchOperation | null = null;
+  private onColorModeChange: ((mode: LODColorMode) => void) | null = null;
 
   constructor(
     visualizationManager: VisualizationManager,
@@ -97,8 +97,7 @@ export class GUIManager {
       this.tectonicManager.setPlateDisplayMode(
         (isGeology || isTerrain) ? PlateDisplayMode.NONE : PlateDisplayMode.CATEGORY,
       );
-      this.patchOperation?.setColorMode(value);
-      this.lodRenderer?.invalidate();
+      this.onColorModeChange?.(value);
     });
 
     // ── View ──────────────────────────────────────────────────────────────────
@@ -216,11 +215,11 @@ export class GUIManager {
   public setupLODFolder(
     flyCam: FlyCam,
     lodRenderer: LODTileRenderer,
-    patchOperation: TileShaderPatchOperation,
+    onColorModeChange: (mode: LODColorMode) => void,
     onFlyCamToggle: (enabled: boolean) => void
   ): void {
-    this.lodRenderer   = lodRenderer;
-    this.patchOperation = patchOperation;
+    this.lodRenderer       = lodRenderer;
+    this.onColorModeChange = onColorModeChange;
 
     const lodFolder = this.pane.addFolder({ title: 'LOD View', expanded: true });
 
