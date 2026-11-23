@@ -15,6 +15,10 @@ import { TabApplication } from '../../tabs/TabManager';
 import { FlyCam } from '@core/FlyCam';
 import { TerrainMesh } from './terrain/TerrainMesh';
 import { buildShaderDemoGUI, ShaderDemoGUIHandle } from './gui/ShaderDemoGUI';
+import { BiomeLayout } from './biomes/BiomeLayout';
+import { BiomeLayoutOverlay } from './biomes/BiomeLayoutOverlay';
+import { BiomeEditor } from './biomes/BiomeEditor';
+import { BiomeLegend } from './biomes/BiomeLegend';
 
 export class ShaderDemoApplication implements TabApplication {
   private renderer:    THREE.WebGLRenderer | null = null;
@@ -27,6 +31,12 @@ export class ShaderDemoApplication implements TabApplication {
   private terrain:      TerrainMesh  | null = null;
   private sunLight:     THREE.DirectionalLight | null = null;
   private ambientLight: THREE.AmbientLight | null = null;
+
+  // Biome layout of the patch, edited with the mouse (Biomes page of the GUI).
+  private readonly biomeLayout = new BiomeLayout();
+  private biomeOverlay: BiomeLayoutOverlay | null = null;
+  private biomeEditor:  BiomeEditor | null = null;
+  private readonly unsubscribers: (() => void)[] = [];
 
   private readonly clock = new THREE.Clock();
   private rendererReady = false; // renderer + camera are set up
@@ -85,6 +95,12 @@ export class ShaderDemoApplication implements TabApplication {
 
   public dispose(): void {
     window.removeEventListener('resize', this.boundOnResize);
+    for (const unsubscribe of this.unsubscribers) unsubscribe();
+    this.unsubscribers.length = 0;
+    this.biomeEditor?.dispose();
+    this.biomeEditor = null;
+    this.biomeOverlay?.dispose();
+    this.biomeOverlay = null;
     this.flyCam?.dispose();
     this.flyCam = null;
     this.terrain?.dispose();
@@ -161,7 +177,33 @@ export class ShaderDemoApplication implements TabApplication {
     const contentArea = this.getContentArea();
 
     this.terrain = new TerrainMesh(this.scene!, this.renderer!);
-    this.terrain.init();
+    const terrain = this.terrain;
+
+    // Biomes: the layout's rays reach well beyond the patch, so the boundaries
+    // stay straight up to its edges.
+    const layout = this.biomeLayout;
+    terrain.biomeSource = (frame, toRadii) =>
+      layout.toBoundarySet(frame, toRadii, 4 * Math.max(terrain.params.patchSize, 1));
+    terrain.init();
+
+    this.biomeOverlay = new BiomeLayoutOverlay(this.scene!, layout);
+    this.biomeOverlay.update(terrain.params.patchSize);
+    this.biomeEditor = new BiomeEditor(
+      this.renderer!.domElement,
+      () => (this.flyCam?.isEnabled() ? this.flyCam.camera : this.orbitCamera!),
+      () => terrain.params.patchSize,
+      (locked) => { if (this.controls && !this.flyCam?.isEnabled()) this.controls.enabled = !locked; },
+      layout,
+    );
+    this.unsubscribers.push(
+      // While a handle is dragged only the overlay follows; the terrain is
+      // re-baked once the edit is committed.
+      layout.onChange((change) => {
+        this.biomeOverlay?.update(terrain.params.patchSize);
+        if (change === 'commit') terrain.refreshBiomes();
+      }),
+      terrain.params.onChange(() => this.biomeOverlay?.update(terrain.params.patchSize)),
+    );
 
     this.gui = buildShaderDemoGUI(
       contentArea,
@@ -170,6 +212,7 @@ export class ShaderDemoApplication implements TabApplication {
       this.flyCam!,
       this.sunLight!,
       this.ambientLight!,
+      { layout, editor: this.biomeEditor, overlay: this.biomeOverlay, legend: new BiomeLegend(contentArea) },
     );
     if (this.active) this.gui!.show();
 

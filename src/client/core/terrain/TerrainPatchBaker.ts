@@ -16,6 +16,9 @@
  *   bump      — water wave gradient and tree canopy tilt (2 targets)
  *   detail    — detail noise value + gradient (only when detail noise is enabled)
  *
+ * Biomes: each patch carries the biome boundaries around it (setBiomes); the
+ * elevation pass blends the per-biome parameters across them.
+ *
  * The patch is located on the planet by a PatchDomain, so the same baker
  * serves the flat Shaders-tab patch and the World-tab sphere LOD patches.
  */
@@ -28,7 +31,14 @@ import { treeDensityComputeGLSL } from '@core/shaders/treeDensityComputeGLSL';
 import { bumpComputeGLSL } from '@core/shaders/bumpComputeGLSL';
 import { detailNoiseComputeGLSL } from '@core/shaders/detailNoiseGLSL';
 import { PatchDomain, patchNominalSize, tangentFrameFromLatLon } from './PatchDomain';
+import {
+  BIOME_STANDARD,
+  createBiomeEdgeTexture,
+  biomeEdgeCount,
+  type BiomeBoundarySet,
+} from './BiomeBoundaries';
 import type { TerrainParams } from '../../shared/terrain/TerrainParams';
+import { WORLD_RADIUS_KM } from '../../shared/world/World';
 
 export interface PatchBakeResolution {
   /** Texels per side of the elevation / attribute / tree density textures. */
@@ -54,6 +64,15 @@ export interface BakedPatch {
   readonly bumpTarget:      THREE.WebGLRenderTarget;
   /** Allocated on the first detail bake. */
   detailTarget: THREE.WebGLRenderTarget | null;
+  /** Biome layout of the patch — set with TerrainPatchBaker.setBiomes. */
+  biomes: PatchBiomes;
+}
+
+export interface PatchBiomes {
+  defaultBiome: number;
+  edgeCount:    number;
+  /** Packed boundary edges (see BiomeBoundaries); null when there are none. */
+  edgeTexture:  THREE.DataTexture | null;
 }
 
 export class TerrainPatchBaker {
@@ -66,6 +85,9 @@ export class TerrainPatchBaker {
   private readonly treeMaterial:      THREE.ShaderMaterial;
   private readonly bumpMaterial:      THREE.ShaderMaterial;
   private readonly detailMaterial:    THREE.ShaderMaterial;
+
+  /** Bound in place of the biome edge texture when a patch has no boundary. */
+  private readonly emptyBiomeTexture: THREE.DataTexture;
 
   private permTexture: THREE.DataTexture | null = null;
   private permSeed = NaN;
@@ -121,7 +143,18 @@ export class TerrainPatchBaker {
       uErosionNormalization:  { value: 0 },
       uErosionRidgeRounding:  { value: 0 },
       uErosionCreaseRounding: { value: 0 },
+      uBiomeEdgeTex:          { value: null },
+      uBiomeEdgeCount:        { value: 0 },
+      uBiomeDefault:          { value: BIOME_STANDARD },
+      uBiomeHalfWidth:        { value: 0 },
+      uBiomeWarpAmp:          { value: 0 },
+      uBiomeWarpFreq:         { value: 1 },
+      uBiomeElevBase:         { value: new THREE.Vector4() },
+      uBiomeElevScale:        { value: new THREE.Vector4(1, 1, 1, 1) },
     });
+
+    this.emptyBiomeTexture = new THREE.DataTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat, THREE.FloatType);
+    this.emptyBiomeTexture.needsUpdate = true;
 
     this.treeMaterial = make(treeDensityComputeGLSL, {
       uElevTex:       { value: null },
@@ -174,12 +207,28 @@ export class TerrainPatchBaker {
       treeTarget:      this.acquireTarget(resolution.elevation, 1, THREE.HalfFloatType),
       bumpTarget:      this.acquireTarget(resolution.bump, 2, THREE.HalfFloatType),
       detailTarget:    null,
+      biomes:          { defaultBiome: BIOME_STANDARD, edgeCount: 0, edgeTexture: null },
+    };
+  }
+
+  /**
+   * Sets the biome layout of a patch (null = all standard).  Takes effect at
+   * the next elevation bake.
+   */
+  setBiomes(patch: BakedPatch, set: BiomeBoundarySet | null): void {
+    patch.biomes.edgeTexture?.dispose();
+    patch.biomes = {
+      defaultBiome: set?.defaultBiome ?? BIOME_STANDARD,
+      edgeCount:    set ? biomeEdgeCount(set) : 0,
+      edgeTexture:  set ? createBiomeEdgeTexture(set) : null,
     };
   }
 
   /** Releases the GPU resources of a patch.  Render targets go back to the pool. */
   disposePatch(patch: BakedPatch): void {
     patch.dirTexture.dispose();
+    patch.biomes.edgeTexture?.dispose();
+    patch.biomes = { defaultBiome: BIOME_STANDARD, edgeCount: 0, edgeTexture: null };
     this.releaseTarget(patch.elevationTarget);
     this.releaseTarget(patch.treeTarget);
     this.releaseTarget(patch.bumpTarget);
@@ -196,6 +245,7 @@ export class TerrainPatchBaker {
     this.targetPool.clear();
     this.permTexture?.dispose();
     this.permTexture = null;
+    this.emptyBiomeTexture.dispose();
     this.elevationMaterial.dispose();
     this.treeMaterial.dispose();
     this.bumpMaterial.dispose();
@@ -249,6 +299,17 @@ export class TerrainPatchBaker {
     u.uErosionNormalization.value  = params.erosionNormalization;
     u.uErosionRidgeRounding.value  = params.erosionRidgeRounding;
     u.uErosionCreaseRounding.value = params.erosionCreaseRounding;
+
+    const biomes = patch.biomes;
+    u.uBiomeEdgeTex.value   = biomes.edgeTexture ?? this.emptyBiomeTexture;
+    u.uBiomeEdgeCount.value = biomes.edgeTexture ? biomes.edgeCount : 0;
+    u.uBiomeDefault.value   = biomes.defaultBiome;
+    u.uBiomeHalfWidth.value = 0.5 * params.biomeTransitionKm / WORLD_RADIUS_KM;
+    u.uBiomeWarpAmp.value   = params.biomeBoundaryNoiseKm / WORLD_RADIUS_KM;
+    u.uBiomeWarpFreq.value  = params.kmPerUnit / Math.max(params.biomeBoundaryNoiseWavelengthKm, 1e-3);
+    const elev = params.biomeElevationParams();
+    (u.uBiomeElevBase.value  as THREE.Vector4).fromArray(elev.base);
+    (u.uBiomeElevScale.value as THREE.Vector4).fromArray(elev.scale);
 
     this.render(this.elevationMaterial, patch.elevationTarget);
     this.bakeTreeDensity(patch, params);

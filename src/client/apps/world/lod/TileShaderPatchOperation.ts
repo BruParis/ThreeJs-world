@@ -23,6 +23,7 @@ import { CubeFace, ProjectionManager } from '@core/geometry/SphereProjection';
 import { TileQuadTree } from '../tectonics/TileQuadTree';
 import { Tile } from '../tectonics/data/Plate';
 import { getPlateColor } from '../visualization/PlateColors';
+import { collectQuadrantTiles } from './TileBiomeBoundaries';
 import { getGeologicalColor } from '../visualization/GeologyColors';
 import { IPatchOperation } from './IPatchOperation';
 import { tileVertexShader } from './shaders/tileVert';
@@ -100,29 +101,7 @@ export class TileShaderPatchOperation implements IPatchOperation {
     if (n <= 0) return null;
 
     // ── 1. Collect all tiles overlapping this patch ────────────────────────────
-    const tileLevel = this.tileTree.level;
-    const gridSize  = 1 << tileLevel;
-
-    const xMin = Math.max(0,            Math.floor((spec.u0 + 1) * gridSize / 2) - 1);
-    const xMax = Math.min(gridSize - 1, Math.floor((spec.u1 + 1) * gridSize / 2));
-    const yMin = Math.max(0,            Math.floor((spec.v0 + 1) * gridSize / 2) - 1);
-    const yMax = Math.min(gridSize - 1, Math.floor((spec.v1 + 1) * gridSize / 2));
-
-    const face = spec.face as CubeFace;
-    const seenTileIds = new Set<number>();
-    const tiles: Tile[] = [];
-
-    for (let x = xMin; x <= xMax; x++) {
-      for (let y = yMin; y <= yMax; y++) {
-        for (const tile of this.tileTree.queryCell({ face, level: tileLevel, x, y })) {
-          if (!seenTileIds.has(tile.id)) {
-            seenTileIds.add(tile.id);
-            tiles.push(tile);
-          }
-        }
-      }
-    }
-
+    const tiles = collectQuadrantTiles(this.tileTree, spec);
     if (tiles.length === 0) return null;
 
     // ── 2. Build per-patch DataTexture ─────────────────────────────────────────
@@ -178,7 +157,7 @@ export class TileShaderPatchOperation implements IPatchOperation {
       const u = spec.u0 + (spec.u1 - spec.u0) * (i / n);
       for (let j = 0; j <= n; j++) {
         const v = spec.v0 + (spec.v1 - spec.v0) * (j / n);
-        const p = ProjectionManager.cubeToSphere(face, u, v);
+        const p = ProjectionManager.cubeToSphere(spec.face as CubeFace, u, v);
         positions.push(p.x, p.y, p.z);
       }
     }

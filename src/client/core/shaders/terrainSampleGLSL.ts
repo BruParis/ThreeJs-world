@@ -23,7 +23,8 @@
  *   Attribute texture  (NearestFilter — discrete per-texel data, must NOT be interpolated)
  *     R = ridgeMap     [-1, 1]
  *     G = erosionDepth  [0, 1]  (packed from [-1,1] with * 0.5 + 0.5; unpack with * 2.0 - 1.0)
- *     BA = unused
+ *     B = ocean biome weight [0, 1]
+ *     A = unused
  *
  * Keeping ridgeMap and erosionDepth in a separate NearestFilter texture is
  * intentional: LinearFilter on the elevation texture would interpolate the A
@@ -52,6 +53,7 @@ export const TERRAIN_DEBUG_STEEPNESS      = 5; // 1 - normal.y  (slope angle pro
 export const TERRAIN_DEBUG_EXPOSURE       = 6; // erosion-derived surface exposure [0,1]
 export const TERRAIN_DEBUG_BREAKUP        = 7; // detail noise breakup [-1,1] remapped to [0,1]
 export const TERRAIN_DEBUG_CLASSIFICATION = 8; // terrain type: water/grass/tree/rock
+export const TERRAIN_DEBUG_BIOME          = 9; // biome weights (standard ↔ ocean)
 
 // ── GLSL source ───────────────────────────────────────────────────────────────
 
@@ -119,6 +121,7 @@ void terrainTangentBasis(vec3 up, out vec3 t1, out vec3 t2) {
 #define TERRAIN_DEBUG_EXPOSURE       6
 #define TERRAIN_DEBUG_BREAKUP        7
 #define TERRAIN_DEBUG_CLASSIFICATION 8
+#define TERRAIN_DEBUG_BIOME          9
 
 #endif
 `;

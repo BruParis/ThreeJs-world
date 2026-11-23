@@ -12,6 +12,7 @@ import { FlyCam } from '@core/FlyCam';
 import { LODTileRenderer } from './lod/LODTileRenderer';
 import { TileShaderPatchOperation, LODColorMode, SURFACE_OFFSET } from './lod/TileShaderPatchOperation';
 import { TerrainPatchOperation } from './lod/TerrainPatchOperation';
+import { TileBiomeBoundaries } from './lod/TileBiomeBoundaries';
 import { kmToDistance } from '../../shared/world/World';
 import { terrainParams, type TerrainChange } from '../../shared/terrain/TerrainParams';
 import { TERRAIN_DEBUG_ELEVATION } from '@core/shaders/terrainSampleGLSL';
@@ -42,6 +43,8 @@ export class WorldApplication implements TabApplication {
   /** The shader terrain — same pipeline and parameters as the Shaders tab. */
   private terrainPatchOperation: TerrainPatchOperation | null = null;
   private lodTileRenderer: LODTileRenderer | null = null;
+  /** Biome boundaries of the terrain patches, from the current plates. */
+  private tileBiomes: TileBiomeBoundaries | null = null;
   private unsubscribeTerrainParams: (() => void) | null = null;
   private readonly clock = new THREE.Clock();
   private readonly _footDir = new THREE.Vector3(); // reused each frame for terrain floor query
@@ -108,12 +111,22 @@ export class WorldApplication implements TabApplication {
     // 4. Rebuild tectonics
     this.tectonicManager.rebuildTectonicPlates();
 
-    // 5. Push new tile data to the patch operation, then invalidate cached meshes
-    this.patchOperation?.setTileTree(this.tectonicManager.getTileQuadTree());
-    this.lodTileRenderer?.invalidate();
+    //    (the patch operations are refreshed by onPlatesChanged)
 
-    // 6. Refresh stats display in the GUI
+    // 5. Refresh stats display in the GUI
     this.guiManager?.refresh();
+  }
+
+  /**
+   * Plates were rebuilt or edited: push the new tile data to the patch
+   * operations and drop the cached patches.
+   */
+  private onPlatesChanged(): void {
+    const tree   = this.tectonicManager.getTileQuadTree();
+    const system = this.tectonicManager.getTectonicSystem();
+    this.patchOperation?.setTileTree(tree);
+    this.tileBiomes = tree && system ? new TileBiomeBoundaries(tree, system, terrainParams) : null;
+    this.lodTileRenderer?.invalidate();
   }
 
   /** True when the LOD view currently shows the shader terrain. */
@@ -198,6 +211,8 @@ export class WorldApplication implements TabApplication {
       // Create patch operations and LOD tile renderer
       this.patchOperation = new TileShaderPatchOperation();
       this.terrainPatchOperation = new TerrainPatchOperation(this.sceneManager.getRenderer(), terrainParams);
+      this.terrainPatchOperation.biomeSource = (spec) => this.tileBiomes?.forQuadrant(spec) ?? null;
+      this.tectonicManager.setOnPlatesChanged(() => this.onPlatesChanged());
       this.lodTileRenderer = new LODTileRenderer(this.sceneManager.getScene(), this.patchOperation);
       this.addTerrainLights();
       this.unsubscribeTerrainParams = terrainParams.onChange((change) => this.onTerrainParamsChanged(change));

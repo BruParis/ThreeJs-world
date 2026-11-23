@@ -156,6 +156,21 @@ export class TerrainParams {
   treeBumpStrength = DEFAULT_TREE_BUMP_STRENGTH;
   treeBumpFreq     = DEFAULT_TREE_BUMP_FREQ;
 
+  // ── Biomes ──────────────────────────────────────────────────────────────────
+  // Where each biome lies is given per patch (biome boundaries); these are the
+  // parameters of the transitions and of each biome.
+  /** Full width of the transition between two biomes, km. */
+  biomeTransitionKm = 40;
+  /** Amplitude of the noise that makes boundaries irregular (coastlines), km. */
+  biomeBoundaryNoiseKm = 15;
+  /** Wavelength of the coarsest octave of that noise, km. */
+  biomeBoundaryNoiseWavelengthKm = 80;
+  /**
+   * Ocean biome: depth of the flat ocean floor below sea level, normalised
+   * elevation.  The floor stays at this depth whatever the elevation offset.
+   */
+  oceanFloorDepth = 0.05;
+
   // ── Derived scale values ────────────────────────────────────────────────────
 
   /** World radius in terrain units. */
@@ -180,6 +195,19 @@ export class TerrainParams {
   /** Edge length of the reference patch in kilometres. */
   get patchSizeKm(): number {
     return this.patchSize * this.kmPerUnit;
+  }
+
+  /**
+   * Per-biome elevation parameters (indexed by biome id):
+   *   elevation_b = base[b] + scale[b] * noiseElevation
+   * The raw elevation is shifted by elevationOffset at render time, so the
+   * ocean floor compensates for it.
+   */
+  biomeElevationParams(): { base: [number, number, number, number]; scale: [number, number, number, number] } {
+    return {
+      base:  [0, this.seaLevel - this.oceanFloorDepth - this.elevationOffset, 0, 0],
+      scale: [1, 0, 1, 1],
+    };
   }
 
   // ── Change notification ─────────────────────────────────────────────────────

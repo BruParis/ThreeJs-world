@@ -8,6 +8,7 @@ import {
   tangentPlaneDir,
   type TangentFrame,
 } from '@core/terrain/PatchDomain';
+import type { BiomeBoundarySet } from '@core/terrain/BiomeBoundaries';
 import { terrainParams, type TerrainParams, type TerrainChange } from '../../../shared/terrain/TerrainParams';
 import {
   DEFAULT_SUBDIVISION,
@@ -16,6 +17,12 @@ import {
   BUMP_TEXTURE_RES,
   DETAIL_TEXTURE_RES,
 } from './TerrainConstants';
+
+/**
+ * Biome boundaries of the patch, given its tangent frame and the number of
+ * planet radii per terrain unit (scene x, z → tangent plane).
+ */
+export type PatchBiomeSource = (frame: TangentFrame, toRadii: number) => BiomeBoundarySet | null;
 
 /**
  * The flat terrain patch of the Shaders tab.
@@ -45,6 +52,9 @@ export class TerrainMesh {
   elevationData:       Float32Array | null = null;
   elevationGridWidth   = 0;
   elevationGridHeight  = 0;
+
+  /** Where the biomes are on this patch (null: standard everywhere). */
+  biomeSource: PatchBiomeSource | null = null;
 
   private readonly baker: TerrainPatchBaker;
   private patch:  BakedPatch | null = null;
@@ -94,6 +104,7 @@ export class TerrainMesh {
       bump:      BUMP_TEXTURE_RES,
       detail:    DETAIL_TEXTURE_RES,
     });
+    this.applyBiomes();
     this.baker.bakeAll(this.patch, p);
     this.readElevationToCpu();
 
@@ -113,6 +124,13 @@ export class TerrainMesh {
     this.baker.bakeElevation(this.patch, this.params);
     this.readElevationToCpu();
     this.syncMaterials();
+  }
+
+  /** Re-reads the biome layout from biomeSource and re-bakes the elevation. */
+  refreshBiomes(): void {
+    if (!this.patch) return;
+    this.applyBiomes();
+    this.recomputeElevation();
   }
 
   /**
@@ -200,6 +218,12 @@ export class TerrainMesh {
       p.patchSize, p.kmPerUnit, p.anchorLatDeg, p.anchorLonDeg,
       this.subdivisions, this.numPatches,
     ].join('|');
+  }
+
+  private applyBiomes(): void {
+    if (!this.patch || !this.frame) return;
+    const set = this.biomeSource?.(this.frame, 1 / this.params.planetRadiusUnits) ?? null;
+    this.baker.setBiomes(this.patch, set);
   }
 
   private readElevationToCpu(): void {

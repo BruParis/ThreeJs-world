@@ -27,6 +27,9 @@ import { shaderUtilsGLSL }            from '@core/shaders/shaderUtilsGLSL';
 import { simplexNoiseGLSL }           from '@core/noise/simplexGLSL';
 import { treeGLSL, TERRAIN_GRASS_HEIGHT } from '@core/shaders/treeGLSL';
 import { terrainClassificationGLSL }  from '@core/shaders/terrainClassificationGLSL';
+import { BIOME_COLORS, BIOME_STANDARD, BIOME_OCEAN } from '@core/terrain/BiomeBoundaries';
+
+const glslVec3 = (c: [number, number, number]) => `vec3(${c.map((v) => v.toFixed(3)).join(', ')})`;
 
 export const TERRAIN_WATER_HEIGHT = 0.35;
 
@@ -207,7 +210,12 @@ vec3 colorNormalLocal;
 
 // 5. Output color.
 bool _terrainIsWater = isWater;   // shared with roughness/metalness chunks below
-if (uDebugMode == TERRAIN_DEBUG_CLASSIFICATION) {
+if (uDebugMode == TERRAIN_DEBUG_BIOME) {
+  // Biome weights, with the coastline (sea level) drawn as a dark line.
+  vec3 biomeColor = mix(${glslVec3(BIOME_COLORS[BIOME_STANDARD])}, ${glslVec3(BIOME_COLORS[BIOME_OCEAN])}, attrData.b);
+  float coast = 1.0 - smoothstep(0.0, max(1.5 * fwidth(terrain_elev), 1e-6), abs(terrain_elev - uSeaLevel));
+  diffuseColor.rgb = mix(biomeColor, vec3(0.05), coast);
+} else if (uDebugMode == TERRAIN_DEBUG_CLASSIFICATION) {
   vec3 classColor = vec3(0.35, 0.30, 0.25);        // rock / cliff / dirt / snow
   if (isGrass) classColor = vec3(0.30, 0.60, 0.10);
   if (isTree)  classColor = vec3(0.05, 0.25, 0.05);

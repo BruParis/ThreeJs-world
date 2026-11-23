@@ -25,7 +25,20 @@ import {
   TERRAIN_DEBUG_EXPOSURE,
   TERRAIN_DEBUG_BREAKUP,
   TERRAIN_DEBUG_CLASSIFICATION,
+  TERRAIN_DEBUG_BIOME,
 } from '@core/shaders/terrainSampleGLSL';
+import { BIOME_NAMES } from '@core/terrain/BiomeBoundaries';
+import type { BiomeLayout } from '../biomes/BiomeLayout';
+import type { BiomeEditor } from '../biomes/BiomeEditor';
+import type { BiomeLegend } from '../biomes/BiomeLegend';
+import type { BiomeLayoutOverlay } from '../biomes/BiomeLayoutOverlay';
+
+export interface BiomeGUIContext {
+  layout:  BiomeLayout;
+  editor:  BiomeEditor;
+  overlay: BiomeLayoutOverlay;
+  legend:  BiomeLegend;
+}
 
 export interface ShaderDemoGUIHandle {
   show(): void;
@@ -40,6 +53,7 @@ export function buildShaderDemoGUI(
   flyCam: FlyCam,
   sunLight: DirectionalLight,
   ambientLight: AmbientLight,
+  biomes: BiomeGUIContext,
 ): ShaderDemoGUIHandle {
 
   // ── Pane setup ────────────────────────────────────────────────────────────
@@ -61,9 +75,10 @@ export function buildShaderDemoGUI(
       { title: 'Trees'    },
       { title: 'Colors'   },
       { title: 'Lighting' },
+      { title: 'Biomes'   },
     ],
   });
-  const [viewPage, scalePage, terrainPage, elevationPage, erosionPage, treesPage, colorsPage, lightingPage] = tab.pages;
+  const [viewPage, scalePage, terrainPage, elevationPage, erosionPage, treesPage, colorsPage, lightingPage, biomesPage] = tab.pages;
 
   // ── Shared callbacks ──────────────────────────────────────────────────────
   //
@@ -114,6 +129,7 @@ export function buildShaderDemoGUI(
       'Exposure':      TERRAIN_DEBUG_EXPOSURE,
       'Breakup':        TERRAIN_DEBUG_BREAKUP,
       'Classification': TERRAIN_DEBUG_CLASSIFICATION,
+      'Biome':          TERRAIN_DEBUG_BIOME,
     },
   }).on('change', ({ value }) => {
     P.terrainColors.debugMode = Number(value);
@@ -210,7 +226,9 @@ export function buildShaderDemoGUI(
   terrainPage.addBinding(terrainParams, 'subdivision', { label: 'Subdivision', options: SUBDIVISION_OPTIONS })
     .on('change', ({ value }) => { terrain.subdivisions = Number(value); updGeometry(); });
   terrainPage.addBinding(terrainParams, 'elevationOffset', { label: 'Elev. Offset', min: -0.4, max: 0.5, step: 0.01 })
-    .on('change', ({ value }) => { P.elevationOffset = value; P.notify('trees'); });
+    // The ocean floor is baked to stay below sea level whatever the offset, so
+    // the offset also needs an elevation re-bake (debounced).
+    .on('change', ({ value }) => { P.elevationOffset = value; P.notify('trees'); updElevation(); });
 
   // ── Tab: Elevation ───────────────────────────────────────────────────────
 
@@ -453,12 +471,73 @@ export function buildShaderDemoGUI(
   lightingPage.addBinding(lightingParams, 'roughness', { label: 'Roughness', min: 0, max: 1, step: 0.01 })
     .on('change', ({ value }) => terrain.setRoughness(value));
 
+  // ── Tab: Biomes ─────────────────────────────────────────────────────────
+  //
+  // Transition and biome parameters are shared with the World tab; the layout
+  // (rays from a centre point) is specific to this patch.
+
+  const biomeParams = {
+    transitionKm: P.biomeTransitionKm,
+    noiseKm:      P.biomeBoundaryNoiseKm,
+    wavelengthKm: P.biomeBoundaryNoiseWavelengthKm,
+    oceanDepth:   P.oceanFloorDepth,
+  };
+
+  const transitionFolder = biomesPage.addFolder({ title: 'Transitions', expanded: true });
+  transitionFolder.addBinding(biomeParams, 'transitionKm', { label: 'Width (km)', min: 1, max: 300, step: 1 })
+    .on('change', ({ value }) => { P.biomeTransitionKm = value; updElevation(); });
+  transitionFolder.addBinding(biomeParams, 'noiseKm', { label: 'Edge noise (km)', min: 0, max: 100, step: 0.5 })
+    .on('change', ({ value }) => { P.biomeBoundaryNoiseKm = value; updElevation(); });
+  transitionFolder.addBinding(biomeParams, 'wavelengthKm', { label: 'Noise λ (km)', min: 5, max: 500, step: 1 })
+    .on('change', ({ value }) => { P.biomeBoundaryNoiseWavelengthKm = value; updElevation(); });
+
+  const oceanFolder = biomesPage.addFolder({ title: 'Ocean', expanded: true });
+  oceanFolder.addBinding(biomeParams, 'oceanDepth', { label: 'Floor depth', min: 0.0, max: 0.35, step: 0.005 })
+    .on('change', ({ value }) => { P.oceanFloorDepth = value; updElevation(); });
+
+  // Layout editor: a centre point with rays cutting the patch into sectors,
+  // each sector having a biome.  Edited with the mouse while "Edit biomes" is
+  // on — the gestures are listed in the on-screen legend.
+  const { layout, editor, overlay, legend } = biomes;
+  const layoutState = {
+    overlay: overlay.visible,
+    rays:    layout.rays.length,
+  };
+
+  const layoutFolder = biomesPage.addFolder({ title: 'Layout editor (this patch)', expanded: true });
+
+  const editButton = layoutFolder.addButton({ title: '' });
+  const setEditing = (on: boolean) => {
+    editor.setEnabled(on);
+    legend.setEditing(on);
+    editButton.title = on ? 'Edit biomes: ON (click to stop)' : 'Edit biomes: OFF (click to start)';
+    if (on && !overlay.visible) {
+      layoutState.overlay = true;
+      overlay.visible = true;
+      legend.setWanted(true);
+      layoutFolder.refresh();
+    }
+  };
+  editButton.on('click', () => setEditing(!editor.enabled));
+
+  layoutFolder.addBinding(layoutState, 'overlay', { label: 'Show layout' })
+    .on('change', ({ value }) => { overlay.visible = value; legend.setWanted(value); });
+  layoutFolder.addBinding(layoutState, 'rays', { label: 'Rays', readonly: true, format: (v: number) => v.toFixed(0) });
+  layoutFolder.addButton({ title: 'Clear layout' }).on('click', () => layout.clear());
+  layout.onChange(() => {
+    layoutState.rays = layout.rays.length;
+    legend.setHasCenter(layout.center !== null);
+    layoutFolder.refresh();
+  });
+  legend.setHasCenter(layout.center !== null);
+  setEditing(false);
+
   refreshScale();
 
   // ── Handle ────────────────────────────────────────────────────────────────
   return {
-    show:    () => { pane.element.style.display = 'block'; },
-    hide:    () => { pane.element.style.display = 'none'; },
-    destroy: () => { pane.dispose(); pane.element.remove(); },
+    show:    () => { pane.element.style.display = 'block'; legend.setShown(true); },
+    hide:    () => { pane.element.style.display = 'none'; legend.setShown(false); },
+    destroy: () => { pane.dispose(); pane.element.remove(); legend.dispose(); },
   };
 }

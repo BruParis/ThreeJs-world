@@ -63,12 +63,17 @@ export class TerrainGUIManager {
       label: 'Shown height (km)', readonly: true, format: (v: number) => v.toFixed(1),
     });
 
+    let offsetTimer: ReturnType<typeof setTimeout> | null = null;
     this.pane.addBinding(state, 'offset', {
       label: 'Elev. Offset', min: -0.4, max: 0.5, step: 0.01,
     }).on('change', ({ value }) => {
       if (syncing) return;
       params.elevationOffset = value;
       params.notify('trees');
+      // The ocean floor is baked to stay below sea level whatever the offset:
+      // re-bake the elevation once the slider settles.
+      if (offsetTimer !== null) clearTimeout(offsetTimer);
+      offsetTimer = setTimeout(() => { offsetTimer = null; params.notify('elevation'); }, 300);
     });
 
     this.pane.addBinding(state, 'kmPerUnit', {

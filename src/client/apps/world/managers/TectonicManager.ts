@@ -44,6 +44,9 @@ export class TectonicManager {
   private checkNoiseDisplayEnabled: (() => boolean) | null = null;
   private applyNoiseColors: (() => void) | null = null;
 
+  /** Called after plates are rebuilt or edited. */
+  private onPlatesChanged: (() => void) | null = null;
+
   constructor(visualizationManager: VisualizationManager, sceneManager: SceneManager) {
     this.visualizationManager = visualizationManager;
     this.sceneManager = sceneManager;
@@ -118,6 +121,14 @@ export class TectonicManager {
   /**
    * Rebuilds the tectonic plate system with the specified number of plates.
    */
+  /**
+   * Registers a callback run whenever plates are rebuilt or edited (plate
+   * membership or category of tiles may have changed).
+   */
+  public setOnPlatesChanged(callback: (() => void) | null): void {
+    this.onPlatesChanged = callback;
+  }
+
   public rebuildTectonicPlates(numPlates: number = 25): void {
     const dualMesh = this.visualizationManager.getDualMesh();
     const icoHalfedgeDualGraph = this.visualizationManager.getIcoHalfedgeDualGraph();
@@ -167,6 +178,7 @@ export class TectonicManager {
     this.tileQuadTree = new TileQuadTree(this._allTiles(), indexLevel);
 
     console.log('Generated tectonic network with', this.tectonicSystem.plates.size, 'plates.');
+    this.onPlatesChanged?.();
     this.refreshPlateDisplay();
 
     // Motion vector visualization - lazy loaded
@@ -481,6 +493,7 @@ export class TectonicManager {
     }
 
     splitPlateFromTile(this.tectonicSystem, tile);
+    this.onPlatesChanged?.();
   }
 
   /**
@@ -509,6 +522,7 @@ export class TectonicManager {
     }
 
     transferTileToPlate(tile, targetPlate);
+    this.onPlatesChanged?.();
   }
 
   /**
@@ -551,6 +565,7 @@ export class TectonicManager {
     console.log("Absorbing plate", currentPlate.id, "into plate", targetPlate.id);
 
     plateAbsorbedByPlate(currentPlate, targetPlate);
+    this.onPlatesChanged?.();
   }
 
   /**

@@ -23,6 +23,7 @@ import { TerrainPatchBaker, type BakedPatch } from '@core/terrain/TerrainPatchBa
 import { TerrainMaterial } from '@core/terrain/TerrainMaterial';
 import { spherePatchDomain, cubeRectDir } from '@core/terrain/PatchDomain';
 import { terrainParams, type TerrainParams, type TerrainChange } from '../../../shared/terrain/TerrainParams';
+import type { BiomeBoundarySet } from '@core/terrain/BiomeBoundaries';
 import { kmToDistance } from '../../../shared/world/World';
 import { IPatchOperation } from './IPatchOperation';
 import { SURFACE_OFFSET } from './TileShaderPatchOperation';
@@ -68,6 +69,12 @@ export class TerrainPatchOperation implements IPatchOperation {
   private readonly identity = new THREE.Matrix3();
   private debugMode: number | null = null;
   private lastSurfaceRadius = SURFACE_OFFSET;
+
+  /**
+   * Biome boundaries around a patch (null: standard biome everywhere).
+   * Changing what it returns requires invalidating the LOD renderer.
+   */
+  biomeSource: ((spec: QuadrantSpec) => BiomeBoundarySet | null) | null = null;
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -125,6 +132,7 @@ export class TerrainPatchOperation implements IPatchOperation {
       bump:      this.bumpResolution,
       detail:    this.detailResolution,
     });
+    this.baker.setBiomes(baked, this.biomeSource?.(spec) ?? null);
     this.baker.bakeAll(baked, params);
 
     const material = new TerrainMaterial(
