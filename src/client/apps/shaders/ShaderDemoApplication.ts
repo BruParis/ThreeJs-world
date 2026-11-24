@@ -18,7 +18,6 @@ import { buildShaderDemoGUI, ShaderDemoGUIHandle } from './gui/ShaderDemoGUI';
 import { BiomeLayout } from './biomes/BiomeLayout';
 import { BiomeLayoutOverlay } from './biomes/BiomeLayoutOverlay';
 import { BiomeEditor } from './biomes/BiomeEditor';
-import { BiomeLegend } from './biomes/BiomeLegend';
 
 export class ShaderDemoApplication implements TabApplication {
   private renderer:    THREE.WebGLRenderer | null = null;
@@ -212,7 +211,7 @@ export class ShaderDemoApplication implements TabApplication {
       this.flyCam!,
       this.sunLight!,
       this.ambientLight!,
-      { layout, editor: this.biomeEditor, overlay: this.biomeOverlay, legend: new BiomeLegend(contentArea) },
+      { layout, editor: this.biomeEditor, overlay: this.biomeOverlay },
     );
     if (this.active) this.gui!.show();
 
