@@ -193,6 +193,7 @@ export class TerrainMaterial {
       unitToLocal:        this.frame.unitToLocal,
       planetRadius:       params.planetRadiusUnits,
       flatUp:             this.frame.flatUp,
+      displacementSmoothing: params.displacementSmoothing,
       domainToWorld:      this.frame.domainToWorld,
     };
   }

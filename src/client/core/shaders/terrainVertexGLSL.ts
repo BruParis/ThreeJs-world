@@ -37,6 +37,7 @@ uniform float uVerticalScale;   // displayed relief, terrain units per unit of e
 uniform float uUnitToLocal;     // mesh-local length of one terrain unit
 uniform float uPlanetRadius;    // world radius, terrain units
 uniform vec4  uFlatUp;          // xyz = mesh-local displacement direction, w = 1 for flat patches
+uniform float uDisplacementSmoothing; // 0 = raw texel, 1 = 3x3 [1 2 1] average (geometry only)
 
 varying vec2 vTerrainUv;
 varying vec3 vTerrainUp;
@@ -58,6 +59,8 @@ export interface TerrainVertexUniformState {
   flatUp:              THREE.Vector3 | null;
   /** Rotation from the domain (planet) frame to the world frame of the scene. */
   domainToWorld:       THREE.Matrix3;
+  /** Blend of the displacement towards its 3x3 neighbour average, [0, 1]. */
+  displacementSmoothing: number;
 }
 
 export function createTerrainVertexUniforms(s: TerrainVertexUniformState): Record<string, THREE.IUniform> {
@@ -71,6 +74,7 @@ export function createTerrainVertexUniforms(s: TerrainVertexUniformState): Recor
     uPlanetRadius:    { value: 1 },
     uFlatUp:          { value: new THREE.Vector4(0, 1, 0, 0) },
     uDomainToWorld:   { value: new THREE.Matrix3() },
+    uDisplacementSmoothing: { value: 0 },
   };
   syncTerrainVertexUniforms(u, s);
   return u;
@@ -84,6 +88,7 @@ export function syncTerrainVertexUniforms(u: Record<string, THREE.IUniform>, s: 
   u.uVerticalScale.value  = s.verticalScale;
   u.uUnitToLocal.value    = s.unitToLocal;
   u.uPlanetRadius.value   = s.planetRadius;
+  u.uDisplacementSmoothing.value = s.displacementSmoothing;
   const flatUp = u.uFlatUp.value as THREE.Vector4;
   if (s.flatUp) flatUp.set(s.flatUp.x, s.flatUp.y, s.flatUp.z, 1);
   else          flatUp.set(0, 1, 0, 0);
@@ -118,9 +123,28 @@ varying vec3 vTerrainDomainPos;
 export const terrainVertexNormalChunk = /* glsl */`
 vec3 terrain_up = normalize(normal);
 
-vec2 terrain_elevUv = terrainTexelUv(uv, vec2(textureSize(uElevationTex, 0)));
+vec2 terrain_elevSize = vec2(textureSize(uElevationTex, 0));
+vec2 terrain_elevUv = terrainTexelUv(uv, terrain_elevSize);
 vec2 terrain_treeUv = terrainTexelUv(uv, vec2(textureSize(uTreeDensityTex, 0)));
 float terrain_rawElev     = texture2D(uElevationTex, terrain_elevUv).r;
+
+// Displacement smoothing: blend towards the 3x3 [1 2 1] weighted average of the
+// neighbouring texels, which softens ridges finer than the mesh (the sawtooth
+// along crests).  Four bilinear fetches half a texel off-centre each average a
+// 2x2 block; together they give exactly that kernel.  Only the geometry is
+// smoothed — shading reads the raw elevation per fragment.
+// Vertices on the patch border keep the raw value, so neighbouring patches
+// still meet exactly.
+vec2 terrain_edgeDist = min(uv, 1.0 - uv) * (terrain_elevSize - 1.0);
+if (uDisplacementSmoothing > 0.0 && min(terrain_edgeDist.x, terrain_edgeDist.y) > 0.5) {
+  vec2 o = 0.5 / terrain_elevSize;
+  float terrain_avgElev = 0.25 * (
+      texture2D(uElevationTex, terrain_elevUv + vec2(-o.x, -o.y)).r
+    + texture2D(uElevationTex, terrain_elevUv + vec2( o.x, -o.y)).r
+    + texture2D(uElevationTex, terrain_elevUv + vec2(-o.x,  o.y)).r
+    + texture2D(uElevationTex, terrain_elevUv + vec2( o.x,  o.y)).r);
+  terrain_rawElev = mix(terrain_rawElev, terrain_avgElev, uDisplacementSmoothing);
+}
 float terrain_treeDensity = texture2D(uTreeDensityTex, terrain_treeUv).r;
 float terrain_elev        = terrain_rawElev + uElevOffset + terrain_treeDensity / 100.0;
 

@@ -20,7 +20,7 @@ import {
   TERRAIN_DEBUG_BIOME,
 } from '@core/shaders/terrainSampleGLSL';
 import { SUBDIVISION_OPTIONS, PATCH_OPTIONS } from '../../terrain/TerrainConstants';
-import { accordion } from '../Panels';
+import { accordion, infoBlock } from '../Panels';
 import type { GUIContext } from '../GUIContext';
 
 export function addViewSection(
@@ -76,6 +76,15 @@ export function addViewSection(
     .on('change', ({ value }) => { terrain.numPatches = value; upd.geometry(); });
   meshFolder.addBinding(meshParams, 'subdivision', { label: 'Subdivision', options: SUBDIVISION_OPTIONS })
     .on('change', ({ value }) => { terrain.subdivisions = Number(value); upd.geometry(); });
+  // Shared with the World tab: softens ridges finer than the mesh (geometry only).
+  const smoothing = meshFolder.addBinding(P, 'displacementSmoothing', { label: 'Smoothing', min: 0, max: 1, step: 0.05 })
+    .on('change', () => upd.display());
+  const smoothingNote = infoBlock();
+  smoothingNote.style.padding = '2px 8px 0';
+  smoothingNote.style.fontSize = '10px';
+  smoothingNote.style.opacity = '0.7';
+  smoothingNote.textContent = 'Reduces the sawtooth on ridges finer than the mesh (geometric aliasing).';
+  smoothing.element.before(smoothingNote);
 
   // ── Lighting ──────────────────────────────────────────────────────────────
 

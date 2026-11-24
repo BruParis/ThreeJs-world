@@ -123,6 +123,13 @@ export class TerrainParams {
    */
   bandLimit = true;
 
+  /**
+   * Blend of the mesh displacement towards the 3x3 average of the neighbouring
+   * elevation texels, [0, 1].  Softens the sawtooth of ridges finer than the
+   * mesh, at the cost of some height on the thinnest crests.  Geometry only.
+   */
+  displacementSmoothing = 1.0;
+
   // ── Detail noise ────────────────────────────────────────────────────────────
   detailNoiseEnabled  = false;
   detailNoiseStrength = 0.3;
