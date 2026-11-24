@@ -10,6 +10,12 @@ module.exports = {
                 use: 'ts-loader',
                 exclude: /node_modules/,
             },
+            {
+                // GLSL sources: `#include "file.glsl"` resolved at build time,
+                // exported as a string (see webpack/glslIncludeLoader.js).
+                test: /\.glsl$/,
+                use: path.resolve(__dirname, 'webpack/glslIncludeLoader.js'),
+            },
         ],
     },
     resolve: {

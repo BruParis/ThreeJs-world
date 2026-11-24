@@ -146,19 +146,16 @@ export class TerrainMesh {
   /** Push every parameter to the materials, plus the view-only display settings. */
   updateUniforms(): void {
     this.syncMaterials();
-    for (const mesh of this._meshes) {
-      const mat = mesh.material as THREE.MeshStandardMaterial;
-      mat.wireframe = this.wireframe;
-      mat.roughness = this.roughness;
+    for (const m of this._materials) {
+      m.setWireframe(this.wireframe);
+      m.setRoughness(this.roughness);
     }
   }
 
   /** Set surface roughness (PBR) and apply to all patch materials immediately. */
   setRoughness(v: number): void {
     this.roughness = v;
-    for (const mesh of this._meshes) {
-      (mesh.material as THREE.MeshStandardMaterial).roughness = v;
-    }
+    for (const m of this._materials) m.setRoughness(v);
   }
 
   /**

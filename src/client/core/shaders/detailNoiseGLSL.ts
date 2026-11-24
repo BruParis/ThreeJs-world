@@ -4,8 +4,8 @@
  * This module is the two-sided contract for the supplemental noise feature:
  *   - Producer side: detailNoiseComputeGLSL is the bake-pass fragment shader
  *     (run by TerrainPatchBaker) that fills the detail noise texture.
- *   - Consumer side: detailNoiseFragPreamble is injected into the terrain
- *     fragment shader to sample that texture and perturb surface normals.
+ *   - Consumer side: terrainMaterial.frag.glsl samples that texture and
+ *     perturbs the surface normals.
  *
  * The noise is sampled in 3D (see patchBakeGLSL).  The baked texture encodes:
  *   R   = accumulated noise value (FBM, 8 octaves, zero-centred [-1, 1])
@@ -13,7 +13,6 @@
  *
  * Exposes:
  *   detailNoiseComputeGLSL           – GLSL fragment shader for the bake pass
- *   detailNoiseFragPreamble          – GLSL fragment-shader uniform declarations
  *   DetailNoiseUniformState          – TS interface for owned values
  *   createDetailNoiseUniforms(s)     – creates shader.uniforms entries
  *   syncDetailNoiseUniforms(u, s)    – updates existing entries
@@ -49,14 +48,6 @@ void main() {
   vec3 grad = acc.yzw - up * dot(acc.yzw, up);
   fragColor = vec4(acc.x, grad);
 }
-`;
-
-// ── Consumer side: terrain fragment-shader declarations ───────────────────────
-
-export const detailNoiseFragPreamble = /* glsl */`
-uniform sampler2D uDetailNoiseTex;
-uniform int       uDetailNoiseEnabled;
-uniform float     uDetailNoiseStrength;
 `;
 
 // ── Uniform helpers ───────────────────────────────────────────────────────────

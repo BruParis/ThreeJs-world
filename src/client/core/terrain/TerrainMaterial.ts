@@ -1,43 +1,29 @@
 /**
  * TerrainMaterial
  *
- * The material that renders a baked terrain patch: a MeshStandardMaterial whose
- * shaders are patched with the terrain pipeline (vertex displacement from the
+ * The material that renders a baked terrain patch: a ShaderMaterial running
+ * terrainMaterial.vert.glsl / terrainMaterial.frag.glsl — Three's standard
+ * (PBR) shader with the terrain stages written in (vertex displacement from the
  * elevation texture; per-fragment classification, coloring and normals).
+ * Lighting, shadows, tone mapping and color space come from Three's chunks.
  *
  * It is the same material for the flat Shaders-tab patch and the World-tab
  * sphere LOD patches; only the frame differs (see TerrainMaterialFrame).
  * Every instance compiles to the same program, so creating one per patch is
  * cheap.
  *
- * Geometry contract — see terrainVertexGLSL:
+ * Geometry contract — see terrainMaterial.vert.glsl:
  *   position = undisplaced position, normal = planet direction ("up"), uv = patch (s, t).
  */
 
 import * as THREE from 'three';
-import { terrainFinalStateGLSL } from '@core/shaders/terrainFinalStateGLSL';
-import {
-  terrainFragmentMapChunk,
-  terrainFragmentNormalChunk,
-  terrainFragmentRoughnessChunk,
-  terrainFragmentMetalnessChunk,
-  createTerrainColorUniforms,
-  syncTerrainColorUniforms,
-} from '@core/shaders/terrainColorGLSL';
-import { createTreeUniforms, syncTreeUniforms } from '@core/shaders/treeGLSL';
-import {
-  detailNoiseFragPreamble,
-  createDetailNoiseUniforms,
-  syncDetailNoiseUniforms,
-} from '@core/shaders/detailNoiseGLSL';
-import {
-  terrainVertexPreamble,
-  terrainVertexNormalChunk,
-  terrainVertexPositionChunk,
-  terrainFragmentVaryings,
-  createTerrainVertexUniforms,
-  syncTerrainVertexUniforms,
-} from '@core/shaders/terrainVertexGLSL';
+import terrainVertexShader   from '@core/shaders/terrainMaterial.vert.glsl';
+import terrainFragmentShader from '@core/shaders/terrainMaterial.frag.glsl';
+import { createTerrainColorUniforms, syncTerrainColorUniforms, DRAINAGE_WIDTH } from '@core/shaders/terrainColorGLSL';
+import { createTreeUniforms, syncTreeUniforms, TERRAIN_GRASS_HEIGHT } from '@core/shaders/treeGLSL';
+import { createDetailNoiseUniforms, syncDetailNoiseUniforms } from '@core/shaders/detailNoiseGLSL';
+import { createTerrainVertexUniforms, syncTerrainVertexUniforms } from '@core/shaders/terrainVertexGLSL';
+import { BIOME_COLORS, BIOME_STANDARD, BIOME_OCEAN } from '@core/terrain/BiomeBoundaries';
 import type { TerrainParams } from '../../shared/terrain/TerrainParams';
 import type { BakedPatch } from './TerrainPatchBaker';
 
@@ -63,8 +49,21 @@ export interface TerrainMaterialOptions {
   debugMode?: number | null;
 }
 
+const glslFloat = (v: number) => v.toFixed(4);
+const glslVec3  = (c: [number, number, number]) => `vec3(${c.map(glslFloat).join(', ')})`;
+
+/** Compile-time constants of the terrain shaders (see the .glsl headers). */
+const TERRAIN_DEFINES: Record<string, string> = {
+  // Rounded to 2 decimals (0.465 → 0.47) like the tree density bake
+  // (treeDensityComputeGLSL), so both passes classify the grass zone alike.
+  GRASS_HEIGHT:         TERRAIN_GRASS_HEIGHT.toFixed(2),
+  DRAINAGE_WIDTH:       DRAINAGE_WIDTH.toFixed(2),
+  BIOME_COLOR_STANDARD: glslVec3(BIOME_COLORS[BIOME_STANDARD]),
+  BIOME_COLOR_OCEAN:    glslVec3(BIOME_COLORS[BIOME_OCEAN]),
+};
+
 export class TerrainMaterial {
-  readonly material: THREE.MeshStandardMaterial;
+  readonly material: THREE.ShaderMaterial;
   readonly uniforms: Record<string, THREE.IUniform>;
 
   private readonly frame: TerrainMaterialFrame;
@@ -94,58 +93,22 @@ export class TerrainMaterial {
     };
     this.sync(params);
 
-    this.material = new THREE.MeshStandardMaterial({
-      roughness: options.roughness ?? 0.85,
-      metalness: 0.0,
+    this.material = new THREE.ShaderMaterial({
+      vertexShader:   terrainVertexShader,
+      fragmentShader: terrainFragmentShader,
+      defines:        { ...TERRAIN_DEFINES },
+      // Three's standard-material uniforms (diffuse, roughness, …) plus ours.
+      // Ours are the same objects as this.uniforms, so sync() reaches the program.
+      uniforms: {
+        ...THREE.UniformsUtils.clone(THREE.ShaderLib.standard.uniforms),
+        ...this.uniforms,
+      },
+      lights:    true,
       side:      THREE.FrontSide,
       wireframe: options.wireframe ?? false,
     });
-
-    const uniforms = this.uniforms;
-    this.material.onBeforeCompile = (shader) => {
-      // The uniform objects are shared with this.uniforms, so later updates
-      // reach the compiled program directly.
-      Object.assign(shader.uniforms, uniforms);
-
-      // ── Vertex shader ────────────────────────────────────────────────────
-      shader.vertexShader = terrainVertexPreamble + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <beginnormal_vertex>',
-        terrainVertexNormalChunk,
-      );
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <begin_vertex>',
-        terrainVertexPositionChunk,
-      );
-
-      // ── Fragment shader ──────────────────────────────────────────────────
-      shader.fragmentShader =
-        terrainFinalStateGLSL +
-        detailNoiseFragPreamble +
-        terrainFragmentVaryings +
-        shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <map_fragment>',
-        terrainFragmentMapChunk,
-      );
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <normal_fragment_begin>',
-        terrainFragmentNormalChunk,
-      );
-      // Roughness / metalness overrides — water pixels get low roughness so
-      // MeshStandardMaterial produces specular highlights.  Set scene.environment
-      // (via PMREMGenerator) for full PBR reflections on water.
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <roughnessmap_fragment>',
-        terrainFragmentRoughnessChunk,
-      );
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <metalnessmap_fragment>',
-        terrainFragmentMetalnessChunk,
-      );
-    };
-    // All terrain materials patch the shader identically → one shared program.
-    this.material.customProgramCacheKey = () => 'terrain-patch';
+    this.material.uniforms.roughness.value = options.roughness ?? 0.85;
+    this.material.uniforms.metalness.value = 0.0;
   }
 
   /** Points the material at another baked patch (or at re-allocated textures). */
@@ -158,6 +121,15 @@ export class TerrainMaterial {
   setDebugMode(mode: number | null, params: TerrainParams): void {
     this.debugMode = mode;
     this.sync(params);
+  }
+
+  /** Surface roughness of land (PBR); water uses its own. */
+  setRoughness(v: number): void {
+    this.material.uniforms.roughness.value = v;
+  }
+
+  setWireframe(v: boolean): void {
+    this.material.wireframe = v;
   }
 
   /**

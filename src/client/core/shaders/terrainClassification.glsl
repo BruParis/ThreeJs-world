@@ -1,0 +1,44 @@
+// Terrain classification — reusable GLSL fragment.
+//
+// Exposes:
+//   struct TerrainClassification
+//   TerrainClassification classifyTerrain(float elevation, float ridgeMap,
+//                                         float normalY, vec3 P, float treeNoiseFade)
+//
+// Called once per fragment in the rendering pass.
+// The tree density compute pass (treeDensityComputeGLSL) also classifies isWater
+// and grassZone independently to bake per-texel density into uTreeDensityTex.
+//
+// Requires in scope:
+//   ComputeTreeMap — from treeGLSL
+//   clamp01        — from shaderUtilsGLSL
+//   GRASS_HEIGHT   — #define
+//   uSeaLevel      — uniform float
+//
+struct TerrainClassification {
+  float trees;
+  float hardness;
+  bool  isWater;
+  bool  isGrass;
+  bool  isTree;
+};
+
+TerrainClassification classifyTerrain(float elevation, float ridgeMap, float normalY, vec3 P, float treeNoiseFade) {
+  TerrainClassification tc;
+  tc.isWater = elevation < uSeaLevel;
+
+  bool grassZone = !tc.isWater
+                 && elevation < GRASS_HEIGHT + 0.04
+                 && normalY   > 0.85;
+
+  tc.trees   = ComputeTreeMap(elevation, ridgeMap, normalY, P, tc.isWater, grassZone, treeNoiseFade);
+  tc.isTree  = !tc.isWater && tc.trees > 0.36;
+  tc.isGrass = grassZone && !tc.isTree;
+
+  float grassSmooth = smoothstep(GRASS_HEIGHT + 0.05, GRASS_HEIGHT + 0.02, elevation)
+                    * smoothstep(0.80, 1.0, normalY);
+  float treeSmooth  = clamp01(tc.trees * 2.2 - 0.8);
+  tc.hardness = 1.0 - clamp01(grassSmooth + treeSmooth);
+  return tc;
+}
+
